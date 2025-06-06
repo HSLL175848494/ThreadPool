@@ -79,8 +79,8 @@ unsigned wait_appendBulk(T* tasks, unsigned count, const duration<Rep, Period>& 
 ```cpp
 enum BULK_CMETHOD
 {
-  COPY, ///< 使用拷贝语义，将任务拷贝到队列。源任务数组依旧有效
-  MOVE  ///< 使用移动语义，将任务移动到队列
+  COPY, // 使用拷贝语义，将任务拷贝到队列。源任务数组依旧有效
+  MOVE  // 使用移动语义，将任务移动到队列
 };
 ```
 
