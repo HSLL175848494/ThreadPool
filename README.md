@@ -9,6 +9,12 @@ HSLL::ThreadPool 是一个高性能C++线程池实现，具有以下核心特性
 4. **优雅关闭** - 支持立即关闭和等待任务完成的优雅关闭模式
 5. **类型安全** - 基于模板的任务类型支持，可搭配自定义任务类型
 
+## 引入
+```
+//依赖于TPBlockQueue.hpp和TPTask.hpp
+#include "ThreadPool.hpp"
+```
+
 ## 核心组件
 
 ### ThreadPool 类模板
