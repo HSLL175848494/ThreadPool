@@ -108,13 +108,13 @@ sequenceDiagram
   static_assert(sizeof(stack_task_t<F, Args...>) <= TSIZE);
   ```
 
-### 容量查询
+### 查询任务所需大小
 ```cpp
 
-// 获取任务类型大小
+// 获取任务所需大小
 unsigned int needed_size = stack_tsize_v<F, Args...>
 
-// 编译期获取任务类型大小
+// 编译期获取任务所需大小
 constexpr unsigned int needed_size = sizeof(stack_task_t<F, Args...>)；
 
 ```
