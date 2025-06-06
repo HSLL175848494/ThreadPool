@@ -10,7 +10,7 @@ HSLL::ThreadPool 是一个高性能C++线程池实现，具有以下核心特性
 5. **类型安全** - 基于模板的任务类型支持，可搭配自定义任务类型
 
 ## 引入
-```
+```cpp
 //依赖于TPBlockQueue.hpp和TPTask.hpp
 #include "ThreadPool.hpp"
 ```
