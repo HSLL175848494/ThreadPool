@@ -4,10 +4,11 @@
 HSLL::ThreadPool 是一个高性能C++线程池实现，具有以下核心特性：
 
 1. **多队列架构** - 每个工作线程拥有独立的任务队列，减少锁争用
-2. **核心绑定** - 支持将工作线程绑定到指定CPU核心（Linux/Windows）
-3. **灵活任务提交** - 提供阻塞/非阻塞、单任务/批量任务等多种接口
-4. **优雅关闭** - 支持立即关闭和等待任务完成的优雅关闭模式
-5. **类型安全** - 基于模板的任务类型支持，可搭配自定义任务类型
+2. **核心绑定** - 支持将工作线程绑定到指定CPU核心(Linux/Windows), 避免缓存失效
+3. **负载均衡** - 采用round-robin+二级队列选取机制+任务窃取机制实现负载均衡
+4. **多提交接口** - 提供阻塞/非阻塞、单任务/批量任务等多种接口
+5. **栈上任务** - 基于栈的预分配任务容器，将所有参数储存在栈上，避免动态申请空间
+6. **优雅关闭** - 支持立即关闭和等待任务完成的优雅关闭模式
 
 ## 引入
 ```cpp
@@ -40,33 +41,39 @@ bool init(unsigned queueLength, unsigned threadNum, unsigned batchSize = 1)
 
 #### 任务提交接口
 
-1. **单任务提交**
+1. **单任务提交(就地构造)**
 ```cpp
 template <typename... Args>
-bool emplace(Args&&... args) // 非阻塞提交（立即返回）
+bool emplace(Args&&... args) // 非阻塞
+
 template <typename... Args>
-bool wait_emplace(Args&&... args) // 阻塞提交
+bool wait_emplace(Args&&... args) // 阻塞
+
 template <class Rep, class Period, typename... Args>
-bool wait_emplace(const duration<Rep, Period>& timeout, Args&&... args) // 带超时
+bool wait_emplace(const duration<Rep, Period>& timeout, Args&&... args) // 超时阻塞
 ```
 
-2. **预构建任务提交**
+2. **单任务提交**
 ```cpp
 template <typename U>
 bool append(U&& task) // 非阻塞
+
 template <class U>
 bool wait_append(U&& task) // 阻塞
+
 template <class U, class Rep, class Period>
-bool wait_append(U&& task, const duration<Rep, Period>& timeout) // 带超时
+bool wait_append(U&& task, const duration<Rep, Period>& timeout) // 超时阻塞
 ```
 
 3. **批量提交
 ```cpp
 template <BULK_CMETHOD METHOD = COPY>
 unsigned append_bulk(T* tasks, unsigned count) // 非阻塞批量
+
 template <BULK_CMETHOD METHOD = COPY>
 unsigned wait_appendBulk(T* tasks, unsigned count) // 阻塞批量
-template <BULK_CMETHOD METHOD = COPY, class Rep, class Period>
+
+template <BULK_CMETHOD METHOD = COPY, class Rep, class Period>// 超时阻塞
 unsigned wait_appendBulk(T* tasks, unsigned count, const duration<Rep, Period>& timeout)
 ```
 
