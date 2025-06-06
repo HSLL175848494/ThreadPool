@@ -138,3 +138,7 @@ pool.exit(true); // 优雅关闭
 - Linux (pthread affinity)
 - Windows (SetThreadAffinityMask)
 - C++14 或更新标准
+
+## 其它
+- **组件文档**:`document`文件夹
+- **性能测试**:`performance test`文件夹
