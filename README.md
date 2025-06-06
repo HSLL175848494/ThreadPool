@@ -1,4 +1,4 @@
-# HSLL ThreadPool 线程池库
+# HSLL::ThreadPool 线程池
 
 ## 概述
 HSLL ThreadPool 是一个高性能C++线程池实现，具有以下核心特性：
