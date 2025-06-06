@@ -92,6 +92,7 @@ pool.emplace([]{
 void taskFunc(int a, double b) { /*...*/ }
 pool.emplace(taskFunc, 42, 3.14);
 
+//线程池析构时自动调用exit(false), 但仍然建议手动调用以控制退出行为
 pool.exit(true); // 优雅关闭
 ```
 
@@ -104,7 +105,6 @@ pool.exit(true); // 优雅关闭
 ## 注意事项
 1. 确保任务对象的线程安全性
 2. 避免在任务中执行长时间阻塞操作
-3. 线程池析构时自动调用`exit(false)`,但仍然建议手动调用以控制退出行为
 
 ## 接口对比表
 
