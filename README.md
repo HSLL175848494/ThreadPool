@@ -76,6 +76,13 @@ unsigned wait_appendBulk(T* tasks, unsigned count) // 阻塞批量
 template <BULK_CMETHOD METHOD = COPY, class Rep, class Period>// 超时阻塞
 unsigned wait_appendBulk(T* tasks, unsigned count, const duration<Rep, Period>& timeout)
 ```
+```cpp
+enum BULK_CMETHOD
+{
+  COPY, ///< 使用拷贝语义，将任务拷贝到队列。源任务数组依旧有效
+  MOVE  ///< 使用移动语义，将任务移动到队列
+};
+```
 
 #### 关闭方法
 ```cpp
@@ -86,7 +93,7 @@ void exit(bool shutdownPolicy = true) noexcept
   - false: 立即关闭
 
 #### 工作机制
-- **任务分发**：采用轮询+队列负载均衡策略
+- **任务分发**：采用轮询+跳半队列负载均衡策略
 - **工作线程**：每个线程优先处理自己的队列，空闲时支持任务窃取
 - **核心绑定**：自动将工作线程绑定到不同CPU核心（需硬件支持）
 
