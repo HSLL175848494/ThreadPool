@@ -46,7 +46,7 @@ namespace HSLL
 #include <atomic>
 #include <assert.h>
 
-#include "TPTask.h"
+#include "TPTask.hpp"
 #include "TPBlockQueue.hpp"
 
 namespace HSLL
