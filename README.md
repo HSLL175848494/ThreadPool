@@ -65,7 +65,7 @@ template <class U, class Rep, class Period>
 bool wait_append(U&& task, const duration<Rep, Period>& timeout) // 超时阻塞
 ```
 
-3. **批量提交
+3. **批量提交**
 ```cpp
 template <BULK_CMETHOD METHOD = COPY>
 unsigned append_bulk(T* tasks, unsigned count) // 非阻塞批量
