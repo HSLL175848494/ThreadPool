@@ -389,7 +389,6 @@ namespace HSLL
 
 			char storage[sizeof(T)];
 			T *task = (T *)(&storage);
-			Stealer stealer(other, queue.maxSize);
 
 			if (!other.size())
 			{
@@ -401,6 +400,7 @@ namespace HSLL
 			}
 			else
 			{
+				Stealer stealer(other, queue.maxSize);
 
 				while (true)
 				{
@@ -422,11 +422,10 @@ namespace HSLL
 							task->execute();
 							task->~T();
 						}
-						else if (queue.isStopped)
-						{
-							return;
-						}
 					}
+
+					if (queue.isStopped)
+						return;
 				}
 			}
 
@@ -488,7 +487,6 @@ namespace HSLL
 			T *tasks = (T *)((void *)operator new[](batchSize * sizeof(T)));
 			assert(tasks && "Failed to allocate task buffer");
 			unsigned int count;
-			Stealer stealer(other, batchSize, queue.maxSize);
 
 			if (!other.size())
 			{
@@ -497,6 +495,8 @@ namespace HSLL
 			}
 			else
 			{
+				Stealer stealer(other, batchSize, queue.maxSize);
+
 				while (true)
 				{
 					while (count = queue.template popBulk<PLACE>(tasks, batchSize))
@@ -513,9 +513,10 @@ namespace HSLL
 
 						if (count)
 							execute_tasks(tasks, count);
-						else if (queue.isStopped)
-							break;
 					}
+
+					if (queue.isStopped)
+						break;
 				}
 			}
 
