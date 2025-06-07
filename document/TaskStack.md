@@ -1,14 +1,15 @@
 # TaskStack - 栈分配任务容器
 
 ## 概述
-TaskStack 是一个基于栈内存的任务容器模板类，通过小缓冲区优化(SBO)实现无堆内存分配的任务存储，支持存储任意可调用对象及其参数.
+TaskStack 是一个基于栈内存的任务容器模板类，通过小缓冲区优化(SBO)实现无堆内存分配的任务存储
 
 ## 核心特性
 
 - **零堆分配**：使用固定大小栈存储，避免动态内存分配
 - **类型擦除**：可存储函数指针、lambda、函数对象等任意可调用类型
 - **参数绑定**：支持绑定任意数量/类型的参数
-- **值语义**：支持拷贝/移动构造和赋值操作
+- **语义支持**：支持拷贝/移动构造和赋值操作
+- **智能对齐**：智能调整存储大小保证对齐要求
 - **编译期检查**：静态断言确保存储空间充足
 
 ---
@@ -21,7 +22,7 @@ void print_sum(int a, int b) {
     std::cout << a + b << std::endl;
 }
 
-TaskStack<> task1(print_sum, 3, 5); // 默认64字节存储
+TaskStack<> task1(print_sum, 3, 5); 
 task1.execute(); // 输出8
 ```
 
@@ -41,10 +42,17 @@ task2.execute(); // 输出Result:42
 ```cpp
 std::vector<int> big_data(1000);
 
-// 通过lambda捕获引用(不存储参数副本)
+// 1.通过lambda捕获引用(不存储参数副本)
 TaskStack<> task3([&]{
     process_data(big_data); 
 });
+
+
+// 2.通过指针传递
+TaskStack<> task3([](std::vector<int>* big_data){
+    process_data(big_data); 
+},&big_data);
+
 ```
 
 ---
@@ -57,12 +65,12 @@ TaskStack<> task3([&]{
 - **示例**：
   ```cpp
   std::string s = "hello";
-  TaskStack<> task([](std::string& ), std::move(s)); // 移动构造存储
+  TaskStack<> task([](std::string& s){...}, std::move(s)); // 移动构造存储
   ```
 
 ### 执行阶段
 - **始终传递左值**：调用时参数以左值形式传递
-- **重要限制**：
+- **限制**：
   - 不支持接收右值引用的函数参数
   ```cpp
   // 错误示例：
@@ -73,7 +81,7 @@ TaskStack<> task3([&]{
 1. 对需要移动语义的参数：
    ```cpp
    void process(std::string& s) {
-       auto s2 = std::move(s);//该操作是安全的
+       auto s2 = std::move(s); // 安全操作：s是存储在任务内的副本
    }
    ```
 2. 对长期有效的大对象：通过lambda捕获引用
@@ -96,27 +104,33 @@ sequenceDiagram
 ```
 ---
 
-## 存储管理
+## 存储管理 (更新)
 
 ### 容量控制
-- 默认存储大小64字节，可通过模板参数调整：
+- 默认存储大小`64 - sizeof(std::max_align_t)`字节，可通过模板参数调整：
   ```cpp
   TaskStack<256> large_task(...);
   ```
-- 编译期检查存储容量：
+- **智能对齐调整**：存储大小自动向下对齐到指定对齐要求
   ```cpp
-  static_assert(sizeof(stack_task_t<F, Args...>) <= TSIZE);
+  // 实际存储大小 = TSIZE - (TSIZE % ALIGN) = sizeof(TaskStack<TSIZE, ALIGN>)
+  TaskStack<63,4> task; // 实际大小为60字节(当ALIGN=4时)
   ```
+
+### 编译期检查
+```cpp
+// 存储空间检查
+static_assert(sizeof(TaskImpl) <= sizeof(storage));
+static_assert(alignof(TaskImpl) <= ALIGN);
+```
 
 ### 查询任务所需大小
 ```cpp
-
 // 获取任务所需大小
 unsigned int needed_size = stack_tsize_v<F, Args...>
 
 // 编译期获取任务所需大小
 constexpr unsigned int needed_size = sizeof(stack_task_t<F, Args...>)；
-
 ```
 
 ---
@@ -125,11 +139,15 @@ constexpr unsigned int needed_size = sizeof(stack_task_t<F, Args...>)；
 
 1. **右值参数限制**：任务函数签名禁止包含右值引用参数
 2. **对象生命周期**：
-   - 按值存储的参数需保证在任务执行前有效
-   - 推荐对长期对象使用引用捕获
+   - 引用捕获/指针传递的参数需保证在任务执行前有效
+   - 推荐对长期对象使用引用捕获/指针转递
 3. **存储溢出**：
    - 超出预设大小会导致编译错误
    - 可通过`stack_tsize_v`预计算所需大小
+   - 可通过`sizeof(TaskStack<TSIZE,ALIGN>)`获取存储空间大小
 4. **移动语义**：
    - 移动构造后源对象失效
    - 任务对象本身支持移动语义
+5. **对齐要求**：
+   - 实际存储大小可能小于指定大小（对齐调整）
+   - 确保任务对齐要求不超过`ALIGN`设置

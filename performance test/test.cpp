@@ -9,13 +9,13 @@ using namespace HSLL;
 #define ROUND 10
 #define WORKER 4
 #define PRODUCER 4
-#define ALIGEN 24
+#define TSIZE 24
 #define PEER 1000000  
 #define QUEUELEN 10000
 #define SUBMIT_BATCH 32
 #define PROCESS_BATCH 32
 
-ThreadPool<TaskStack<ALIGEN>> pool;
+ThreadPool<TaskStack<TSIZE>> pool;
 
 // Time-consuming task
 /*
@@ -31,15 +31,15 @@ void test(int a, int b) {}
 
 // Worker for batch submission
 void bulk_submit_worker() {
-	unsigned char buf[SUBMIT_BATCH * sizeof(TaskStack<ALIGEN>)];
+	unsigned char buf[SUBMIT_BATCH * sizeof(TaskStack<TSIZE>)];
 	int remaining = PEER;
 	while (remaining > 0) {
 		for (int i = 0; i < std::min(SUBMIT_BATCH, remaining); i++) {
-			new (buf + i * sizeof(TaskStack<ALIGEN>)) TaskStack<ALIGEN>(test, 2, 1);
+			new (buf + i * sizeof(TaskStack<TSIZE>)) TaskStack<TSIZE>(test, 2, 1);
 		}
 
 		unsigned int submitted = pool.append_bulk(
-			reinterpret_cast<TaskStack<ALIGEN>*>(buf),
+			reinterpret_cast<TaskStack<TSIZE>*>(buf),
 			std::min(SUBMIT_BATCH, remaining)
 		);
 
@@ -56,7 +56,7 @@ void bulk_submit_worker() {
 void single_submit_worker() {
 	int remaining = PEER;
 	while (remaining > 0) {
-		TaskStack<ALIGEN> task(test, 2, 1);
+		TaskStack<TSIZE> task(test, 2, 1);
 		if (pool.append(task)) {
 			remaining--;
 		}
@@ -114,12 +114,12 @@ int main()
 	std::cout << "\n=== Configuration Parameters ==="
 		<< "\nBatch submit size: " << SUBMIT_BATCH
 		<< "\nBatch process size: " << PROCESS_BATCH
-		<< "\nSingle task space size: " << ALIGEN
+		<< "\nSingle task space size: " << TSIZE
 		<< "\nSingle task actual size: " << stack_tsize_v<decltype(test), int, int>
 		<< "\nProducer threads: " << PRODUCER
 		<< "\nWorker threads: " << WORKER
 		<< "\nQueue length: " << QUEUELEN
-		<< "\nMemory usage: " << (8 + ALIGEN) * QUEUELEN * WORKER
+		<< "\nMemory usage: " << (8 + TSIZE) * QUEUELEN * WORKER
 		<< "\nTasks per producer: " << PEER
 		<< "\nTotal tasks/round: " << total_tasks
 		<< "\n\nStarting performance test (rounds=" << ROUND << ")...\n";
