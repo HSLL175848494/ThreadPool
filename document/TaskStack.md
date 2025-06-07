@@ -127,8 +127,13 @@ static_assert(alignof(TaskImpl) <= ALIGN);
 ### 查询任务所需大小
 
 ```cpp
-// 编译期获取任务所需大小
+// 编译期获取任务所需大小（需要c++14）
 constexpr unsigned int needed_size = stack_tsize_v<F, Args...>;
+```
+
+```cpp
+// 获取任务所需大小
+unsigned int needed_size = stack_tsize<F, Args...>::value;
 ```
 
 ---
@@ -141,7 +146,7 @@ constexpr unsigned int needed_size = stack_tsize_v<F, Args...>;
    - 推荐对长期对象使用引用捕获/指针转递
 3. **存储溢出**：
    - 超出预设大小会导致编译错误
-   - 可通过`stack_tsize_v`预计算所需大小
+   - 可通过`stack_tsize<F, Args...>::value`预计算所需大小
    - 可通过`sizeof(TaskStack<TSIZE,ALIGN>)`获取存储空间大小
 4. **移动语义**：
    - 移动构造后源对象失效

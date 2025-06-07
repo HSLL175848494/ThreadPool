@@ -1,7 +1,7 @@
 # HSLL::ThreadPool 线程池
 
 ## 概述
-HSLL::ThreadPool 是一个高性能C++线程池实现，具有以下核心特性：
+HSLL::ThreadPool 是一个高性能C++11线程池实现，具有以下核心特性：
 
 1. **多队列架构** - 每个工作线程拥有独立的任务队列，减少锁争用
 2. **核心绑定** - 支持将工作线程绑定到指定CPU核心(Linux/Windows), 避免缓存失效
@@ -86,7 +86,7 @@ enum BULK_CMETHOD
 
 #### 关闭方法
 ```cpp
-void exit(bool shutdownPolicy = true) noexcept
+void exit(bool shutdownPolicy = true)
 ```
 - `shutdownPolicy`: 
   - true: 优雅关闭（执行完队列剩余任务）

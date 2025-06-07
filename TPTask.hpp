@@ -15,6 +15,39 @@ namespace HSLL
 	 */
 	namespace TSTACK
 	{
+		// C++11 compatible index_sequence implementation
+		template <size_t... Is>
+		struct index_sequence
+		{
+		};
+
+		template <size_t N, size_t... Is>
+		struct make_index_sequence_impl : make_index_sequence_impl<N - 1, N - 1, Is...>
+		{
+		};
+
+		template <size_t... Is>
+		struct make_index_sequence_impl<0, Is...>
+		{
+			typedef index_sequence<Is...> type;
+		};
+
+		template <size_t N>
+		struct make_index_sequence
+		{
+			typedef typename make_index_sequence_impl<N>::type type;
+		};
+
+		// Helper invoker for C++11 compatibility
+		struct Invoker
+		{
+			template <typename INVOKER, typename... Ts>
+			void operator()(INVOKER &func, Ts &...args)
+			{
+				func(args...);
+			}
+		};
+
 		/**
 		 * @brief Base interface for type-erased task objects
 		 * @details Provides virtual methods for task execution and storage management
@@ -22,27 +55,28 @@ namespace HSLL
 		struct TaskBase
 		{
 			virtual ~TaskBase() = default;
-			virtual void execute() = 0;				///< Executes the stored task
-			virtual void cloneTo(void* memory) = 0; ///< Copies task to preallocated memory
-			virtual void moveTo(void* memory) = 0;	///< Moves task to preallocated memory
+			virtual void execute() = 0;					  ///< Executes the stored task
+			virtual void cloneTo(void *memory) const = 0; ///< Copies task to preallocated memory
+			virtual void moveTo(void *memory) = 0;		  ///< Moves task to preallocated memory
 		};
 
 		/**
 		 * @brief Helper for applying tuple elements to a function
 		 */
-		template <typename Func, typename Tuple, size_t... Is>
-		void apply_impl(Func& func, Tuple& tup, std::index_sequence<Is...>)
+		template <typename INVOKER, typename Tuple, size_t... Is>
+		void apply_impl(INVOKER &invoker, Tuple &tup, index_sequence<Is...>)
 		{
-			func(std::get<Is>(tup)...);
+			invoker(std::get<Is>(tup)...);
 		}
 
 		/**
 		 * @brief Invokes function with arguments from tuple
 		 */
-		template <typename Func, typename Tuple>
-		void tuple_apply(Func& func, Tuple& tup)
+		template <typename INVOKER, typename Tuple>
+		void tuple_apply(INVOKER &invoker, Tuple &tup)
 		{
-			apply_impl(func, tup, std::make_index_sequence<std::tuple_size<Tuple>::value>{});
+			apply_impl(invoker, tup,
+					   typename make_index_sequence<std::tuple_size<Tuple>::value>::type{});
 		}
 
 		/**
@@ -54,12 +88,15 @@ namespace HSLL
 		template <class F, class... Args>
 		struct TaskImpl : TaskBase
 		{
-			std::tuple<std::decay_t<F>, std::decay_t<Args>...> storage; ///< Type-erased storage
+			std::tuple<
+				typename std::decay<F>::type,
+				typename std::decay<Args>::type...>
+				storage; ///< Type-erased storage
 
 			/**
 			 * @brief Constructs task with function and arguments
 			 */
-			TaskImpl(F&& func, Args &&...args)
+			TaskImpl(F &&func, Args &&...args)
 				: storage(std::forward<F>(func), std::forward<Args>(args)...) {}
 
 			/**
@@ -70,17 +107,14 @@ namespace HSLL
 			 */
 			void execute() override
 			{
-				auto invoker = [](auto& func, auto &...args)
-				{
-					func(args...);
-				};
+				Invoker invoker;
 				tuple_apply(invoker, storage);
 			}
 
 			/**
 			 * @brief Copies task to preallocated memory
 			 */
-			void cloneTo(void* memory) override
+			void cloneTo(void *memory) const override
 			{
 				new (memory) TaskImpl(*this);
 			}
@@ -88,24 +122,33 @@ namespace HSLL
 			/**
 			 * @brief Moves task to preallocated memory
 			 */
-			void moveTo(void* memory) override
+			void moveTo(void *memory) override
 			{
 				new (memory) TaskImpl(std::move(*this));
 			}
 		};
 	}
 
-	// Public type aliases
+	// Public type aliases (C++11 compatible)
 	template <class F, class... Args>
 	using stack_task_t = TSTACK::TaskImpl<F, Args...>;
 
+	/// Size calculator for task objects
+	template <class F, class... Args>
+	struct stack_tsize
+	{
+		static const unsigned int value = sizeof(stack_task_t<F, Args...>);
+	};
+
+#if __cplusplus >= 201402L
 	/// Compile-time size calculator for task objects
 	template <class F, class... Args>
 	constexpr unsigned int stack_tsize_v = sizeof(stack_task_t<F, Args...>);
+#endif
 
 	/**
 	 * @brief Stack-allocated task container with fixed-size storage
-	 * @tparam TSIZE Size of internal storage buffer ( 64 - sizeof(std::max_align_t))
+	 * @tparam TSIZE Size of internal storage buffer (64 - sizeof(std::max_align_t))
 	 * @tparam ALIGN Alignment requirement for storage (default = std::max_align_t)
 	 * @details Uses SBO (Small Buffer Optimization) to avoid heap allocation
 	 */
@@ -113,9 +156,10 @@ namespace HSLL
 	class TaskStack
 	{
 		static_assert(ALIGN >= 1, "Alignment must be at least 1");
-		static_assert(TSIZE - (TSIZE % ALIGN) >= 8, "Adjusted storage size must be at least 8 bytes");
+		static_assert(TSIZE - (TSIZE % ALIGN) >= 8,
+					  "Adjusted storage size must be at least 8 bytes");
 
-		alignas(ALIGN) char storage[TSIZE-(TSIZE% ALIGN)]; ///< Raw task storage
+		alignas(ALIGN) char storage[TSIZE - (TSIZE % ALIGN)]; ///< Raw task storage
 
 		// SFINAE helper to detect nested TaskStack types
 		template <typename T>
@@ -145,12 +189,15 @@ namespace HSLL
 		 * - Functions with rvalue reference parameters are NOT supported
 		 *   Example: void bad_func(std::string&&) // Not allowed
 		 */
-		template <class F, class... Args, std::enable_if_t<!is_generic_task<std::decay_t<F>>::value, int> = 0>
-		TaskStack(F&& func, Args &&...args)
+		template <class F, class... Args,
+				  typename std::enable_if<!is_generic_task<typename std::decay<F>::type>::value, int>::type = 0>
+		TaskStack(F &&func, Args &&...args)
 		{
-			using ImplType = stack_task_t<F, Args...>;
-			static_assert(sizeof(ImplType) <= sizeof(storage), "TaskImpl size exceeds storage");
-			static_assert(alignof(ImplType) <= ALIGN, "TaskImpl alignment exceeds storage alignment");
+			typedef stack_task_t<F, Args...> ImplType;
+			static_assert(sizeof(ImplType) <= sizeof(storage),
+						  "TaskImpl size exceeds storage");
+			static_assert(alignof(ImplType) <= ALIGN,
+						  "TaskImpl alignment exceeds storage alignment");
 			new (storage) ImplType(std::forward<F>(func), std::forward<Args>(args)...);
 		}
 
@@ -165,7 +212,7 @@ namespace HSLL
 		/**
 		 * @brief Copy constructor (deep copy)
 		 */
-		TaskStack(const TaskStack& other)
+		TaskStack(const TaskStack &other)
 		{
 			other.getBase()->cloneTo(storage);
 		}
@@ -173,7 +220,7 @@ namespace HSLL
 		/**
 		 * @brief Move constructor
 		 */
-		TaskStack(TaskStack&& other)
+		TaskStack(TaskStack &&other)
 		{
 			other.getBase()->moveTo(storage);
 		}
@@ -181,7 +228,7 @@ namespace HSLL
 		/**
 		 * @brief Copy assignment operator
 		 */
-		TaskStack& operator=(const TaskStack& other)
+		TaskStack &operator=(const TaskStack &other)
 		{
 			if (this != &other)
 			{
@@ -194,7 +241,7 @@ namespace HSLL
 		/**
 		 * @brief Move assignment operator
 		 */
-		TaskStack& operator=(TaskStack&& other)
+		TaskStack &operator=(TaskStack &&other)
 		{
 			if (this != &other)
 			{
@@ -216,17 +263,17 @@ namespace HSLL
 		/**
 		 * @brief Gets typed pointer to task storage
 		 */
-		TSTACK::TaskBase* getBase()
+		TSTACK::TaskBase *getBase()
 		{
-			return (TSTACK::TaskBase*)storage;
+			return reinterpret_cast<TSTACK::TaskBase *>(storage);
 		}
 
 		/**
 		 * @brief Gets const-typed pointer to task storage
 		 */
-		TSTACK::TaskBase* getBase() const
+		const TSTACK::TaskBase *getBase() const
 		{
-			return (TSTACK::TaskBase*)storage;
+			return reinterpret_cast<const TSTACK::TaskBase *>(storage);
 		}
 	};
 }
