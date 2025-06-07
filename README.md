@@ -139,7 +139,7 @@ pool.exit(true); // 优雅关闭
 ## 平台支持
 - Linux (pthread affinity)
 - Windows (SetThreadAffinityMask)
-- C++14 或更新标准
+- C++11 或更新标准
 
 ## 其它
 - **组件文档**: `document`文件夹
