@@ -101,7 +101,7 @@ namespace HSLL
 
 	/// Compile-time size calculator for task objects
 	template <class F, class... Args>
-	static const unsigned int stack_tsize_v = sizeof(stack_task_t<F, Args...>);
+	constexpr unsigned int stack_tsize_v = sizeof(stack_task_t<F, Args...>);
 
 	/**
 	 * @brief Stack-allocated task container with fixed-size storage
