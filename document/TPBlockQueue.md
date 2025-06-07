@@ -1,11 +1,9 @@
-### HSLL::TPBlockQueue 高性能阻塞队列组件
+## HSLL::TPBlockQueue 高性能阻塞队列组件
 
-#### 设计目标
-专为线程池内部设计的高性能阻塞队列，通过以下核心机制优化并发性能：
+### 概述
+专为线程池内部设计的高性能阻塞队列，通过以下核心机制优化并发性能
 
----
-
-#### 关键性能优化
+#### 性能优化
 
 1. **预分配连续内存池**
    - 初始化时一次性分配对齐内存块（64字节对齐）
@@ -96,4 +94,4 @@
 | `release()`  | 析构有效元素+释放内存块           |
 | 元素操作     | placement new+条件析构            |
 
-> 通过`ALIGNED_MALLOC`/`ALIGNED_FREE`实现跨平台（Windows/Linux）对齐内存管理
+通过`ALIGNED_MALLOC`/`ALIGNED_FREE`实现跨平台（Windows/Linux）对齐内存管理
