@@ -125,12 +125,10 @@ static_assert(alignof(TaskImpl) <= ALIGN);
 ```
 
 ### 查询任务所需大小
-```cpp
-// 获取任务所需大小
-unsigned int needed_size = stack_tsize_v<F, Args...>
 
+```cpp
 // 编译期获取任务所需大小
-constexpr unsigned int needed_size = sizeof(stack_task_t<F, Args...>)；
+constexpr unsigned int needed_size = stack_tsize_v<F, Args...>;
 ```
 
 ---
