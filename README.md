@@ -111,11 +111,39 @@ pool.emplace([]{
 // 提交带参数的函数
 void taskFunc(int a, double b) { /*...*/ }
 
-//不返回std::future对象。若要实现异步操作自行传入std::promise参数并在任务完成时设置值
+//添加任务示例
 pool.emplace(taskFunc, 42, 3.14);
+
+//异步示例
+std::promise<int> resultPromise;
+auto resultFuture = resultPromise.get_future();
+pool.emplace([&resultPromise] {
+      int sum = 0;
+      for (int i = 1; i <= 100; i++) {
+        um += i;
+   }
+  resultPromise.set_value(sum); 
+});
+int total = resultFuture.get();
 
 //线程池析构时自动调用exit(false), 但仍然建议手动调用以控制退出行为
 pool.exit(true); // 优雅关闭
+```
+
+### 任务生命周期
+```mermaid
+graph TD
+    A[任务提交] --> B{提交方式}
+    B -->|emplace/wait_emplace| C[在队列存储中<br/>直接构造任务]
+    B -->|append/wait_append| D[用户构造任务对象<br/>拷贝/移动到队列存储]
+    
+    C --> E[工作线程从队列取出任务]
+    D --> E
+    
+    E --> F[在预分配执行内存上<br/>就地构造（移动构造）]
+    F --> G[执行execute方法]
+    G --> H[显式调用析构函数]
+    H --> I[清理执行内存]
 ```
 
 ### 性能优化建议
@@ -125,9 +153,19 @@ pool.exit(true); // 优雅关闭
 4. **队列容量**：根据任务吞吐量需求调整
 
 ## 注意事项
-1. **提交任务类型**必须严格匹配**队列任务类型**
-2. 任务最大对齐值必须小于等于队列任务类型的对齐值
-3. 不允许任务在构造/析构/任务函数中抛出异常
+1. **类型匹配**：提交任务类型必须严格匹配队列任务类型
+2. **对齐要求**：任务最大对齐值必须小于等于队列任务类型的对齐值
+3. **异常安全**：
+   - 任务在构造/拷贝/移动/析构过程中严禁抛出异常
+   - execute()方法严禁抛出异常
+   - 需要在任务内部捕获并处理所有可能的异常
+4. **参数传递**：
+   - 大型对象应使用指针或移动语义传递
+   - 避免在任务中捕获可能失效的引用
+5. **结果获取**：
+   - 使用std::promise/std::future获取异步结果
+   - promise必须在任务执行期间保持有效
+
 
 ## 接口对比表
 

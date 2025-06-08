@@ -59,7 +59,7 @@ namespace HSLL
 	template <typename T, bool IsTrivial = std::is_trivially_destructible<T>::value>
 	struct DestroyHelper
 	{
-		static void destroy(T &obj) { obj.~T(); }
+		static void destroy(T& obj) { obj.~T(); }
 	};
 
 	/**
@@ -68,7 +68,7 @@ namespace HSLL
 	template <typename T>
 	struct DestroyHelper<T, true>
 	{
-		static void destroy(T &) {}
+		static void destroy(T&) {}
 	};
 
 	/**
@@ -80,7 +80,7 @@ namespace HSLL
 	 *          - No action for trivial types
 	 */
 	template <typename T>
-	void conditional_destroy(T &obj)
+	void conditional_destroy(T& obj)
 	{
 		DestroyHelper<T>::destroy(obj);
 	}
@@ -99,7 +99,7 @@ namespace HSLL
 	template <typename T>
 	struct BulkConstructHelper<T, COPY>
 	{
-		static void construct(T &ptr, T &source)
+		static void construct(T& ptr, T& source)
 		{
 			new (&ptr) T(source);
 		}
@@ -111,7 +111,7 @@ namespace HSLL
 	template <typename T>
 	struct BulkConstructHelper<T, MOVE>
 	{
-		static void construct(T &ptr, T &source)
+		static void construct(T& ptr, T& source)
 		{
 			new (&ptr) T(std::move(source));
 		}
@@ -125,7 +125,7 @@ namespace HSLL
 	 * @param source Source object reference for construction
 	 */
 	template <BULK_CMETHOD Method, typename T>
-	void bulk_construct(T &ptr, T &source)
+	void bulk_construct(T& ptr, T& source)
 	{
 		BulkConstructHelper<T, Method>::construct(ptr, source);
 	}
@@ -148,7 +148,7 @@ namespace HSLL
 	template <typename T>
 	struct PopHelper<T, ASSIGN>
 	{
-		static void extract(T &dest, T &src)
+		static void extract(T& dest, T& src)
 		{
 			dest = std::move(src);
 		}
@@ -161,7 +161,7 @@ namespace HSLL
 	template <typename T>
 	struct PopHelper<T, PLACE>
 	{
-		static void extract(T &dest, T &src)
+		static void extract(T& dest, T& src)
 		{
 			new (&dest) T(std::move(src));
 		}
@@ -178,7 +178,7 @@ namespace HSLL
 	 *          - PLACE: Safe copy-construction for non-movable types
 	 */
 	template <POP_METHOD Method, typename T>
-	void pop_extract(T &dest, T &src)
+	void pop_extract(T& dest, T& src)
 	{
 		PopHelper<T, Method>::extract(dest, src);
 	}
@@ -200,12 +200,12 @@ namespace HSLL
 		struct Node
 		{
 			TYPE data;	///< Storage for element data
-			Node *next; ///< Pointer to next node in circular list
+			Node* next; ///< Pointer to next node in circular list
 			Node() = default;
 		};
 
 		// Memory management
-		void *memoryBlock;		///< Raw memory block for node storage
+		void* memoryBlock;		///< Raw memory block for node storage
 		unsigned int isStopped; ///< Flag for stopping all operations
 
 		// Queue state tracking
@@ -213,8 +213,8 @@ namespace HSLL
 		unsigned int maxSize; ///< Maximum capacity of the queue
 
 		// List pointers
-		Node *dataListHead; ///< Pointer to first element in queue
-		Node *dataListTail; ///< Pointer to next insertion position
+		Node* dataListHead; ///< Pointer to first element in queue
+		Node* dataListTail; ///< Pointer to next insertion position
 
 		// Synchronization primitives
 		std::mutex dataMutex;				  ///< Mutex protecting all queue operations
@@ -247,7 +247,7 @@ namespace HSLL
 			if (!memoryBlock)
 				return false;
 
-			Node *nodes = (Node *)(memoryBlock);
+			Node* nodes = (Node*)(memoryBlock);
 
 			for (unsigned int i = 0; i < capacity - 1; ++i)
 				nodes[i].next = &nodes[i + 1];
@@ -296,7 +296,7 @@ namespace HSLL
 		{
 			std::unique_lock<std::mutex> lock(dataMutex);
 			notFullCond.wait(lock, [this]
-							 { return LIKELY(size != maxSize) || UNLIKELY(isStopped); });
+				{ return LIKELY(size != maxSize) || UNLIKELY(isStopped); });
 
 			if (UNLIKELY(size == maxSize))
 				return false;
@@ -321,11 +321,11 @@ namespace HSLL
 		 *          in-place if space becomes available and notifies consumers.
 		 */
 		template <class Rep, class Period, typename... Args>
-		bool wait_emplace(const std::chrono::duration<Rep, Period> &timeout, Args &&...args)
+		bool wait_emplace(const std::chrono::duration<Rep, Period>& timeout, Args &&...args)
 		{
 			std::unique_lock<std::mutex> lock(dataMutex);
 			bool success = notFullCond.wait_for(lock, timeout, [this]
-												{ return LIKELY(size != maxSize) || UNLIKELY(isStopped); });
+				{ return LIKELY(size != maxSize) || UNLIKELY(isStopped); });
 
 			if (UNLIKELY(!success || size == maxSize))
 				return false;
@@ -345,7 +345,7 @@ namespace HSLL
 		 * @return true if element was added, false if queue was full
 		 */
 		template <class T>
-		bool push(T &&element)
+		bool push(T&& element)
 		{
 			std::unique_lock<std::mutex> lock(dataMutex);
 
@@ -367,11 +367,11 @@ namespace HSLL
 		 * @return true if element was added, false if queue was stopped
 		 */
 		template <class T>
-		bool wait_push(T &&element)
+		bool wait_push(T&& element)
 		{
 			std::unique_lock<std::mutex> lock(dataMutex);
 			notFullCond.wait(lock, [this]
-							 { return LIKELY(size != maxSize) || UNLIKELY(isStopped); });
+				{ return LIKELY(size != maxSize) || UNLIKELY(isStopped); });
 
 			if (UNLIKELY(size == maxSize))
 				return false;
@@ -394,11 +394,11 @@ namespace HSLL
 		 * @return true if element was added, false on timeout or stop
 		 */
 		template <class T, class Rep, class Period>
-		bool wait_push(T &&element, const std::chrono::duration<Rep, Period> &timeout)
+		bool wait_push(T&& element, const std::chrono::duration<Rep, Period>& timeout)
 		{
 			std::unique_lock<std::mutex> lock(dataMutex);
 			bool success = notFullCond.wait_for(lock, timeout, [this]
-												{ return LIKELY(size != maxSize) || UNLIKELY(isStopped); });
+				{ return LIKELY(size != maxSize) || UNLIKELY(isStopped); });
 
 			if (UNLIKELY(!success || size == maxSize))
 				return false;
@@ -421,7 +421,7 @@ namespace HSLL
 		 *          on inserted quantity.
 		 */
 		template <BULK_CMETHOD METHOD = COPY>
-		unsigned int pushBulk(TYPE *elements, unsigned int count)
+		unsigned int pushBulk(TYPE* elements, unsigned int count)
 		{
 			if (UNLIKELY(count == 0))
 				return 0;
@@ -459,14 +459,14 @@ namespace HSLL
 		 *          copy or move semantics based on BULK_CONSTRUCT_METHOD template.
 		 */
 		template <BULK_CMETHOD METHOD = COPY>
-		unsigned int wait_pushBulk(TYPE *elements, unsigned int count)
+		unsigned int wait_pushBulk(TYPE* elements, unsigned int count)
 		{
 			if (UNLIKELY(count == 0))
 				return 0;
 
 			std::unique_lock<std::mutex> lock(dataMutex);
 			notFullCond.wait(lock, [this]
-							 { return LIKELY(size != maxSize) || UNLIKELY(isStopped); });
+				{ return LIKELY(size != maxSize) || UNLIKELY(isStopped); });
 
 			if (UNLIKELY(size == maxSize))
 				return 0;
@@ -502,14 +502,14 @@ namespace HSLL
 		 *          capacity when awakened.
 		 */
 		template <BULK_CMETHOD METHOD = COPY, class Rep, class Period>
-		unsigned int wait_pushBulk(TYPE *elements, unsigned int count, const std::chrono::duration<Rep, Period> &timeout)
+		unsigned int wait_pushBulk(TYPE* elements, unsigned int count, const std::chrono::duration<Rep, Period>& timeout)
 		{
 			if (UNLIKELY(count == 0))
 				return 0;
 
 			std::unique_lock<std::mutex> lock(dataMutex);
 			bool success = notFullCond.wait_for(lock, timeout, [this]
-												{ return LIKELY(size != maxSize) || UNLIKELY(isStopped); });
+				{ return LIKELY(size != maxSize) || UNLIKELY(isStopped); });
 
 			if (UNLIKELY(!success || size == maxSize))
 				return 0;
@@ -540,7 +540,7 @@ namespace HSLL
 		 * @return true if element was retrieved, false if queue was empty
 		 */
 		template <POP_METHOD M = ASSIGN>
-		bool pop(TYPE &element)
+		bool pop(TYPE& element)
 		{
 			std::unique_lock<std::mutex> lock(dataMutex);
 
@@ -563,11 +563,11 @@ namespace HSLL
 		 * @return true if element was retrieved, false if queue was stopped
 		 */
 		template <POP_METHOD M = ASSIGN>
-		bool wait_pop(TYPE &element)
+		bool wait_pop(TYPE& element)
 		{
 			std::unique_lock<std::mutex> lock(dataMutex);
 			notEmptyCond.wait(lock, [this]
-							  { return LIKELY(size) || UNLIKELY(isStopped); });
+				{ return LIKELY(size) || UNLIKELY(isStopped); });
 
 			if (UNLIKELY(!size))
 				return false;
@@ -591,11 +591,11 @@ namespace HSLL
 		 * @return true if element was retrieved, false on timeout or stop
 		 */
 		template <POP_METHOD M = ASSIGN, class Rep, class Period>
-		bool wait_pop(TYPE &element, const std::chrono::duration<Rep, Period> &timeout)
+		bool wait_pop(TYPE& element, const std::chrono::duration<Rep, Period>& timeout)
 		{
 			std::unique_lock<std::mutex> lock(dataMutex);
 			bool success = notEmptyCond.wait_for(lock, timeout, [this]
-												 { return LIKELY(size) || UNLIKELY(isStopped); });
+				{ return LIKELY(size) || UNLIKELY(isStopped); });
 
 			if (UNLIKELY(!success || !size))
 				return false;
@@ -617,7 +617,7 @@ namespace HSLL
 		 * @return Actual number of elements retrieved
 		 */
 		template <POP_METHOD M = ASSIGN>
-		unsigned int popBulk(TYPE *elements, unsigned int count)
+		unsigned int popBulk(TYPE* elements, unsigned int count)
 		{
 			if (UNLIKELY(count == 0))
 				return 0;
@@ -655,14 +655,14 @@ namespace HSLL
 		 * @return Actual number of elements retrieved before stop
 		 */
 		template <POP_METHOD M = ASSIGN>
-		unsigned int wait_popBulk(TYPE *elements, unsigned int count)
+		unsigned int wait_popBulk(TYPE* elements, unsigned int count)
 		{
 			if (UNLIKELY(count == 0))
 				return 0;
 
 			std::unique_lock<std::mutex> lock(dataMutex);
 			notEmptyCond.wait(lock, [this]
-							  { return LIKELY(size) || UNLIKELY(isStopped); });
+				{ return LIKELY(size) || UNLIKELY(isStopped); });
 
 			if (UNLIKELY(!size))
 				return 0;
@@ -697,14 +697,14 @@ namespace HSLL
 		 * @return Actual number of elements retrieved
 		 */
 		template <POP_METHOD M = ASSIGN, class Rep, class Period>
-		unsigned int wait_popBulk(TYPE *elements, unsigned int count, const std::chrono::duration<Rep, Period> &timeout)
+		unsigned int wait_popBulk(TYPE* elements, unsigned int count, const std::chrono::duration<Rep, Period>& timeout)
 		{
 			if (UNLIKELY(count == 0))
 				return 0;
 
 			std::unique_lock<std::mutex> lock(dataMutex);
 			bool success = notEmptyCond.wait_for(lock, timeout, [this]
-												 { return LIKELY(size) || UNLIKELY(isStopped); });
+				{ return LIKELY(size) || UNLIKELY(isStopped); });
 
 			if (UNLIKELY(!success || !size))
 				return 0;
@@ -751,8 +751,8 @@ namespace HSLL
 		{
 			if (memoryBlock)
 			{
-				Node *nodes = (Node *)memoryBlock;
-				Node *current = dataListHead;
+				Node* nodes = (Node*)memoryBlock;
+				Node* current = dataListHead;
 
 				for (unsigned int i = 0; i < size; ++i)
 				{
@@ -767,8 +767,8 @@ namespace HSLL
 		}
 
 		// Disable copying
-		TPBlockQueue(const TPBlockQueue &) = delete;
-		TPBlockQueue &operator=(const TPBlockQueue &) = delete;
+		TPBlockQueue(const TPBlockQueue&) = delete;
+		TPBlockQueue& operator=(const TPBlockQueue&) = delete;
 	};
 }
 #endif // HSLL_TPBLOCKQUEUE
