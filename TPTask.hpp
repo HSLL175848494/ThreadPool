@@ -38,7 +38,7 @@ namespace HSLL
 		};
 
 		template <typename Callable, typename... Ts>
-		static void invoke(Callable& callable, Ts &...args)
+		static void invoke(Callable &callable, Ts &...args)
 		{
 			callable(args...);
 		}
@@ -51,15 +51,15 @@ namespace HSLL
 		{
 			virtual ~TaskBase() = default;
 			virtual void execute() = 0;					  ///< Executes the stored task
-			virtual void cloneTo(void* memory) const = 0; ///< Copies task to preallocated memory
-			virtual void moveTo(void* memory) = 0;		  ///< Moves task to preallocated memory
+			virtual void cloneTo(void *memory) const = 0; ///< Copies task to preallocated memory
+			virtual void moveTo(void *memory) = 0;		  ///< Moves task to preallocated memory
 		};
 
 		/**
 		 * @brief Helper for applying tuple elements to a function
 		 */
 		template <typename Tuple, size_t... Is>
-		void apply_impl(Tuple& tup, index_sequence<Is...>)
+		void apply_impl(Tuple &tup, index_sequence<Is...>)
 		{
 			invoke(std::get<Is>(tup)...);
 		}
@@ -68,7 +68,7 @@ namespace HSLL
 		 * @brief Invokes function with arguments from tuple
 		 */
 		template <typename Tuple>
-		void tuple_apply(Tuple& tup)
+		void tuple_apply(Tuple &tup)
 		{
 			apply_impl(tup, typename make_index_sequence<std::tuple_size<Tuple>::value>::type{});
 		}
@@ -90,7 +90,7 @@ namespace HSLL
 			/**
 			 * @brief Constructs task with function and arguments
 			 */
-			TaskImpl(F&& func, Args &&...args)
+			TaskImpl(F &&func, Args &&...args)
 				: storage(std::forward<F>(func), std::forward<Args>(args)...) {}
 
 			/**
@@ -107,7 +107,7 @@ namespace HSLL
 			/**
 			 * @brief Copies task to preallocated memory
 			 */
-			void cloneTo(void* memory) const override
+			void cloneTo(void *memory) const override
 			{
 				new (memory) TaskImpl(*this);
 			}
@@ -115,44 +115,44 @@ namespace HSLL
 			/**
 			 * @brief Moves task to preallocated memory
 			 */
-			void moveTo(void* memory) override
+			void moveTo(void *memory) override
 			{
 				new (memory) TaskImpl(std::move(*this));
 			}
 		};
 	}
 
-	// Public type aliases (C++11 compatible)
+	/**
+	 * @brief Metafunction to compute the task implementation type and its size
+	 * @details Provides:
+	 *   - `type`: Concrete TaskImpl type for given function and arguments
+	 *   - `size`: Size in bytes of the TaskImpl type
+	 */
 	template <class F, class... Args>
-	using stack_task_t = TSTACK::TaskImpl<F, Args...>;
-
-	/// Size calculator for task objects
-	template <class F, class... Args>
-	struct stack_tsize
+	struct task_stack
 	{
-		static const unsigned int value = sizeof(stack_task_t<F, Args...>);
+		using type = typename TSTACK::TaskImpl<F, Args...>;
+		static constexpr unsigned int size = sizeof(type);
 	};
 
 #if __cplusplus >= 201402L
-	/// Compile-time size calculator for task objects
 	template <class F, class... Args>
-	constexpr unsigned int stack_tsize_v = sizeof(stack_task_t<F, Args...>);
+	static constexpr unsigned int task_stack_size = sizeof(task_stack<F, Args...>::size);
 #endif
 
 	/**
 	 * @brief Stack-allocated task container with fixed-size storage
-	 * @tparam TSIZE Size of internal storage buffer (64 - sizeof(std::max_align_t))
-	 * @tparam ALIGN Alignment requirement for storage (default = std::max_align_t)
+	 * @tparam TSIZE Size of internal storage buffer (default = 64)
+	 * @tparam ALIGN Alignment requirement for storage (default = 8)
 	 * @details Uses SBO (Small Buffer Optimization) to avoid heap allocation
 	 */
-	template <unsigned int TSIZE = 64 - sizeof(std::max_align_t), unsigned int ALIGN = sizeof(std::max_align_t)>
+	template <unsigned int TSIZE = 64, unsigned int ALIGN = 8>
 	class TaskStack
 	{
-		static_assert(ALIGN >= 1, "Alignment must be at least 1");
-		static_assert(TSIZE - (TSIZE % ALIGN) >= 8,
-			"Adjusted storage size must be at least 8 bytes");
-
-		alignas(ALIGN) char storage[TSIZE - (TSIZE % ALIGN)]; ///< Raw task storage
+		static_assert(TSIZE >= 2 * sizeof(void *), "TSIZE must >= 2 * sizeof(void*)");
+		static_assert(ALIGN >= alignof(void *), "Alignment must >= alignof(void*)");
+		static_assert(TSIZE % ALIGN == 0, "TSIZE must be a multiple of ALIGN");
+		alignas(ALIGN) char storage[TSIZE];
 
 		// SFINAE helper to detect nested TaskStack types
 		template <typename T>
@@ -160,12 +160,30 @@ namespace HSLL
 		{
 		};
 
-		template <unsigned int SZ>
-		struct is_generic_task<TaskStack<SZ>> : std::true_type
+		template <unsigned int S, unsigned int A>
+		struct is_generic_task<TaskStack<S, A>> : std::true_type
 		{
 		};
 
 	public:
+		/**
+		 * @brief Metafunction to validate task compatibility with storage
+		 * @value `true` if task can be stored, `false` otherwise
+		 * @note Size calculation uses adjusted storage size (TSIZE - (TSIZE % ALIGN))
+		 */
+		template <class F, class... Args>
+		struct task_invalid
+		{
+			static constexpr bool value = sizeof(typename task_stack<F, Args...>::type) <= sizeof(TaskStack) &&
+										  alignof(typename task_stack<F, Args...>::type) <= ALIGN;
+		};
+
+#if __cplusplus >= 201402L
+		template <class F, class... Args>
+		static constexpr bool task_invalid_v = sizeof(typename task_stack<F, Args...>::type) <= TSIZE &&
+											   alignof(typename task_stack<F, Args...>::type) <= ALIGN;
+#endif
+
 		/**
 		 * @brief Constructs task in internal storage
 		 * @tparam F Type of callable object
@@ -183,14 +201,12 @@ namespace HSLL
 		 *   Example: void bad_func(std::string&&) // Not allowed
 		 */
 		template <class F, class... Args,
-			typename std::enable_if<!is_generic_task<typename std::decay<F>::type>::value, int>::type = 0>
-		TaskStack(F&& func, Args &&...args)
+				  typename std::enable_if<!is_generic_task<typename std::decay<F>::type>::value, int>::type = 0>
+		TaskStack(F &&func, Args &&...args)
 		{
-			typedef stack_task_t<F, Args...> ImplType;
-			static_assert(sizeof(ImplType) <= sizeof(storage),
-				"TaskImpl size exceeds storage");
-			static_assert(alignof(ImplType) <= ALIGN,
-				"TaskImpl alignment exceeds storage alignment");
+			typedef typename task_stack<F, Args...>::type ImplType;
+			static_assert(sizeof(ImplType) <= TSIZE, "TaskImpl size exceeds storage");
+			static_assert(alignof(ImplType) <= ALIGN, "TaskImpl alignment exceeds storage alignment");
 			new (storage) ImplType(std::forward<F>(func), std::forward<Args>(args)...);
 		}
 
@@ -205,7 +221,7 @@ namespace HSLL
 		/**
 		 * @brief Copy constructor (deep copy)
 		 */
-		TaskStack(const TaskStack& other)
+		TaskStack(const TaskStack &other)
 		{
 			other.getBase()->cloneTo(storage);
 		}
@@ -213,7 +229,7 @@ namespace HSLL
 		/**
 		 * @brief Move constructor
 		 */
-		TaskStack(TaskStack&& other)
+		TaskStack(TaskStack &&other)
 		{
 			other.getBase()->moveTo(storage);
 		}
@@ -221,7 +237,7 @@ namespace HSLL
 		/**
 		 * @brief Copy assignment operator
 		 */
-		TaskStack& operator=(const TaskStack& other)
+		TaskStack &operator=(const TaskStack &other)
 		{
 			if (this != &other)
 			{
@@ -234,7 +250,7 @@ namespace HSLL
 		/**
 		 * @brief Move assignment operator
 		 */
-		TaskStack& operator=(TaskStack&& other)
+		TaskStack &operator=(TaskStack &&other)
 		{
 			if (this != &other)
 			{
@@ -256,17 +272,17 @@ namespace HSLL
 		/**
 		 * @brief Gets typed pointer to task storage
 		 */
-		TSTACK::TaskBase* getBase()
+		TSTACK::TaskBase *getBase()
 		{
-			return reinterpret_cast<TSTACK::TaskBase*>(storage);
+			return (TSTACK::TaskBase *)storage;
 		}
 
 		/**
 		 * @brief Gets const-typed pointer to task storage
 		 */
-		const TSTACK::TaskBase* getBase() const
+		const TSTACK::TaskBase *getBase() const
 		{
-			return reinterpret_cast<const TSTACK::TaskBase*>(storage);
+			return (const TSTACK::TaskBase *)storage;
 		}
 	};
 }

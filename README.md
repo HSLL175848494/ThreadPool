@@ -6,9 +6,10 @@ HSLL::ThreadPool 是一个高性能C++11线程池实现，具有以下核心特�
 1. **多队列架构** - 每个工作线程拥有独立的任务队列，减少锁争用
 2. **核心绑定** - 支持将工作线程绑定到指定CPU核心(Linux/Windows), 避免缓存失效
 3. **负载均衡** - 采用round-robin+二级队列选取机制+任务窃取机制实现负载均衡
-4. **多提交接口** - 提供阻塞/非阻塞、单任务/批量任务等多种接口
-5. **定长任务容器** - 基于栈的预分配任务容器，将所有参数储存在栈上，避免动态申请空间
-6. **优雅关闭** - 支持立即关闭和等待任务完成的优雅关闭模式
+4. **定长任务容器** - 基于栈的预分配任务容器，将所有参数储存在栈上，避免动态申请空间
+5. **多提交接口** - 提供阻塞/非阻塞、单任务/批量任务等多种接口
+6. **双端插入支持** - 支持从队列头/尾插入以适应不同任务优先级
+7. **优雅关闭** - 支持立即关闭和等待任务完成的优雅关闭模式
 
 ## 引入
 ```cpp
@@ -27,7 +28,6 @@ class ThreadPool
 ```
 - `T`: 任务类型，需实现 `execute()` 方法，默认使用基于栈的预分配任务容器
 
-
 #### 初始化方法
 ```cpp
 bool init(unsigned queueLength, unsigned threadNum, unsigned batchSize = 1)
@@ -35,46 +35,55 @@ bool init(unsigned queueLength, unsigned threadNum, unsigned batchSize = 1)
 - **参数**：
   - `queueLength`: 每个工作队列的容量
   - `threadNum`: 工作线程数量
-  - `batchSize`: 单次处理任务数（>=1）
+  - `batchSize`: 单次处理任务数
 - **返回值**：初始化成功返回true
 - **功能**：分配资源并启动工作线程
 
 #### 任务提交接口
 
+```cpp
+
+enum INSERT_POS
+{
+    TAIL, //插入到队列尾部 
+    HEAD  //插入到队列头部
+};
+```
+
 1. **单任务提交(就地构造)**
 ```cpp
-template <typename... Args>
-bool emplace(Args&&... args) // 非阻塞
+template <INSERT_POS POS = TAIL, typename... Args>
+bool emplace(Args &&...args)
 
-template <typename... Args>
-bool wait_emplace(Args&&... args) // 阻塞
+template <INSERT_POS POS = TAIL, typename... Args>
+bool wait_emplace(Args &&...args)
 
-template <class Rep, class Period, typename... Args>
-bool wait_emplace(const duration<Rep, Period>& timeout, Args&&... args) // 超时阻塞
+template <INSERT_POS POS = TAIL, class Rep, class Period, typename... Args>
+bool wait_emplace(const std::chrono::duration<Rep, Period> &timeout, Args &&...args)
 ```
 
 2. **单任务提交**
 ```cpp
-template <typename U>
-bool append(U&& task) // 非阻塞
+template <INSERT_POS POS = TAIL, class U>
+bool append(U &&task)
 
-template <class U>
-bool wait_append(U&& task) // 阻塞
+template <INSERT_POS POS = TAIL, class U>
+bool wait_append(U &&task)
 
-template <class U, class Rep, class Period>
-bool wait_append(U&& task, const duration<Rep, Period>& timeout) // 超时阻塞
+template <INSERT_POS POS = TAIL, class U, class Rep, class Period>
+bool wait_append(U &&task, const std::chrono::duration<Rep, Period> &timeout)
 ```
 
 3. **批量提交**
 ```cpp
-template <BULK_CMETHOD METHOD = COPY>
-unsigned append_bulk(T* tasks, unsigned count) // 非阻塞批量
+template <BULK_CMETHOD METHOD = COPY, INSERT_POS POS = TAIL>
+unsigned int append_bulk(T *tasks, unsigned int count)
 
-template <BULK_CMETHOD METHOD = COPY>
-unsigned wait_appendBulk(T* tasks, unsigned count) // 阻塞批量
+template <BULK_CMETHOD METHOD = COPY, INSERT_POS POS = TAIL>
+unsigned int wait_appendBulk(T *tasks, unsigned int count)
 
-template <BULK_CMETHOD METHOD = COPY, class Rep, class Period>// 超时阻塞
-unsigned wait_appendBulk(T* tasks, unsigned count, const duration<Rep, Period>& timeout)
+template <BULK_CMETHOD METHOD = COPY, INSERT_POS POS = TAIL, class Rep, class Period>
+unsigned int wait_appendBulk(T *tasks, unsigned int count, const std::chrono::duration<Rep, Period> &timeout)
 ```
 ```cpp
 enum BULK_CMETHOD
@@ -83,7 +92,6 @@ enum BULK_CMETHOD
   MOVE  // 使用移动语义，将任务移动到队列
 };
 ```
-
 #### 关闭方法
 ```cpp
 void exit(bool shutdownPolicy = true)

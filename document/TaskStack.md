@@ -9,7 +9,6 @@ TaskStack 是一个基于栈内存的任务容器模板类，通过小缓冲区�
 - **类型擦除**：可存储函数指针、lambda、函数对象等任意可调用类型
 - **参数绑定**：支持绑定任意数量/类型的参数
 - **语义支持**：支持拷贝/移动构造和赋值操作
-- **智能对齐**：智能调整存储大小保证对齐要求
 - **编译期检查**：静态断言确保存储空间充足
 
 ---
@@ -107,33 +106,30 @@ sequenceDiagram
 ## 存储管理 (更新)
 
 ### 容量控制
-- 默认存储大小`64 - sizeof(std::max_align_t)`字节，可通过模板参数调整：
+- 默认存储大小64字节，可通过模板参数调整：
   ```cpp
-  TaskStack<256> large_task(...);
-  ```
-- **智能对齐调整**：存储大小自动向下对齐到指定对齐要求
-  ```cpp
-  // 实际存储大小 = TSIZE - (TSIZE % ALIGN) = sizeof(TaskStack<TSIZE, ALIGN>)
-  TaskStack<63,4> task; // 实际大小为60字节(当ALIGN=4时)
+  TaskStack<256> large_task(...);//256字节
   ```
 
-### 编译期检查
-```cpp
-// 存储空间检查
-static_assert(sizeof(TaskImpl) <= sizeof(storage));
-static_assert(alignof(TaskImpl) <= ALIGN);
-```
+### 对齐控制
+- 默认8字节对齐，可通过模板参数调整：
+  ```cpp
+  TaskStack<64,16> task;//64字节存储，16字节对齐
+  ```
 
-### 查询任务所需大小
-
-```cpp
-// 编译期获取任务所需大小（需要c++14）
-constexpr unsigned int needed_size = stack_tsize_v<F, Args...>;
-```
+### 编译期查询
 
 ```cpp
-// 获取任务所需大小
-unsigned int needed_size = stack_tsize<F, Args...>::value;
+// 编译期获取任务所需大小
+constexpr unsigned int needed_size_c11 = task_stack<F, Args...>::size;
+constexpr unsigned int needed_size_c14 = task_stack_V<F, Args...>;
+
+// 编译期获取任务是否能被TaskStack存储
+using task_type = TaskStack<?,?>;
+constexpr bool isInvalid_c11= task_type::task_invalid<F, Args...>::value;
+constexpr bool isInvalid_c14= task_type::task_invalid_v<F, Args...>;
+
+
 ```
 
 ---
@@ -145,12 +141,10 @@ unsigned int needed_size = stack_tsize<F, Args...>::value;
    - 引用捕获/指针传递的参数需保证在任务执行前有效
    - 推荐对长期对象使用引用捕获/指针转递
 3. **存储溢出**：
-   - 超出预设大小会导致编译错误
-   - 可通过`stack_tsize<F, Args...>::value`预计算所需大小
-   - 可通过`sizeof(TaskStack<TSIZE,ALIGN>)`获取存储空间大小
+   - 任务超出可用大小会导致编译错误
 4. **移动语义**：
    - 移动构造后源对象失效
    - 任务对象本身支持移动语义
 5. **对齐要求**：
-   - 实际存储大小可能小于指定大小（对齐调整）
+   - 存储大小必须为对齐值的整数倍
    - 确保任务对齐要求不超过`ALIGN`设置
