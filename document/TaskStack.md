@@ -125,14 +125,12 @@ constexpr unsigned int needed_size_c11 = task_stack<F, Args...>::size;
 constexpr unsigned int needed_size_c14 = task_stack_V<F, Args...>;
 
 // 编译期获取任务是否能被TaskStack存储
-using task_type = TaskStack<?,?>;
-constexpr bool isInvalid_c11= task_type::task_invalid<F, Args...>::value;
-constexpr bool isInvalid_c14= task_type::task_invalid_v<F, Args...>;
+using type = TaskStack<?,?>;
+constexpr bool isInvalid_c11= type::task_invalid<F, Args...>::value;
+constexpr bool isInvalid_c14= type::task_invalid_v<F, Args...>;
 
 
 ```
-
----
 
 ## 注意事项
 
@@ -148,3 +146,47 @@ constexpr bool isInvalid_c14= task_type::task_invalid_v<F, Args...>;
 5. **对齐要求**：
    - 存储大小必须为对齐值的整数倍
    - 确保任务对齐要求不超过`ALIGN`设置
+
+## HeapCallable
+
+**设计目的**： 补充栈上任务的不足，作为TaskStack的可调用对象参数
+
+### 设计要点
+
+1. **自动内存管理**：参数存储在堆上，生命周期由引用计数自动管理
+2. **动态申请空间**：适合作为大任务的容器，与`TaskStack`配合实现自动存储策略
+
+### 构造
+
+```cpp
+    //工具函数
+    auto callable=hbind(f ,args...);//HeapCallable对象，参数存储可能抛出内存分配异常
+
+    //默认构造(需要显式指定模板类型)
+    HeapCallable<...> callable(f, args...);//HeapCallable对象，参数存储可能抛出内存分配异常
+
+    callable();
+
+```
+### 使用示例
+
+```cpp
+    auto callable=hbind(f ,args...);
+
+    //用于实例化TaskStack对象
+    TaskStack<> t(callable);
+
+```
+
+### 自动适配
+
+```cpp
+    void add(int a, int b){}
+    using Type = TaskStack<>;
+
+    //当任务超过栈容量时自动使用HeapCallable类型,此时参数存储可能抛出内存分配异常
+    auto task = Type::make_auto(add, 1, 2);
+    task.execute();
+```
+
+**注意**：自动适配仍然需要保证TaskStack可储存HeapCallable对象。 即32位程序需要(TSIZE>=12)，64位程序需要(TSIZE>=24）

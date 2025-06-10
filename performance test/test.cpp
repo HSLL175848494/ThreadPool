@@ -8,11 +8,11 @@ using namespace HSLL;
 
 #define WORKER 1
 #define PRODUCER 1
-#define TSIZE 16
-#define PEER 10000000  // Increase task count for multi-round testing
-#define QUEUELEN 10000
 #define SUBMIT_BATCH 1
 #define PROCESS_BATCH 1
+#define PEER 10000000 // Increase task count for multi-round testing
+#define TSIZE 16
+#define QUEUELEN 10000
 
 ThreadPool<TaskStack<TSIZE>> pool;
 using task_type = TaskStack<TSIZE>;
@@ -91,6 +91,13 @@ double test_single_submit()
 	return duration.count();
 }
 
+#include <functional>
+
+void add(int a, int b)
+{
+	printf("\n=== Configuration Parameters ===\n");
+}
+
 int main() // g++ test.cpp -o test -std=c++11
 {
 	const long long total_tasks = static_cast<long long>(PEER) * PRODUCER;
@@ -99,22 +106,22 @@ int main() // g++ test.cpp -o test -std=c++11
 	printf("%-20s: %d\n", "Submit Batch Size", SUBMIT_BATCH);
 	printf("%-20s: %d\n", "Process Batch Size", PROCESS_BATCH);
 	printf("%-20s: %d\n", "Task Space Size", TSIZE);
-	printf("%-20s: %u32\n", "Actual Task Size", task_stack<decltype(test)>::size);
+	printf("%-20s: %u\n", "Actual Task Size", task_stack<decltype(test)>::size);
 	printf("%-20s: %d\n", "Producer Threads", PRODUCER);
 	printf("%-20s: %d\n", "Worker Threads", WORKER);
 	printf("%-20s: %d\n", "Queue Length", QUEUELEN);
-	printf("%-20s: %lld bytes\n", "Memory Usage", static_cast<long long>((8 + TSIZE) * QUEUELEN * WORKER));
+	printf("%-20s: %lu\n", "Memory Usage", sizeof(task_type) * QUEUELEN * WORKER);
 	printf("%-20s: %d\n", "Tasks per Producer", PEER);
 	printf("%-20s: %lld\n", "Total Tasks", total_tasks);
 
 	// Single task submission test
 	double single_time = test_single_submit();
-	double single_throughput = total_tasks / (single_time / 1000.0) / 1000000.0; // M/s
+	double single_throughput = total_tasks / (single_time / 1000.0) / 1000000.0;		 // M/s
 	double single_time_per_million = (single_time / 1000.0) / (total_tasks / 1000000.0); // s/M
 
 	// Batch submission test
 	double bulk_time = test_bulk_submit();
-	double bulk_throughput = total_tasks / (bulk_time / 1000.0) / 1000000.0; // M/s
+	double bulk_throughput = total_tasks / (bulk_time / 1000.0) / 1000000.0;		 // M/s
 	double bulk_time_per_million = (bulk_time / 1000.0) / (total_tasks / 1000000.0); // s/M
 
 	printf("\n=== Test Results ===\n");
