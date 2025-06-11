@@ -5,6 +5,7 @@
 #include <tuple>
 #include <memory>
 #include <cstddef>
+#include<exception>
 #include <type_traits>
 
 namespace HSLL
@@ -40,18 +41,6 @@ namespace HSLL
 	}
 
 	/**
-	 * @brief Base interface for type-erased task objects
-	 * @details Provides virtual methods for task execution and storage management
-	 */
-	struct TaskBase
-	{
-		virtual ~TaskBase() = default;
-		virtual void execute() = 0;					  ///< Executes the stored task
-		virtual void cloneTo(void* memory) const = 0; ///< Copies task to preallocated memory
-		virtual void moveTo(void* memory) = 0;		  ///< Moves task to preallocated memory
-	};
-
-	/**
 	 * @brief Helper for applying tuple elements to a function
 	 */
 	template <typename Tuple, size_t... Is>
@@ -68,69 +57,6 @@ namespace HSLL
 	{
 		apply_impl(tup, typename make_index_sequence<std::tuple_size<Tuple>::value>::type{});
 	}
-
-	/**
-	 * @brief Concrete task implementation storing function and arguments
-	 * @tparam F Type of callable object
-	 * @tparam Args Types of bound arguments
-	 * @details Stores decayed copies of function and arguments in a tuple
-	 */
-	template <class F, class... Args>
-	struct TaskImpl : TaskBase
-	{
-		std::tuple<typename std::decay<F>::type, typename std::decay<Args>::type...> storage;
-
-		/**
-		 * @brief Constructs task with function and arguments
-		 */
-		TaskImpl(F&& func, Args &&...args)
-			: storage(std::forward<F>(func), std::forward<Args>(args)...) {}
-
-		/**
-		 * @brief Executes stored task with bound arguments
-		 * @details Unpacks tuple and invokes stored callable
-		 * @note Arguments are ALWAYS passed as lvalues during invocation
-		 *       regardless of original construction value category
-		 */
-		void execute() override
-		{
-			tuple_apply(storage);
-		}
-
-		/**
-		 * @brief Copies task to preallocated memory
-		 */
-		void cloneTo(void* memory) const override
-		{
-			new (memory) TaskImpl(*this);
-		}
-
-		/**
-		 * @brief Moves task to preallocated memory
-		 */
-		void moveTo(void* memory) override
-		{
-			new (memory) TaskImpl(std::move(*this));
-		}
-	};
-
-	/**
-	 * @brief Metafunction to compute the task implementation type and its size
-	 * @details Provides:
-	 *   - `type`: Concrete TaskImpl type for given function and arguments
-	 *   - `size`: Size in bytes of the TaskImpl type
-	 */
-	template <class F, class... Args>
-	struct task_stack
-	{
-		using type = TaskImpl<F, Args...>;
-		static constexpr unsigned int size = sizeof(type);
-	};
-
-#if __cplusplus >= 201402L
-	template <class F, class... Args>
-	static constexpr unsigned int task_stack_size = sizeof(task_stack<F, Args...>::size);
-#endif
 
 	/**
 	 * @brief Heap-allocated type-erased callable wrapper with shared ownership
@@ -205,6 +131,83 @@ namespace HSLL
 	{
 		return HeapCallable<F, Args...>(std::forward<F>(func), std::forward<Args>(args)...);
 	}
+
+	/**
+ * @brief Base interface for type-erased task objects
+ * @details Provides virtual methods for task execution and storage management
+ */
+	struct TaskBase
+	{
+		virtual ~TaskBase() = default;
+		virtual void execute() = 0;					  ///< Executes the stored task
+		virtual void cloneTo(void* memory) const = 0; ///< Copies task to preallocated memory
+		virtual void moveTo(void* memory) = 0;		  ///< Moves task to preallocated memory
+	};
+
+	/**
+	 * @brief Concrete task implementation storing function and arguments
+	 * @tparam F Type of callable object
+	 * @tparam Args Types of bound arguments
+	 * @details Stores decayed copies of function and arguments in a tuple
+	 */
+	template <class F, class... Args>
+	struct TaskImpl : TaskBase
+	{
+		std::tuple<typename std::decay<F>::type, typename std::decay<Args>::type...> storage;
+
+		/**
+		 * @brief Constructs task with function and arguments
+		 */
+		TaskImpl(F&& func, Args &&...args)
+			: storage(std::forward<F>(func), std::forward<Args>(args)...) {
+		}
+
+		/**
+		 * @brief Executes stored task with bound arguments
+		 * @details Unpacks tuple and invokes stored callable
+		 * @note Arguments are ALWAYS passed as lvalues during invocation
+		 *       regardless of original construction value category
+		 */
+		void execute() override
+		{
+			tuple_apply(storage);
+		}
+
+		/**
+		 * @brief Copies task to preallocated memory
+		 */
+		void cloneTo(void* memory) const override
+		{
+			new (memory) TaskImpl(*this);
+		}
+
+		/**
+		 * @brief Moves task to preallocated memory
+		 */
+		void moveTo(void* memory) override
+		{
+			new (memory) TaskImpl(std::move(*this));
+		}
+	};
+
+	/**
+	 * @brief Metafunction to compute the task implementation type and its size
+	 * @details Provides:
+	 *   - `type`: Concrete TaskImpl type for given function and arguments
+	 *   - `size`: Size in bytes of the TaskImpl type
+	 */
+	template <class F, class... Args>
+	struct task_stack
+	{
+		using type = TaskImpl<F, Args...>;
+		static constexpr unsigned int size = sizeof(type);
+	};
+
+#if __cplusplus >= 201402L
+	template <class F, class... Args>
+	static constexpr unsigned int task_stack_size = sizeof(task_stack<F, Args...>::size);
+#endif
+
 
 	/**
 	 * @brief Stack-allocated task container with fixed-size storage

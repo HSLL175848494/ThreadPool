@@ -91,6 +91,12 @@ double test_single_submit()
 	return duration.count();
 }
 
+struct MyStruct
+{
+public:
+	MyStruct() {};
+};
+
 int main() // g++ test.cpp -o test -std=c++11
 {
 	const long long total_tasks = static_cast<long long>(PEER) * PRODUCER;
