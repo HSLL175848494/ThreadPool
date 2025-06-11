@@ -149,44 +149,53 @@ constexpr bool isInvalid_c14= type::task_invalid_v<F, Args...>;
 
 ## HeapCallable
 
-**设计目的**： 补充栈上任务的不足，作为TaskStack的可调用对象参数
+**设计目的**： 补充栈上任务的不足，适合作为大任务的容器(TaskStack的构造需要的可调用对象参数)
 
 ### 设计要点
 
-1. **自动内存管理**：参数存储在堆上，生命周期由引用计数自动管理
-2. **动态申请空间**：适合作为大任务的容器，与`TaskStack`配合实现自动存储策略
+**自动内存管理**：参数存储在堆上，生命周期由引用计数自动管理
 
 ### 构造
 
 ```cpp
-    //工具函数
-    auto callable=hbind(f ,args...);//HeapCallable对象，参数存储可能抛出内存分配异常
+    //使用工具函数hbind构造
+    auto callable=hbind(f ,args...);//返回HeapCallable对象。可能抛出内存分配异常
 
     //默认构造(需要显式指定模板类型)
-    HeapCallable<...> callable(f, args...);//HeapCallable对象，参数存储可能抛出内存分配异常
+    HeapCallable<...> callable(f, args...);//返回HeapCallable对象，可能抛出内存分配异常
 
+    //调用
     callable();
 
 ```
-### 使用示例
+### 作为TaskStack的可调用对象使用示例
 
 ```cpp
+    //构造可拷贝对象
     auto callable=hbind(f ,args...);
 
-    //用于实例化TaskStack对象
-    TaskStack<> t(callable);
+    //实例化TaskStack对象(包装成栈任务)
+    TaskStack<> task(callable);
 
+    //调用
+    task.execute();
+    
 ```
 
-### 自动适配
+### 自适应存储任务
 
 ```cpp
-    void add(int a, int b){}
-    using Type = TaskStack<>;
+    //任务函数
+    void test(int a, int b){};
 
-    //当任务超过栈容量时自动使用HeapCallable类型,此时参数存储可能抛出内存分配异常
-    auto task = Type::make_auto(add, 1, 2);
+    //返回TaskStack的实例。默认将参数存储在栈上，如果无法存储
+    //则封装成HeapCallable对象存储（原始可调用对象和参数储存在堆上）
+    //等同于TaskStack<> task(Callable)
+    TaskStack<> task = Type::make_auto(test, 1, 2);
+
+    //调用
     task.execute();
 ```
 
-**注意**：自动适配仍然需要保证TaskStack可储存HeapCallable对象。 即32位程序需要(TSIZE>=12)，64位程序需要(TSIZE>=24）
+**自动适配需要保证TaskStack可储存HeapCallable对象。32位程序需要(TSIZE>=12)，64位程序需要(TSIZE>=24）
+因此采用大于24的TSIZE即可保证能存储一切可调用对象, 但仍建议选取较大的TSIZE值以避免频繁内存分配释放**
