@@ -197,5 +197,5 @@ constexpr bool isInvalid_c14= type::task_invalid_v<F, Args...>;
     task.execute();
 ```
 
-**自动适配需要保证TaskStack可储存HeapCallable对象。32位程序需要(TSIZE>=12)，64位程序需要(TSIZE>=24）
+**自动适配需要保证TaskStack可储存HeapCallable对象。32位程序需要(TSIZE>=12)，64位程序需要(TSIZE>=24）。
 因此采用大于24的TSIZE即可保证能存储一切可调用对象, 但仍建议选取较大的TSIZE值以避免频繁内存分配释放**
