@@ -5,7 +5,6 @@
 #include <tuple>
 #include <memory>
 #include <cstddef>
-#include<exception>
 #include <type_traits>
 
 namespace HSLL
@@ -83,7 +82,7 @@ namespace HSLL
 		{
 		};
 
-		/// @brief Storage for decayed function and arguments with shared ownership
+		//Storage for decayed function and arguments with shared ownership
 		using Package = std::tuple<typename std::decay<F>::type, typename std::decay<Args>::type...>;
 
 		std::shared_ptr<Package> storage;

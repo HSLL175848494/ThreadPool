@@ -65,25 +65,25 @@ bool wait_emplace(const std::chrono::duration<Rep, Period> &timeout, Args &&...a
 2. **单任务提交**
 ```cpp
 template <INSERT_POS POS = TAIL, class U>
-bool append(U &&task)
+bool enqueue(U &&task)
 
 template <INSERT_POS POS = TAIL, class U>
-bool wait_append(U &&task)
+bool wait_enqueue(U &&task)
 
 template <INSERT_POS POS = TAIL, class U, class Rep, class Period>
-bool wait_append(U &&task, const std::chrono::duration<Rep, Period> &timeout)
+bool wait_enqueue(U &&task, const std::chrono::duration<Rep, Period> &timeout)
 ```
 
 3. **批量提交**
 ```cpp
 template <BULK_CMETHOD METHOD = COPY, INSERT_POS POS = TAIL>
-unsigned int append_bulk(T *tasks, unsigned int count)
+unsigned int enqueue_bulk(T *tasks, unsigned int count)
 
 template <BULK_CMETHOD METHOD = COPY, INSERT_POS POS = TAIL>
-unsigned int wait_appendBulk(T *tasks, unsigned int count)
+unsigned int wait_enqueue_bulk(T *tasks, unsigned int count)
 
 template <BULK_CMETHOD METHOD = COPY, INSERT_POS POS = TAIL, class Rep, class Period>
-unsigned int wait_appendBulk(T *tasks, unsigned int count, const std::chrono::duration<Rep, Period> &timeout)
+unsigned int wait_enqueue_bulk(T *tasks, unsigned int count, const std::chrono::duration<Rep, Period> &timeout)
 ```
 ```cpp
 enum BULK_CMETHOD
@@ -120,7 +120,7 @@ pool.emplace([]{
 void taskFunc(int a, double b) { /*...*/ }
 
 //添加任务示例
-pool.emplace(taskFunc, 42, 3.14);
+pool.enqueue(taskFunc, 42, 3.14);
 
 //异步示例
 std::promise<int> resultPromise;
@@ -128,7 +128,7 @@ auto resultFuture = resultPromise.get_future();
 pool.emplace([&resultPromise] {
       int sum = 0;
       for (int i = 1; i <= 100; i++) {
-        um += i;
+        sum += i;
    }
   resultPromise.set_value(sum); 
 });
@@ -143,7 +143,7 @@ pool.exit(true); // 优雅关闭
 graph TD
     A[任务提交] --> B{提交方式}
     B -->|emplace/wait_emplace| C[在队列存储中<br/>直接构造任务]
-    B -->|append/wait_append| D[用户构造任务对象<br/>拷贝/移动到队列存储]
+    B -->|enqueue/wait_enqueue| D[用户构造任务对象<br/>拷贝/移动到队列存储]
     
     C --> E[工作线程从队列取出任务]
     D --> E
@@ -155,7 +155,7 @@ graph TD
 ```
 
 ### 性能优化建议
-1. **批量提交**：优先使用`append_bulk`处理任务组
+1. **批量提交**：优先使用`enqueue_bulk`处理任务组
 2. **任务大小**：根据任务复杂度选择合适存储模板参数
 3. **线程数量**：通常设置为CPU核心数
 4. **队列容量**：根据任务吞吐量需求调整
@@ -179,8 +179,8 @@ graph TD
 | 方法类型      | 非阻塞      | 阻塞等待    | 超时等待      |
 |-------------|------------|------------|--------------|
 | 单任务提交    | emplace    | wait_emplace| wait_emplace |
-| 预构建任务   | append     | wait_append| wait_append  |
-| 批量任务     | append_bulk| wait_appendBulk | wait_appendBulk |
+| 预构建任务   | enqueue     | wait_enqueue| wait_enqueue  |
+| 批量任务     | enqueue_bulk| wait_enqueue_bulk | wait_enqueue_bulk |
 
 ## 平台支持
 - Linux (pthread affinity)
