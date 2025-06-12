@@ -65,7 +65,7 @@ namespace HSLL
 		bool shutdownPolicy;			  ///< Thread pool shutdown policy: true for graceful shutdown
 		unsigned int threadNum;			  ///< Number of worker threads/queues to create
 		unsigned int queueLength;		  ///< Capacity of each internal queue
-		TPBlockQueue<T>* queues;		  ///< Per-worker task queues
+		TPBlockQueue<T> *queues;		  ///< Per-worker task queues
 		std::vector<std::thread> workers; ///< Worker thread collection
 		std::atomic<unsigned int> index;  ///< Atomic counter for round-robin task distribution to worker queues
 
@@ -120,7 +120,7 @@ namespace HSLL
 			for (unsigned i = 0; i < threadNum; ++i)
 			{
 				workers.emplace_back([this, i, cores, batchSize]
-					{
+									 {
 						if (cores > 0)
 						{
 							unsigned id = i % cores;
@@ -171,7 +171,7 @@ namespace HSLL
 		 * @return true if task was added, false on timeout or thread pool stop
 		 */
 		template <INSERT_POS POS = TAIL, class Rep, class Period, typename... Args>
-		bool wait_emplace(const std::chrono::duration<Rep, Period>& timeout, Args &&...args)
+		bool wait_emplace(const std::chrono::duration<Rep, Period> &timeout, Args &&...args)
 		{
 			return select_queue().template wait_emplace<POS>(timeout, std::forward<Args>(args)...);
 		}
@@ -184,7 +184,7 @@ namespace HSLL
 		 * @return true if task was enqueued, false if queue was full
 		 */
 		template <INSERT_POS POS = TAIL, class U>
-		bool enqueue(U&& task)
+		bool enqueue(U &&task)
 		{
 			return select_queue().template push<POS>(std::forward<U>(task));
 		}
@@ -197,7 +197,7 @@ namespace HSLL
 		 * @return true if task was added, false if thread pool was stopped
 		 */
 		template <INSERT_POS POS = TAIL, class U>
-		bool wait_enqueue(U&& task)
+		bool wait_enqueue(U &&task)
 		{
 			return select_queue().template wait_push<POS>(std::forward<U>(task));
 		}
@@ -213,7 +213,7 @@ namespace HSLL
 		 * @return true if task was added, false on timeout or thread pool stop
 		 */
 		template <INSERT_POS POS = TAIL, class U, class Rep, class Period>
-		bool wait_enqueue(U&& task, const std::chrono::duration<Rep, Period>& timeout)
+		bool wait_enqueue(U &&task, const std::chrono::duration<Rep, Period> &timeout)
 		{
 			return select_queue().template wait_push<POS>(std::forward<U>(task), timeout);
 		}
@@ -227,7 +227,7 @@ namespace HSLL
 		 * @return Actual number of tasks enqueued
 		 */
 		template <BULK_CMETHOD METHOD = COPY, INSERT_POS POS = TAIL>
-		unsigned int enqueue_bulk(T* tasks, unsigned int count)
+		unsigned int enqueue_bulk(T *tasks, unsigned int count)
 		{
 			return select_queue_for_bulk(count / 2).template pushBulk<METHOD, POS>(tasks, count);
 		}
@@ -241,7 +241,7 @@ namespace HSLL
 		 * @return Actual number of tasks added before stop
 		 */
 		template <BULK_CMETHOD METHOD = COPY, INSERT_POS POS = TAIL>
-		unsigned int wait_enqueue_bulk(T* tasks, unsigned int count)
+		unsigned int wait_enqueue_bulk(T *tasks, unsigned int count)
 		{
 			return select_queue().template wait_pushBulk<METHOD, POS>(tasks, count);
 		}
@@ -258,7 +258,7 @@ namespace HSLL
 		 * @return Actual number of tasks added (may be less than count)
 		 */
 		template <BULK_CMETHOD METHOD = COPY, INSERT_POS POS = TAIL, class Rep, class Period>
-		unsigned int wait_enqueue_bulk(T* tasks, unsigned int count, const std::chrono::duration<Rep, Period>& timeout)
+		unsigned int wait_enqueue_bulk(T *tasks, unsigned int count, const std::chrono::duration<Rep, Period> &timeout)
 		{
 			return select_queue().template wait_pushBulk<METHOD, POS>(tasks, count, timeout);
 		}
@@ -278,7 +278,7 @@ namespace HSLL
 					queues[i].stopWait();
 				}
 
-				for (auto& worker : workers)
+				for (auto &worker : workers)
 				{
 					if (worker.joinable())
 						worker.join();
@@ -302,8 +302,8 @@ namespace HSLL
 		}
 
 		// Deleted copy operations
-		ThreadPool(const ThreadPool&) = delete;
-		ThreadPool& operator=(const ThreadPool&) = delete;
+		ThreadPool(const ThreadPool &) = delete;
+		ThreadPool &operator=(const ThreadPool &) = delete;
 
 	private:
 		/**
@@ -314,7 +314,7 @@ namespace HSLL
 			return index.fetch_add(1, std::memory_order_relaxed) % threadNum;
 		}
 
-		TPBlockQueue<T>& select_queue() noexcept
+		TPBlockQueue<T> &select_queue() noexcept
 		{
 			unsigned int index = next_index();
 			if (queues[index].size < queueLength)
@@ -325,7 +325,7 @@ namespace HSLL
 			return queues[(index + half) % threadNum];
 		}
 
-		TPBlockQueue<T>& select_queue_for_bulk(unsigned required_space) noexcept
+		TPBlockQueue<T> &select_queue_for_bulk(unsigned required_space) noexcept
 		{
 			unsigned int index = next_index();
 			if (queues[index].size + required_space <= queueLength)
@@ -341,7 +341,7 @@ namespace HSLL
 		 */
 		void worker(unsigned int index, unsigned batchSize) noexcept
 		{
-			std::vector<TPBlockQueue<T>*> other;
+			std::vector<TPBlockQueue<T> *> other;
 			other.reserve(threadNum - 1);
 
 			for (unsigned i = 0; i < threadNum; ++i)
@@ -359,20 +359,20 @@ namespace HSLL
 		/**
 		 * @brief  Processes single task at a time
 		 */
-		static void process_single(TPBlockQueue<T>& queue, std::vector<TPBlockQueue<T>*>& other, bool& safeExit)
+		static void process_single(TPBlockQueue<T> &queue, std::vector<TPBlockQueue<T> *> &other, bool &safeExit)
 		{
 			struct Stealer
 			{
 				unsigned int index;
 				unsigned int total;
 				unsigned int threshold;
-				std::vector<TPBlockQueue<T>*>& other;
+				std::vector<TPBlockQueue<T> *> &other;
 
-				Stealer(std::vector<TPBlockQueue<T>*>& other, unsigned int maxLength)
+				Stealer(std::vector<TPBlockQueue<T> *> &other, unsigned int maxLength)
 					: other(other), index(0), total(other.size()),
-					threshold(std::min(total, maxLength)) {}
+					  threshold(std::min(total, maxLength)) {}
 
-				bool steal(T& element)
+				bool steal(T &element)
 				{
 					for (int i = 0; i < total; ++i)
 					{
@@ -391,7 +391,7 @@ namespace HSLL
 			};
 
 			char storage[sizeof(T)];
-			T* task = (T*)(&storage);
+			T *task = (T *)(&storage);
 
 			if (!other.size())
 			{
@@ -442,7 +442,7 @@ namespace HSLL
 		/**
 		 * @brief  Execute multiple tasks at a time
 		 */
-		static inline void execute_tasks(T* tasks, unsigned int count)
+		static inline void execute_tasks(T *tasks, unsigned int count)
 		{
 			for (unsigned int i = 0; i < count; ++i)
 			{
@@ -454,7 +454,7 @@ namespace HSLL
 		/**
 		 * @brief  Processes multiple tasks at a time
 		 */
-		static void process_bulk(TPBlockQueue<T>& queue, std::vector<TPBlockQueue<T>*>& other, unsigned batchSize, bool& safeExit)
+		static void process_bulk(TPBlockQueue<T> &queue, std::vector<TPBlockQueue<T> *> &other, unsigned batchSize, bool &safeExit)
 		{
 			struct Stealer
 			{
@@ -462,13 +462,13 @@ namespace HSLL
 				unsigned int total;
 				unsigned int batchSize;
 				unsigned int threshold;
-				std::vector<TPBlockQueue<T>*>& other;
+				std::vector<TPBlockQueue<T> *> &other;
 
-				Stealer(std::vector<TPBlockQueue<T>*>& other, unsigned int batchSize, unsigned int maxLength)
+				Stealer(std::vector<TPBlockQueue<T> *> &other, unsigned int batchSize, unsigned int maxLength)
 					: other(other), index(0), total(other.size()), batchSize(batchSize),
-					threshold(std::min(batchSize* total, maxLength)) {}
+					  threshold(std::min(batchSize * total, maxLength)) {}
 
-				unsigned int steal(T* elements)
+				unsigned int steal(T *elements)
 				{
 					for (int i = 0; i < total; ++i)
 					{
@@ -487,7 +487,7 @@ namespace HSLL
 				}
 			};
 
-			T* tasks = (T*)((void*)operator new[](batchSize * sizeof(T)));
+			T *tasks = (T *)((void *)operator new[](batchSize * sizeof(T)));
 			assert(tasks && "Failed to allocate task buffer");
 			unsigned int count;
 

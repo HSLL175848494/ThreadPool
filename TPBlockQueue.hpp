@@ -49,6 +49,7 @@ namespace HSLL
 	struct InsertAtHeadTag
 	{
 	};
+
 	struct InsertAtTailTag
 	{
 	};
@@ -59,17 +60,17 @@ namespace HSLL
 	template <typename T, bool IsTrivial = std::is_trivially_destructible<T>::value>
 	struct DestroyHelper
 	{
-		static void destroy(T& obj) { obj.~T(); }
+		static void destroy(T &obj) { obj.~T(); }
 	};
 
 	template <typename T>
 	struct DestroyHelper<T, true>
 	{
-		static void destroy(T&) {}
+		static void destroy(T &) {}
 	};
 
 	template <typename T>
-	void conditional_destroy(T& obj)
+	void conditional_destroy(T &obj)
 	{
 		DestroyHelper<T>::destroy(obj);
 	}
@@ -83,7 +84,7 @@ namespace HSLL
 	template <typename T>
 	struct BulkConstructHelper<T, COPY>
 	{
-		static void construct(T& ptr, T& source)
+		static void construct(T &ptr, T &source)
 		{
 			new (&ptr) T(source);
 		}
@@ -92,14 +93,14 @@ namespace HSLL
 	template <typename T>
 	struct BulkConstructHelper<T, MOVE>
 	{
-		static void construct(T& ptr, T& source)
+		static void construct(T &ptr, T &source)
 		{
 			new (&ptr) T(std::move(source));
 		}
 	};
 
 	template <BULK_CMETHOD Method, typename T>
-	void bulk_construct(T& ptr, T& source)
+	void bulk_construct(T &ptr, T &source)
 	{
 		BulkConstructHelper<T, Method>::construct(ptr, source);
 	}
@@ -113,10 +114,19 @@ namespace HSLL
 		template <class T>
 		friend class ThreadPool;
 
+		template <typename T>
+		struct is_duration : std::false_type
+		{
+		};
+
+		template <typename Rep, typename Period>
+		struct is_duration<std::chrono::duration<Rep, Period>> : std::true_type
+		{
+		};
+
 	private:
 		// Memory management
-		void* memoryBlock;		///< Raw memory block for element storage
-		uintptr_t border;		///< End address of allocated memory
+		void *memoryBlock;		///< Raw memory block for element storage
 		unsigned int isStopped; ///< Flag for stopping all operations
 
 		// Queue state tracking
@@ -125,8 +135,9 @@ namespace HSLL
 		unsigned int totalsize; ///< Total allocated memory size
 
 		// Buffer pointers
-		TYPE* dataListHead; ///< Pointer to first element in queue
-		TYPE* dataListTail; ///< Pointer to next insertion position
+		TYPE *dataListHead; ///< Pointer to first element in queue
+		TYPE *dataListTail; ///< Pointer to next insertion position
+		uintptr_t border;	///< End address of allocated memory
 
 		// Synchronization primitives
 		std::mutex dataMutex;				  ///< Mutex protecting all queue operations
@@ -134,63 +145,59 @@ namespace HSLL
 		std::condition_variable notFullCond;  ///< Signaled when space becomes available
 
 		// Helper functions for pointer movement
-		void move_tail_next()
+		inline void move_tail_next()
 		{
-			dataListTail = (TYPE*)((uint8_t*)dataListTail + sizeof(TYPE));
+			dataListTail = (TYPE *)((char *)dataListTail + sizeof(TYPE));
 			if (UNLIKELY((uintptr_t)dataListTail == border))
-				dataListTail = (TYPE*)(uintptr_t)memoryBlock;
+				dataListTail = (TYPE *)(uintptr_t)memoryBlock;
 		}
 
-		void move_head_next()
+		inline void move_head_next()
 		{
-			dataListHead = (TYPE*)((uint8_t*)dataListHead + sizeof(TYPE));
+			dataListHead = (TYPE *)((char *)dataListHead + sizeof(TYPE));
 			if (UNLIKELY((uintptr_t)dataListHead == border))
-				dataListHead = (TYPE*)(uintptr_t)memoryBlock;
+				dataListHead = (TYPE *)(uintptr_t)memoryBlock;
 		}
 
 		// Reserve for head push
-		void move_head_prev()
+		inline void move_head_prev()
 		{
-			dataListHead = (TYPE*)((uint8_t*)dataListHead - sizeof(TYPE));
+			dataListHead = (TYPE *)((char *)dataListHead - sizeof(TYPE));
 			if (UNLIKELY((uintptr_t)dataListHead < (uintptr_t)memoryBlock))
-				dataListHead = (TYPE*)(border - sizeof(TYPE));
+				dataListHead = (TYPE *)(border - sizeof(TYPE));
 		}
 
 		// Insert position implementations
 		template <typename... Args>
-		void emplace_impl(InsertAtTailTag, Args &&...args)
+		inline void emplace_impl(InsertAtTailTag, Args &&...args)
 		{
 			new (dataListTail) TYPE(std::forward<Args>(args)...);
-			size++;
 			move_tail_next();
 		}
 
 		template <typename... Args>
-		void emplace_impl(InsertAtHeadTag, Args &&...args)
+		inline void emplace_impl(InsertAtHeadTag, Args &&...args)
 		{
 			move_head_prev();
 			new (dataListHead) TYPE(std::forward<Args>(args)...);
-			size++;
 		}
 
 		template <class T>
-		void push_impl(InsertAtTailTag, T&& element)
+		inline void push_impl(InsertAtTailTag, T &&element)
 		{
 			new (dataListTail) TYPE(std::forward<T>(element));
-			size++;
 			move_tail_next();
 		}
 
 		template <class T>
-		void push_impl(InsertAtHeadTag, T&& element)
+		inline void push_impl(InsertAtHeadTag, T &&element)
 		{
 			move_head_prev();
 			new (dataListHead) TYPE(std::forward<T>(element));
-			size++;
 		}
 
 		template <BULK_CMETHOD METHOD>
-		void bulk_push_impl(InsertAtTailTag, TYPE* elements, unsigned int toPush)
+		inline void bulk_push_impl(InsertAtTailTag, TYPE *elements, unsigned int toPush)
 		{
 			for (unsigned int i = 0; i < toPush; ++i)
 			{
@@ -200,7 +207,7 @@ namespace HSLL
 		}
 
 		template <BULK_CMETHOD METHOD>
-		void bulk_push_impl(InsertAtHeadTag, TYPE* elements, unsigned int toPush)
+		inline void bulk_push_impl(InsertAtHeadTag, TYPE *elements, unsigned int toPush)
 		{
 			for (unsigned int i = 0; i < toPush; ++i)
 			{
@@ -209,9 +216,72 @@ namespace HSLL
 			}
 		}
 
-		void move_element(TYPE& dest, TYPE& src)
+		template <INSERT_POS POS, typename... Args>
+		void emplace_helper(std::unique_lock<std::mutex> &lock, Args &&...args)
 		{
-			new(&dest) TYPE(std::move(src));
+			size++;
+			using InsertTag = typename std::conditional<POS == HEAD, InsertAtHeadTag, InsertAtTailTag>::type;
+			emplace_impl(InsertTag(), std::forward<Args>(args)...);
+			lock.unlock();
+			notEmptyCond.notify_one();
+		}
+
+		template <INSERT_POS POS, class T>
+		void push_helper(std::unique_lock<std::mutex> &lock, T &&element)
+		{
+			size++;
+			using InsertTag = typename std::conditional<POS == HEAD, InsertAtHeadTag, InsertAtTailTag>::type;
+			push_impl(InsertTag(), std::forward<T>(element));
+			lock.unlock();
+			notEmptyCond.notify_one();
+		}
+
+		template <BULK_CMETHOD METHOD, INSERT_POS POS>
+		unsigned int pushBulk_helper(std::unique_lock<std::mutex> &lock, TYPE *elements, unsigned int count)
+		{
+			unsigned int toPush = std::min(count, maxSize - size);
+			size += toPush;
+			using InsertTag = typename std::conditional<POS == HEAD, InsertAtHeadTag, InsertAtTailTag>::type;
+			bulk_push_impl<METHOD>(InsertTag(), elements, toPush);
+			lock.unlock();
+
+			if (UNLIKELY(toPush == 1))
+				notEmptyCond.notify_one();
+			else
+				notEmptyCond.notify_all();
+			return toPush;
+		}
+
+		void pop_helper(std::unique_lock<std::mutex> &lock, TYPE &element)
+		{
+			size--;
+			move_element(element, *dataListHead);
+			move_head_next();
+			lock.unlock();
+			notFullCond.notify_one();
+		}
+
+		unsigned int popbulk_helper(std::unique_lock<std::mutex> &lock, TYPE *elements, unsigned int count)
+		{
+			unsigned int toPop = std::min(count, size);
+			size -= toPop;
+			for (unsigned int i = 0; i < toPop; ++i)
+			{
+				move_element(elements[i], *dataListHead);
+				move_head_next();
+			}
+			lock.unlock();
+
+			if (UNLIKELY(toPop == 1))
+				notFullCond.notify_one();
+			else
+				notFullCond.notify_all();
+			return toPop;
+		}
+
+		inline void move_element(TYPE &dest, TYPE &src)
+		{
+			new (&dest) TYPE(std::move(src));
 			conditional_destroy<TYPE>(src);
 		}
 
@@ -227,7 +297,7 @@ namespace HSLL
 		 */
 		bool init(unsigned int capacity)
 		{
-			if (memoryBlock || capacity == 0)
+			if (memoryBlock || !capacity)
 				return false;
 
 			unsigned int align = std::max(alignof(TYPE), (size_t)64);
@@ -240,8 +310,8 @@ namespace HSLL
 
 			size = 0;
 			maxSize = capacity;
-			dataListHead = (TYPE*)memoryBlock;
-			dataListTail = (TYPE*)memoryBlock;
+			dataListHead = (TYPE *)memoryBlock;
+			dataListTail = (TYPE *)memoryBlock;
 			border = (uintptr_t)memoryBlock + totalsize;
 
 			return true;
@@ -254,14 +324,11 @@ namespace HSLL
 		bool emplace(Args &&...args)
 		{
 			std::unique_lock<std::mutex> lock(dataMutex);
+
 			if (UNLIKELY(size == maxSize))
 				return false;
 
-			using InsertTag = typename std::conditional<POS == HEAD, InsertAtHeadTag, InsertAtTailTag>::type;
-			emplace_impl(InsertTag(), std::forward<Args>(args)...);
-
-			lock.unlock();
-			notEmptyCond.notify_one();
+			emplace_helper<POS>(lock, std::forward<Args>(args)...);
 			return true;
 		}
 
@@ -269,20 +336,18 @@ namespace HSLL
 		 * @brief Blocking element emplacement with indefinite wait
 		 */
 		template <INSERT_POS POS = TAIL, typename... Args>
-		bool wait_emplace(Args &&...args)
+		typename std::enable_if<!is_duration<typename std::tuple_element<0, std::tuple<Args...>>::type>::value, bool>::type
+		wait_emplace(Args &&...args)
 		{
 			std::unique_lock<std::mutex> lock(dataMutex);
-			notFullCond.wait(lock, [this]
-				{ return LIKELY(size != maxSize) || UNLIKELY(isStopped); });
 
-			if (UNLIKELY(size == maxSize))
+			notFullCond.wait(lock, [this]
+							 { return LIKELY(size != maxSize) || UNLIKELY(isStopped); });
+
+			if (UNLIKELY(isStopped))
 				return false;
 
-			using InsertTag = typename std::conditional<POS == HEAD, InsertAtHeadTag, InsertAtTailTag>::type;
-			emplace_impl(InsertTag(), std::forward<Args>(args)...);
-
-			lock.unlock();
-			notEmptyCond.notify_one();
+			emplace_helper<POS>(lock, std::forward<Args>(args)...);
 			return true;
 		}
 
@@ -290,20 +355,17 @@ namespace HSLL
 		 * @brief Blocking element emplacement with timeout
 		 */
 		template <INSERT_POS POS = TAIL, class Rep, class Period, typename... Args>
-		bool wait_emplace(const std::chrono::duration<Rep, Period>& timeout, Args &&...args)
+		bool wait_emplace(const std::chrono::duration<Rep, Period> &timeout, Args &&...args)
 		{
 			std::unique_lock<std::mutex> lock(dataMutex);
-			bool success = notFullCond.wait_for(lock, timeout, [this]
-				{ return LIKELY(size != maxSize) || UNLIKELY(isStopped); });
 
-			if (UNLIKELY(!success || size == maxSize))
+			bool success = notFullCond.wait_for(lock, timeout, [this]
+												{ return LIKELY(size != maxSize) || UNLIKELY(isStopped); });
+
+			if (UNLIKELY(!success || isStopped))
 				return false;
 
-			using InsertTag = typename std::conditional<POS == HEAD, InsertAtHeadTag, InsertAtTailTag>::type;
-			emplace_impl(InsertTag(), std::forward<Args>(args)...);
-
-			lock.unlock();
-			notEmptyCond.notify_one();
+			emplace_helper<POS>(lock, std::forward<Args>(args)...);
 			return true;
 		}
 
@@ -311,18 +373,14 @@ namespace HSLL
 		 * @brief Non-blocking element push
 		 */
 		template <INSERT_POS POS = TAIL, class T>
-		bool push(T&& element)
+		bool push(T &&element)
 		{
 			std::unique_lock<std::mutex> lock(dataMutex);
 
 			if (UNLIKELY(size == maxSize))
 				return false;
 
-			using InsertTag = typename std::conditional<POS == HEAD, InsertAtHeadTag, InsertAtTailTag>::type;
-			push_impl(InsertTag(), std::forward<T>(element));
-
-			lock.unlock();
-			notEmptyCond.notify_one();
+			push_helper<POS>(lock, std::forward<T>(element));
 			return true;
 		}
 
@@ -330,20 +388,17 @@ namespace HSLL
 		 * @brief Blocking element push with indefinite wait
 		 */
 		template <INSERT_POS POS = TAIL, class T>
-		bool wait_push(T&& element)
+		bool wait_push(T &&element)
 		{
 			std::unique_lock<std::mutex> lock(dataMutex);
-			notFullCond.wait(lock, [this]
-				{ return LIKELY(size != maxSize) || UNLIKELY(isStopped); });
 
-			if (UNLIKELY(size == maxSize))
+			notFullCond.wait(lock, [this]
+							 { return LIKELY(size != maxSize) || UNLIKELY(isStopped); });
+
+			if (UNLIKELY(isStopped))
 				return false;
 
-			using InsertTag = typename std::conditional<POS == HEAD, InsertAtHeadTag, InsertAtTailTag>::type;
-			push_impl(InsertTag(), std::forward<T>(element));
-
-			lock.unlock();
-			notEmptyCond.notify_one();
+			push_helper<POS>(lock, std::forward<T>(element));
 			return true;
 		}
 
@@ -351,20 +406,17 @@ namespace HSLL
 		 * @brief Blocking element push with timeout
 		 */
 		template <INSERT_POS POS = TAIL, class T, class Rep, class Period>
-		bool wait_push(T&& element, const std::chrono::duration<Rep, Period>& timeout)
+		bool wait_push(T &&element, const std::chrono::duration<Rep, Period> &timeout)
 		{
 			std::unique_lock<std::mutex> lock(dataMutex);
-			bool success = notFullCond.wait_for(lock, timeout, [this]
-				{ return LIKELY(size != maxSize) || UNLIKELY(isStopped); });
 
-			if (UNLIKELY(!success || size == maxSize))
+			bool success = notFullCond.wait_for(lock, timeout, [this]
+												{ return LIKELY(size != maxSize) || UNLIKELY(isStopped); });
+
+			if (UNLIKELY(!success || isStopped))
 				return false;
 
-			using InsertTag = typename std::conditional<POS == HEAD, InsertAtHeadTag, InsertAtTailTag>::type;
-			push_impl(InsertTag(), std::forward<T>(element));
-
-			lock.unlock();
-			notEmptyCond.notify_one();
+			push_helper<POS>(lock, std::forward<T>(element));
 			return true;
 		}
 
@@ -372,132 +424,86 @@ namespace HSLL
 		 * @brief Bulk push for multiple elements
 		 */
 		template <BULK_CMETHOD METHOD = COPY, INSERT_POS POS = TAIL>
-		unsigned int pushBulk(TYPE* elements, unsigned int count)
+		unsigned int pushBulk(TYPE *elements, unsigned int count)
 		{
-			if (UNLIKELY(count == 0))
+			if (UNLIKELY(!count))
 				return 0;
 
 			std::unique_lock<std::mutex> lock(dataMutex);
-			unsigned int available = maxSize - size;
 
-			if (UNLIKELY(available == 0))
+			if (UNLIKELY(!(maxSize - size)))
 				return 0;
 
-			unsigned int toPush = std::min(count, available);
-
-			using InsertTag = typename std::conditional<POS == HEAD, InsertAtHeadTag, InsertAtTailTag>::type;
-			bulk_push_impl<METHOD>(InsertTag(), elements, toPush);
-
-			size += toPush;
-			lock.unlock();
-
-			if (UNLIKELY(toPush == 1))
-				notEmptyCond.notify_one();
-			else
-				notEmptyCond.notify_all();
-
-			return toPush;
+			return pushBulk_helper<METHOD, POS>(lock, elements, count);
 		}
 
 		/**
 		 * @brief Blocking bulk push with indefinite wait
 		 */
 		template <BULK_CMETHOD METHOD = COPY, INSERT_POS POS = TAIL>
-		unsigned int wait_pushBulk(TYPE* elements, unsigned int count)
+		unsigned int wait_pushBulk(TYPE *elements, unsigned int count)
 		{
-			if (UNLIKELY(count == 0))
+			if (UNLIKELY(!count))
 				return 0;
 
 			std::unique_lock<std::mutex> lock(dataMutex);
-			notFullCond.wait(lock, [this]
-				{ return LIKELY(size != maxSize) || UNLIKELY(isStopped); });
 
-			if (UNLIKELY(size == maxSize))
+			notFullCond.wait(lock, [this]
+							 { return LIKELY(size != maxSize) || UNLIKELY(isStopped); });
+
+			if (UNLIKELY(isStopped))
 				return 0;
 
-			unsigned int toPush = std::min(count, maxSize - size);
-
-			using InsertTag = typename std::conditional<POS == HEAD, InsertAtHeadTag, InsertAtTailTag>::type;
-			bulk_push_impl<METHOD>(InsertTag(), elements, toPush);
-
-			size += toPush;
-			lock.unlock();
-
-			if (UNLIKELY(toPush == 1))
-				notEmptyCond.notify_one();
-			else
-				notEmptyCond.notify_all();
-
-			return toPush;
+			return pushBulk_helper<METHOD, POS>(lock, elements, count);
 		}
 
 		/**
 		 * @brief Blocking bulk push with timeout
 		 */
 		template <BULK_CMETHOD METHOD = COPY, INSERT_POS POS = TAIL, class Rep, class Period>
-		unsigned int wait_pushBulk(TYPE* elements, unsigned int count, const std::chrono::duration<Rep, Period>& timeout)
+		unsigned int wait_pushBulk(TYPE *elements, unsigned int count, const std::chrono::duration<Rep, Period> &timeout)
 		{
-			if (UNLIKELY(count == 0))
+			if (UNLIKELY(!count))
 				return 0;
 
 			std::unique_lock<std::mutex> lock(dataMutex);
-			bool success = notFullCond.wait_for(lock, timeout, [this]
-				{ return LIKELY(size != maxSize) || UNLIKELY(isStopped); });
 
-			if (UNLIKELY(!success || size == maxSize))
+			bool success = notFullCond.wait_for(lock, timeout, [this]
+												{ return LIKELY(size != maxSize) || UNLIKELY(isStopped); });
+
+			if (UNLIKELY(!success || isStopped))
 				return 0;
 
-			unsigned int toPush = std::min(count, maxSize - size);
-
-			using InsertTag = typename std::conditional<POS == HEAD, InsertAtHeadTag, InsertAtTailTag>::type;
-			bulk_push_impl<METHOD>(InsertTag(), elements, toPush);
-
-			size += toPush;
-			lock.unlock();
-
-			if (UNLIKELY(toPush == 1))
-				notEmptyCond.notify_one();
-			else
-				notEmptyCond.notify_all();
-
-			return toPush;
+			return pushBulk_helper<METHOD, POS>(lock, elements, count);
 		}
 
 		/**
 		 * @brief Non-blocking element removal
 		 */
-		bool pop(TYPE& element)
+		bool pop(TYPE &element)
 		{
 			std::unique_lock<std::mutex> lock(dataMutex);
 
 			if (UNLIKELY(!size))
 				return false;
 
-			size--;
-			move_element(element, *dataListHead);
-			move_head_next();
-			lock.unlock();
-			notFullCond.notify_one();
+			pop_helper(lock, element);
 			return true;
 		}
 
 		/**
 		 * @brief Blocking element removal with indefinite wait
 		 */
-		bool wait_pop(TYPE& element)
+		bool wait_pop(TYPE &element)
 		{
 			std::unique_lock<std::mutex> lock(dataMutex);
 			notEmptyCond.wait(lock, [this]
-				{ return LIKELY(size) || UNLIKELY(isStopped); });
+							  { return LIKELY(size) || UNLIKELY(isStopped); });
 
-			if (UNLIKELY(!size))
+			if (UNLIKELY(isStopped))
 				return false;
 
-			size--;
-			move_element(element, *dataListHead);
-			move_head_next();
-			lock.unlock();
-			notFullCond.notify_one();
+			pop_helper(lock, element);
 			return true;
 		}
 
@@ -505,120 +511,72 @@ namespace HSLL
 		 * @brief Blocking element removal with timeout
 		 */
 		template <class Rep, class Period>
-		bool wait_pop(TYPE& element, const std::chrono::duration<Rep, Period>& timeout)
+		bool wait_pop(TYPE &element, const std::chrono::duration<Rep, Period> &timeout)
 		{
 			std::unique_lock<std::mutex> lock(dataMutex);
-			bool success = notEmptyCond.wait_for(lock, timeout, [this]
-				{ return LIKELY(size) || UNLIKELY(isStopped); });
 
-			if (UNLIKELY(!success || !size))
+			bool success = notEmptyCond.wait_for(lock, timeout, [this]
+												 { return LIKELY(size) || UNLIKELY(isStopped); });
+
+			if (UNLIKELY(!success || isStopped))
 				return false;
 
-			size--;
-			move_element(element, *dataListHead);
-			move_head_next();
-			lock.unlock();
-			notFullCond.notify_one();
+			pop_helper(lock, element);
 			return true;
 		}
 
 		/**
 		 * @brief Bulk element retrieval
 		 */
-		unsigned int popBulk(TYPE* elements, unsigned int count)
+		unsigned int popBulk(TYPE *elements, unsigned int count)
 		{
-			if (UNLIKELY(count == 0))
+			if (UNLIKELY(!count))
 				return 0;
 
 			std::unique_lock<std::mutex> lock(dataMutex);
-			unsigned int available = size;
 
-			if (UNLIKELY(available == 0))
+			if (UNLIKELY(!size))
 				return 0;
 
-			unsigned int toPop = std::min(count, available);
-			for (unsigned int i = 0; i < toPop; ++i)
-			{
-				move_element(elements[i], *dataListHead);
-				move_head_next();
-			}
-
-			size -= toPop;
-			lock.unlock();
-
-			if (UNLIKELY(toPop == 1))
-				notFullCond.notify_one();
-			else
-				notFullCond.notify_all();
-
-			return toPop;
+			return popbulk_helper(lock, elements, count);
 		}
 
 		/**
 		 * @brief Blocking bulk retrieval with indefinite wait
 		 */
-		unsigned int wait_popBulk(TYPE* elements, unsigned int count)
+		unsigned int wait_popBulk(TYPE *elements, unsigned int count)
 		{
-			if (UNLIKELY(count == 0))
+			if (UNLIKELY(!count))
 				return 0;
 
 			std::unique_lock<std::mutex> lock(dataMutex);
-			notEmptyCond.wait(lock, [this]
-				{ return LIKELY(size) || UNLIKELY(isStopped); });
 
-			if (UNLIKELY(!size))
+			notEmptyCond.wait(lock, [this]
+							  { return LIKELY(size) || UNLIKELY(isStopped); });
+
+			if (UNLIKELY(isStopped))
 				return 0;
 
-			unsigned int toPop = std::min(count, size);
-			for (unsigned int i = 0; i < toPop; ++i)
-			{
-				move_element(elements[i], *dataListHead);
-				move_head_next();
-			}
-
-			size -= toPop;
-			lock.unlock();
-
-			if (UNLIKELY(toPop == 1))
-				notFullCond.notify_one();
-			else
-				notFullCond.notify_all();
-
-			return toPop;
+			return popbulk_helper(lock, elements, count);
 		}
 
 		/**
 		 * @brief Blocking bulk retrieval with timeout
 		 */
 		template <class Rep, class Period>
-		unsigned int wait_popBulk(TYPE* elements, unsigned int count, const std::chrono::duration<Rep, Period>& timeout)
+		unsigned int wait_popBulk(TYPE *elements, unsigned int count, const std::chrono::duration<Rep, Period> &timeout)
 		{
-			if (UNLIKELY(count == 0))
+			if (UNLIKELY(!count))
 				return 0;
 
 			std::unique_lock<std::mutex> lock(dataMutex);
 			bool success = notEmptyCond.wait_for(lock, timeout, [this]
-				{ return LIKELY(size) || UNLIKELY(isStopped); });
+												 { return LIKELY(size) || UNLIKELY(isStopped); });
 
-			if (UNLIKELY(!success || !size))
+			if (UNLIKELY(!success || isStopped))
 				return 0;
 
-			unsigned int toPop = std::min(count, size);
-			for (unsigned int i = 0; i < toPop; ++i)
-			{
-				move_element(elements[i], *dataListHead);
-				move_head_next();
-			}
-
-			size -= toPop;
-			lock.unlock();
-
-			if (UNLIKELY(toPop == 1))
-				notFullCond.notify_one();
-			else
-				notFullCond.notify_all();
-
-			return toPop;
+			return popbulk_helper(lock, elements, count);
 		}
 
 		/**
@@ -642,13 +600,13 @@ namespace HSLL
 		{
 			if (memoryBlock)
 			{
-				TYPE* current = dataListHead;
+				TYPE *current = dataListHead;
 				for (unsigned int i = 0; i < size; ++i)
 				{
 					conditional_destroy<TYPE>(*current);
-					current = (TYPE*)((uint8_t*)current + sizeof(TYPE));
+					current = (TYPE *)((char *)current + sizeof(TYPE));
 					if ((uintptr_t)(current) == border)
-						current = (TYPE*)(memoryBlock);
+						current = (TYPE *)(memoryBlock);
 				}
 
 				ALIGNED_FREE(memoryBlock);
@@ -663,8 +621,8 @@ namespace HSLL
 		}
 
 		// Disable copying
-		TPBlockQueue(const TPBlockQueue&) = delete;
-		TPBlockQueue& operator=(const TPBlockQueue&) = delete;
+		TPBlockQueue(const TPBlockQueue &) = delete;
+		TPBlockQueue &operator=(const TPBlockQueue &) = delete;
 	};
 }
 #endif // HSLL_TPBLOCKQUEUE

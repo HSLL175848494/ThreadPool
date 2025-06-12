@@ -160,7 +160,7 @@ constexpr bool isInvalid_c14= type::task_invalid_v<F, Args...>;
 
 ```cpp
     //工具函数
-    auto callable=hbind(f ,args...);//HeapCallable对象，参数存储可能抛出内存分配异常
+    auto callable=make_callable(f ,args...);//HeapCallable对象，参数存储可能抛出内存分配异常
 
     //默认构造(需要显式指定模板类型)
     HeapCallable<...> callable(f, args...);//HeapCallable对象，参数存储可能抛出内存分配异常
@@ -171,7 +171,8 @@ constexpr bool isInvalid_c14= type::task_invalid_v<F, Args...>;
 ### 使用示例
 
 ```cpp
-    auto callable=hbind(f ,args...);
+    //创建callable对象
+    auto callable=make_callable(f ,args...);
 
     //用于实例化TaskStack对象
     TaskStack<> t(callable);
@@ -182,10 +183,10 @@ constexpr bool isInvalid_c14= type::task_invalid_v<F, Args...>;
 
 ```cpp
     void add(int a, int b){}
-    using Type = TaskStack<>;
 
     //当任务超过栈容量时自动使用HeapCallable类型,此时参数存储可能抛出内存分配异常
-    auto task = Type::make_auto(add, 1, 2);
+    auto task = TaskStack<>::make_auto(add, 1, 2);
+    
     task.execute();
 ```
 

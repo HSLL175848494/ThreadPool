@@ -11,7 +11,7 @@ using namespace HSLL;
 #define SUBMIT_BATCH 1
 #define PROCESS_BATCH 1
 #define PEER 10000000 // Increase task count for multi-round testing
-#define TSIZE 64
+#define TSIZE 16
 #define QUEUELEN 10000
 
 ThreadPool<TaskStack<TSIZE>> pool;
@@ -31,7 +31,7 @@ void bulk_submit_worker()
 	while (remaining > 0)
 	{
 		remaining -= pool.wait_enqueue_bulk<COPY>(
-			reinterpret_cast<task_type*>(buf),
+			reinterpret_cast<task_type *>(buf),
 			std::min(SUBMIT_BATCH, remaining));
 	}
 }
@@ -60,7 +60,7 @@ double test_bulk_submit()
 	for (int i = 0; i < PRODUCER; ++i)
 		producers.emplace_back(bulk_submit_worker);
 
-	for (auto& t : producers)
+	for (auto &t : producers)
 		t.join();
 
 	pool.exit(true);
@@ -81,7 +81,7 @@ double test_single_submit()
 	for (int i = 0; i < PRODUCER; ++i)
 		producers.emplace_back(single_submit_worker);
 
-	for (auto& t : producers)
+	for (auto &t : producers)
 		t.join();
 
 	pool.exit(true);
@@ -118,17 +118,17 @@ int main() // g++ test.cpp -o test -std=c++11
 
 	printf("\n=== Test Results ===\n");
 	printf("%-20s: %10.2f ms | %10s: %8.2f M/s | %15s: %.4f s/M\n",
-		"Bulk Submit Time", bulk_time,
-		"Throughput", bulk_throughput,
-		"Time/Million", bulk_time_per_million);
+		   "Bulk Submit Time", bulk_time,
+		   "Throughput", bulk_throughput,
+		   "Time/Million", bulk_time_per_million);
 
 	printf("%-20s: %10.2f ms | %10s: %8.2f M/s | %15s: %.4f s/M\n",
-		"Single Submit Time", single_time,
-		"Throughput", single_throughput,
-		"Time/Million", single_time_per_million);
+		   "Single Submit Time", single_time,
+		   "Throughput", single_throughput,
+		   "Time/Million", single_time_per_million);
 
 	printf("%-20s: %10.5f\n", "Ratio (Bulk/Single)", single_time / bulk_time);
 
-	getchar();
+	std::this_thread::sleep_for(std::chrono::seconds(1));
 	return 0;
 }
