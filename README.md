@@ -3,7 +3,7 @@
 ## 概述
 HSLL::ThreadPool 一个轻量级C++11线程池实现，具有以下核心特性：
 
-1. **多队列架构** - 每个工作线程拥有独立的任务队列，减少锁争用
+1. **多队列架构** - 每个工作线程拥有独立的任务队列(固定容量)，减少锁争用 
 2. **核心绑定** - 支持将工作线程绑定到指定CPU核心(Linux/Windows), 避免缓存失效
 3. **负载均衡** - 采用round-robin+二级队列选取机制+任务窃取机制实现负载均衡
 4. **定长任务容器** - 基于栈的预分配任务容器，将所有参数储存在栈上，避免动态申请空间
@@ -35,7 +35,7 @@ bool init(unsigned queueLength, unsigned threadNum, unsigned batchSize = 1)
 - **参数**：
   - `queueLength`: 每个工作队列的容量
   - `threadNum`: 工作线程数量
-  - `batchSize`: 单次处理任务数
+  - `batchSize`: 单次处理任务数（单次从任务队列中取出多少任务）
 - **返回值**：初始化成功返回true
 - **功能**：分配资源并启动工作线程
 
@@ -188,5 +188,5 @@ graph TD
 - C++11 或更新标准
 
 ## 其它
-- **组件文档**: `document`文件夹
-- **性能测试**: `performance test`文件夹
+- **组件文档**: `document`
+- **性能测试**: `performance test`
