@@ -1,4 +1,4 @@
-## HSLL::TPBlockQueue 高性能阻塞队列组件
+## HSLL::TPBlockQueue 阻塞队列组件
 
 ### 核心架构
 - **环形缓冲区实现**  
