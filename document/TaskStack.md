@@ -147,6 +147,31 @@ constexpr bool isInvalid_c14= type::task_invalid_v<F, Args...>;
    - 存储大小必须为对齐值的整数倍
    - 确保任务对齐要求不超过`ALIGN`设置
 
+## 警告：注意任务参数的可拷贝/移动性
+
+### 核心问题
+由于设计上**必须始终启用 `TaskStack` 的拷贝/移动构造函数**（以兼容不同类型任务），导致：
+1.  `TaskStack` 的拷贝/移动可行性**只能在运行期检测**
+2.  即使存储了不可拷贝/移动的任务对象：
+    *   **编译期不会报错**
+    *   **运行期调用对应构造函数时才会失败**
+
+### 代码示例
+```cpp
+// std::packaged_task<void()> 是不可拷贝类型
+std::packaged_task<void()> pack(test);
+
+TaskStack<> task1(std::move(pack));  // 正确：移动构造
+TaskStack<> task2 = std::move(task1); // 正确：移动赋值
+
+// 编译期报错（预期行为）
+// TaskStack<> task3(pack); 
+
+// 危险操作：编译通过但运行期并打印错误！
+// TaskStack<> task4(task1);      // 调用拷贝构造函数
+// TaskStack<> task5 = task1;     // 调用拷贝赋值运算符
+```
+
 ## HeapCallable
 
 **设计目的**： 补充栈上任务的不足，作为TaskStack的可调用对象参数
@@ -160,10 +185,10 @@ constexpr bool isInvalid_c14= type::task_invalid_v<F, Args...>;
 
 ```cpp
     //工具函数
-    auto callable=make_callable(f ,args...);//HeapCallable对象，参数存储可能抛出内存分配异常
+    auto callable=make_callable(f ,args...);//参数存储可能抛出内存分配异常。f不允许是HeapCallable类型
 
     //默认构造(需要显式指定模板类型)
-    HeapCallable<...> callable(f, args...);//HeapCallable对象，参数存储可能抛出内存分配异常
+    HeapCallable<...> callable(f, args...);
 
     callable();
 
@@ -172,20 +197,21 @@ constexpr bool isInvalid_c14= type::task_invalid_v<F, Args...>;
 
 ```cpp
     //创建callable对象
-    auto callable=make_callable(f ,args...);
+    auto callable=make_callable(f , args...);
 
     //用于实例化TaskStack对象
     TaskStack<> t(callable);
 
+    //一步构建TaskStack对象
+    TaskStack<> t2=TaskStack<>::make_heap(f,args...);//f不允许是HeapCallable类型
 ```
 
 ### 自动适配
 
 ```cpp
-    void add(int a, int b){}
 
     //当任务超过栈容量时自动使用HeapCallable类型,此时参数存储可能抛出内存分配异常
-    auto task = TaskStack<>::make_auto(add, 1, 2);
+    auto task = TaskStack<>::make_auto(f, args...);//f不允许是HeapCallable类型
     
     task.execute();
 ```
