@@ -43,8 +43,6 @@ namespace HSLL
 
 #include <vector>
 #include <thread>
-#include <atomic>
-#include <assert.h>
 
 #include "TPTask.hpp"
 #include "TPBlockQueue.hpp"
@@ -488,7 +486,12 @@ namespace HSLL
 			};
 
 			T *tasks = (T *)((void *)operator new[](batchSize * sizeof(T)));
-			assert(tasks && "Failed to allocate task buffer");
+			if (!tasks)
+			{
+				printf("Failed to allocate task buffer");
+				std::abort();
+			}
+
 			unsigned int count;
 
 			if (!other.size())

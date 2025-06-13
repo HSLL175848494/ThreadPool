@@ -4,8 +4,8 @@
 #include <new>
 #include <mutex>
 #include <chrono>
-#include <condition_variable>
 #include <cstdint>
+#include <condition_variable>
 
 namespace HSLL
 {
