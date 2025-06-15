@@ -1,7 +1,7 @@
 # TaskStack - 栈分配任务容器
 
 ## 概述
-TaskStack 是一个基于栈内存的任务容器模板类，通过类型擦除实现无堆内存分配的任务存储
+基于栈内存的任务容器模板类，可实现无堆内存分配的任务存储
 
 ## 核心特性
 
@@ -146,6 +146,8 @@ constexpr bool isInvalid_c14= type::task_invalid_v<F, Args...>;
 5. **对齐要求**：
    - 存储大小必须为对齐值的整数倍
    - 确保任务对齐要求不超过`ALIGN`设置
+6. **异常安全**:
+    - （可调用对象/函数指针/参数）的（拷贝构造/移动构造）不允许抛出异常
 
 ## 警告：注意任务参数的可拷贝/移动性
 
@@ -162,14 +164,12 @@ constexpr bool isInvalid_c14= type::task_invalid_v<F, Args...>;
 std::packaged_task<void()> pack(test);
 
 TaskStack<> task1(std::move(pack));  // 正确：移动构造
-TaskStack<> task2 = std::move(task1); // 正确：移动赋值
 
-// 编译期报错（预期行为）
-// TaskStack<> task3(pack); 
+// 编译期报错（pack不可拷贝，预期行为）
+// TaskStack<> task2(pack); 
 
 // 危险操作：编译通过但运行期并打印错误！
-// TaskStack<> task4(task1);      // 调用拷贝构造函数
-// TaskStack<> task5 = task1;     // 调用拷贝赋值运算符
+// TaskStack<> task3(task1);      // 调用拷贝构造函数
 ```
 
 ## HeapCallable

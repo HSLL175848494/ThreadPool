@@ -1,67 +1,110 @@
 #ifndef HSLL_TPTASK
 #define HSLL_TPTASK
 
-#include <new>
-#include <tuple>
-#include <cstdio>
+#include <new>      
+#include <tuple>      
 #include <memory>
-#include <cstddef>
-#include <exception>
-#include <type_traits>
+#include <cstdio>  
+#include <cstdlib>    
+#include <cstddef>   
+#include <utility>   
+#include <type_traits>  
 
+#define HSLL_ALLOW_THROW
 
 namespace HSLL
 {
+
+	template <typename T>
+	struct is_move_constructible
+	{
+	private:
+
+		template <typename U, typename = decltype(U(std::declval<U&&>()))>
+		static constexpr std::true_type test_move(int);
+
+		template <typename>
+		static constexpr std::false_type test_move(...);
+
+	public:
+
+		static constexpr bool value = decltype(test_move<T>(true))::value;
+	};
+
+	template <typename T>
+	struct is_copy_constructible
+	{
+	private:
+
+		template  <typename U, typename = decltype(U{ std::declval<U&>() }) >
+		static constexpr  std::true_type test_copy(bool);
+
+		template <typename>
+		static constexpr  std::false_type test_copy(...);
+
+	public:
+
+		static constexpr bool value = decltype(test_copy<T>(true))::value;
+	};
+
+	template <unsigned int TSIZE, unsigned int ALIGN>
+	class TaskStack;
+
 	template <class F, class... Args>
 	class HeapCallable;
 
 	template <unsigned int TSIZE, unsigned int ALIGN>
 	class TaskStack;
 
-	// C++11 compatible index_sequence implementation
-	template <size_t... Is>
-	struct index_sequence
-	{
-	};
-
-	template <size_t N, size_t... Is>
-	struct make_index_sequence_impl : make_index_sequence_impl<N - 1, N - 1, Is...>
-	{
-	};
-
-	template <size_t... Is>
-	struct make_index_sequence_impl<0, Is...>
-	{
-		typedef index_sequence<Is...> type;
-	};
-
-	template <size_t N>
-	struct make_index_sequence
-	{
-		typedef typename make_index_sequence_impl<N>::type type;
-	};
-
-	// SFINAE helper to detect nested HeapCallable types
 	template <typename T>
-	struct is_generic_task_hc : std::false_type
+	struct is_generic_hc : std::false_type
 	{
 	};
 
 	template <class T, class... Params>
-	struct is_generic_task_hc<HeapCallable<T, Params...>> : std::true_type
+	struct is_generic_hc<HeapCallable<T, Params...>> : std::true_type
 	{
 	};
 
-	// SFINAE helper to detect nested TaskStack types
 	template <typename T>
-	struct is_generic_task_ts : std::false_type
+	struct is_generic_ts : std::false_type
 	{
 	};
 
 	template <unsigned int S, unsigned int A>
-	struct is_generic_task_ts<TaskStack<S, A>> : std::true_type
+	struct is_generic_ts<TaskStack<S, A>> : std::true_type
 	{
 	};
+
+	template <size_t... Is>
+	struct index_sequence {};
+
+	template <size_t N, size_t... Is>
+	struct make_index_sequence_impl : make_index_sequence_impl<N - 1, N - 1, Is...> {};
+
+	template <size_t... Is>
+	struct make_index_sequence_impl<0, Is...>
+	{
+		using type = index_sequence<Is...>;
+	};
+
+	template <size_t N>
+	struct make_index_sequence {
+		using type = typename make_index_sequence_impl<N>::type;
+	};
+
+	template <bool...>
+	struct bool_pack;
+
+	template <bool... Bs>
+	using all_true = std::is_same<bool_pack<true, Bs...>, bool_pack<Bs..., true>>;
+
+	template <typename... Ts>
+	using are_all_move_constructible = all_true<is_move_constructible<Ts>::value...>;
+
+	template <typename... Ts>
+	using are_all_copy_constructible = all_true<is_copy_constructible<Ts>::value...>;
+
 
 	template <typename Callable, typename... Ts>
 	static void tinvoke(Callable& callable, Ts &...args)
@@ -69,20 +112,12 @@ namespace HSLL
 		callable(args...);
 	}
 
-	/**
-	 * @brief Helper for applying tuple elements to a function
-	 */
 	template <typename Tuple, size_t... Is>
 	void apply_impl(Tuple& tup, index_sequence<Is...>)
 	{
 		tinvoke(std::get<Is>(tup)...);
 	}
 
-	/**
-	 * @brief Invokes function with arguments from tuple
-	 * @tparam Tuple Type of tuple containing callable and arguments
-	 * @param tup Tuple to unpack and invoke
-	 */
 	template <typename Tuple>
 	void tuple_apply(Tuple& tup)
 	{
@@ -136,8 +171,8 @@ namespace HSLL
 		 * @note Disables overload when F is HeapCallable type (prevents nesting)
 		 * @note Arguments are stored as decayed types (copy/move constructed)
 		 */
-		template <typename std::enable_if<!is_generic_task_hc<typename std::decay<F>::type>::value, int>::type = 0>
-		HeapCallable(F&& func, Args &&...args)
+		template <typename std::enable_if<!is_generic_hc<typename std::decay<F>::type>::value, int>::type = 0>
+		HeapCallable(F&& func, Args &&...args) HSLL_ALLOW_THROW
 			: storage(std::make_shared<Package>(std::forward<F>(func), std::forward<Args>(args)...)) {}
 	};
 
@@ -150,9 +185,9 @@ namespace HSLL
 	 * @return HeapCallable instance managing shared ownership of the callable
 	 */
 	template <typename F,
-		typename std::enable_if<!is_generic_task_hc<typename std::decay<F>::type>::value, int>::type = 0,
+		typename std::enable_if<!is_generic_hc<typename std::decay<F>::type>::value, int>::type = 0,
 		typename... Args>
-	HeapCallable<F, Args...> make_callable(F&& func, Args &&...args)
+	HeapCallable<F, Args...> make_callable(F&& func, Args &&...args) HSLL_ALLOW_THROW
 	{
 		return HeapCallable<F, Args...>(std::forward<F>(func), std::forward<Args>(args)...);
 	}
@@ -164,9 +199,10 @@ namespace HSLL
 	struct TaskBase
 	{
 		virtual ~TaskBase() = default;
-		virtual void execute() = 0;					  ///< Executes the stored task
-		virtual void cloneTo(void* memory) const = 0; ///< Copies task to preallocated memory
-		virtual void moveTo(void* memory) = 0;		  ///< Moves task to preallocated memory
+		virtual void execute() noexcept = 0;					  ///< Executes the stored task
+		virtual void copyTo(void* memory) const  noexcept = 0; ///< Copies task to preallocated memory
+		virtual void moveTo(void* memory) noexcept = 0;		  ///< Moves task to preallocated memory
+		virtual void move(void* memory) noexcept = 0;		  ///< Moves task to preallocated memory,¿ÉÍË»¯Îª¿½±´
 	};
 
 	/**
@@ -178,19 +214,19 @@ namespace HSLL
 	template <class F, class... Args>
 	struct TaskImpl : TaskBase
 	{
-		template <bool Copyable>
+		template <typename T, bool Copyable>
 		struct CloneHelper;
 
 		/**
 		 * @brief Specialization for copyable types
 		 * @details Performs copy construction in target memory
 		 */
-		template <>
-		struct CloneHelper<true>
+		template <typename T>
+		struct CloneHelper<T, true>
 		{
-			static void clone(const TaskImpl* self, void* memory)
+			static void copyTo(const T* self, void* memory)  noexcept
 			{
-				new (memory) TaskImpl(*self);
+				new (memory) T(*self);
 			}
 		};
 
@@ -198,29 +234,34 @@ namespace HSLL
 		 * @brief Specialization for non-copyable types
 		 * @details Aborts program with error message
 		 */
-		template <>
-		struct CloneHelper<false>
+		template <typename T>
+		struct CloneHelper<T, false>
 		{
-			static void clone(const TaskImpl*, void*)
+			static void copyTo(const T*, void*)  noexcept
 			{
 				printf("\nTaskImpl must be copy constructible for cloneTo()");
 				std::abort();
 			}
 		};
 
-		template <bool Movable>
+		template <typename T, bool Movable>
 		struct MoveHelper;
 
 		/**
 		 * @brief Specialization for movable types
 		 * @details Performs move construction in target memory
 		 */
-		template <>
-		struct MoveHelper<true>
+		template <typename T>
+		struct MoveHelper<T, true>
 		{
-			static void move(TaskImpl* self, void* memory)
+			static void moveTo(T* self, void* memory)  noexcept
 			{
-				new (memory) TaskImpl(std::move(*self));
+				new (memory) T(std::move(*self));
+			}
+
+			static void move(T* self, void* memory)  noexcept
+			{
+				new (memory) T(std::move(*self));
 			}
 		};
 
@@ -228,13 +269,18 @@ namespace HSLL
 		 * @brief Specialization for non-movable types
 		 * @details Aborts program with error message
 		 */
-		template <>
-		struct MoveHelper<false>
+		template <typename T>
+		struct MoveHelper<T, false>
 		{
-			static void move(TaskImpl*, void*)
+			static void moveTo(T*, void*)  noexcept
 			{
 				printf("\nTaskImpl must be move constructible for moveTo()");
 				std::abort();
+			}
+
+			static void move(const T* self, void* memory)  noexcept
+			{
+				new (memory) T(*self);
 			}
 		};
 
@@ -257,7 +303,7 @@ namespace HSLL
 		 * @note Arguments are ALWAYS passed as lvalues during invocation
 		 *       regardless of original construction value category
 		 */
-		void execute() override
+		void execute() noexcept override
 		{
 			tuple_apply(storage);
 		}
@@ -267,9 +313,11 @@ namespace HSLL
 		 * @param memory Preallocated storage for copy
 		 * @note Uses CloneHelper to handle copyability
 		 */
-		void cloneTo(void* memory) const override
+		void copyTo(void* memory) const   noexcept override
 		{
-			CloneHelper<std::is_copy_constructible<Tuple>::value>::clone(this, memory);
+			CloneHelper<TaskImpl,
+				are_all_copy_constructible<typename std::decay<F>::type,
+				typename std::decay<Args>::type...>::value>::copyTo(this, memory);
 		}
 
 		/**
@@ -277,11 +325,21 @@ namespace HSLL
 		 * @param memory Preallocated storage for moved object
 		 * @note Uses MoveHelper to handle movability
 		 */
-		void moveTo(void* memory) override
+		void moveTo(void* memory) noexcept  override
 		{
-			MoveHelper<std::is_move_constructible<Tuple>::value>::move(this, memory);
+			MoveHelper<TaskImpl,
+				are_all_move_constructible< typename std::decay<F>::type,
+				typename std::decay<Args>::type...>::value > ::moveTo(this, memory);
+		}
+
+		void move(void* memory) noexcept override
+		{
+			MoveHelper<TaskImpl,
+				are_all_move_constructible<typename std::decay<F>::type,
+				typename std::decay<Args>::type...>::value > ::move(this, memory);
 		}
 	};
+
 
 	/**
 	 * @brief Metafunction to compute the task implementation type and its size
@@ -307,11 +365,13 @@ namespace HSLL
 	 * @brief Stack-allocated task container with fixed-size storage
 	 * @tparam TSIZE Size of internal storage buffer (default = 64)
 	 * @tparam ALIGN Alignment requirement for storage (default = 8)
-	 * @details Uses SBO (Small Buffer Optimization) to avoid heap allocation
 	 */
 	template <unsigned int TSIZE = 64, unsigned int ALIGN = 8>
 	class TaskStack
 	{
+		template <class TYPE>
+		friend class TPBlockQueue;
+
 		static_assert(TSIZE >= 2 * sizeof(void*), "TSIZE must >= 2 * sizeof(void*)");
 		static_assert(ALIGN >= alignof(void*), "Alignment must >= alignof(void*)");
 		static_assert(TSIZE% ALIGN == 0, "TSIZE must be a multiple of ALIGN");
@@ -353,6 +413,7 @@ namespace HSLL
 		};
 
 	public:
+
 		/**
 		 * @brief Metafunction to validate task compatibility with storage
 		 * @tparam F Type of callable object
@@ -389,8 +450,8 @@ namespace HSLL
 		 *   Example: void bad_func(std::string&&) // Not allowed
 		 */
 		template <class F, class... Args,
-			typename std::enable_if<!is_generic_task_ts<typename std::decay<F>::type>::value, int>::type = 0>
-		TaskStack(F&& func, Args &&...args)
+			typename std::enable_if<!is_generic_ts<typename std::decay<F>::type>::value, int>::type = 0>
+		TaskStack(F&& func, Args &&...args) HSLL_ALLOW_THROW
 		{
 			typedef typename task_stack<F, Args...>::type ImplType;
 			static_assert(sizeof(ImplType) <= TSIZE, "TaskImpl size exceeds storage");
@@ -410,8 +471,8 @@ namespace HSLL
 		 * @note Uses SFINAE to prevent nesting of HeapCallable objects
 		 */
 		template <class F, class... Args,
-			typename std::enable_if<!is_generic_task_hc<typename std::decay<F>::type>::value, int>::type = 0>
-		static TaskStack make_auto(F&& func, Args &&...args)
+			typename std::enable_if<!is_generic_hc<typename std::decay<F>::type>::value, int>::type = 0>
+		static TaskStack make_auto(F&& func, Args &&...args) HSLL_ALLOW_THROW
 		{
 			return Maker<task_invalid<F, Args...>::value, F, Args...>::make(
 				std::forward<F>(func),
@@ -428,8 +489,8 @@ namespace HSLL
 		 * @note Always uses heap allocation regardless of size
 		 */
 		template <class F, class... Args,
-			typename std::enable_if<!is_generic_task_hc<typename std::decay<F>::type>::value, int>::type = 0>
-		static TaskStack make_heap(F&& func, Args &&...args)
+			typename std::enable_if<!is_generic_hc<typename std::decay<F>::type>::value, int>::type = 0>
+		static TaskStack make_heap(F&& func, Args &&...args) HSLL_ALLOW_THROW
 		{
 			return Maker<false, F, Args...>::make(
 				std::forward<F>(func),
@@ -439,7 +500,7 @@ namespace HSLL
 		/**
 		 * @brief Executes the stored task
 		 */
-		void execute()
+		void execute()  noexcept
 		{
 			getBase()->execute();
 		}
@@ -448,62 +509,43 @@ namespace HSLL
 		 * @brief Copy constructor (deep copy)
 		 * @details Clones the underlying task to new storage
 		 */
-		TaskStack(const TaskStack& other)
+		TaskStack(const TaskStack& other)  noexcept
 		{
-			other.getBase()->cloneTo(storage);
+			other.getBase()->copyTo(storage);
 		}
 
 		/**
 		 * @brief Move constructor
 		 * @details Moves the underlying task to new storage
 		 */
-		TaskStack(TaskStack&& other)
+		TaskStack(TaskStack&& other)  noexcept
 		{
 			other.getBase()->moveTo(storage);
 		}
 
 		/**
-		 * @brief Copy assignment operator
-		 * @details Destroys current task and clones replacement
-		 */
-		TaskStack& operator=(const TaskStack& other)
-		{
-			if (this != &other)
-			{
-				getBase()->~TaskBase();
-				other.getBase()->cloneTo(storage);
-			}
-			return *this;
-		}
-
-		/**
-		 * @brief Move assignment operator
-		 * @details Destroys current task and moves replacement
-		 */
-		TaskStack& operator=(TaskStack&& other)
-		{
-			if (this != &other)
-			{
-				getBase()->~TaskBase();
-				other.getBase()->moveTo(storage);
-			}
-			return *this;
-		}
-
-		/**
 		 * @brief Destructor invokes stored task's destructor
 		 */
-		~TaskStack()
+		~TaskStack()  noexcept
 		{
 			getBase()->~TaskBase();
 		}
 
+		TaskStack& operator=(const TaskStack& other) = delete;
+		TaskStack& operator=(TaskStack&& other) = delete;
+
 	private:
+
+		static void move(TaskStack& dst, TaskStack& src)  noexcept
+		{
+			src.getBase()->move(dst.storage);
+		}
+
 		/**
 		 * @brief Gets typed pointer to task storage
 		 * @return Pointer to base task interface
 		 */
-		TaskBase* getBase()
+		TaskBase* getBase()  noexcept
 		{
 			return (TaskBase*)storage;
 		}
@@ -512,7 +554,7 @@ namespace HSLL
 		 * @brief Gets const-typed pointer to task storage
 		 * @return Const pointer to base task interface
 		 */
-		const TaskBase* getBase() const
+		const TaskBase* getBase() const  noexcept
 		{
 			return (const TaskBase*)storage;
 		}

@@ -23,7 +23,7 @@ namespace HSLL
 		 *       - Windows: Uses thread affinity mask
 		 *       - Other platforms: No-op (always returns true)
 		 */
-		static bool bind_current_thread_to_core(unsigned id)
+		static bool bind_current_thread_to_core(unsigned id) noexcept
 		{
 #if defined(__linux__)
 			cpu_set_t cpuset;
@@ -43,6 +43,7 @@ namespace HSLL
 
 #include <vector>
 #include <thread>
+#include <atomic>
 
 #include "TPTask.hpp"
 #include "TPBlockQueue.hpp"
@@ -82,7 +83,7 @@ namespace HSLL
 		 * @param batchSize Maximum tasks to process per batch (min 1)
 		 * @return true if initialization succeeded, false otherwise
 		 */
-		bool init(unsigned int queueLength, unsigned int threadNum, unsigned int batchSize = 1)
+		bool init(unsigned int queueLength, unsigned int threadNum, unsigned int batchSize = 1) noexcept
 		{
 			if (batchSize == 0 || threadNum == 0 || batchSize > queueLength)
 				return false;
@@ -139,7 +140,7 @@ namespace HSLL
 		 * @details Constructs task in-place at selected position without blocking
 		 */
 		template <INSERT_POS POS = TAIL, typename... Args>
-		bool emplace(Args &&...args)
+		bool emplace(Args &&...args) noexcept
 		{
 			return select_queue().template emplace<POS>(std::forward<Args>(args)...);
 		}
@@ -153,7 +154,7 @@ namespace HSLL
 		 * @details Waits indefinitely for queue space, constructs task at selected position
 		 */
 		template <INSERT_POS POS = TAIL, typename... Args>
-		bool wait_emplace(Args &&...args)
+		bool wait_emplace(Args &&...args) noexcept
 		{
 			return select_queue().template wait_emplace<POS>(std::forward<Args>(args)...);
 		}
@@ -169,7 +170,7 @@ namespace HSLL
 		 * @return true if task was added, false on timeout or thread pool stop
 		 */
 		template <INSERT_POS POS = TAIL, class Rep, class Period, typename... Args>
-		bool wait_emplace(const std::chrono::duration<Rep, Period> &timeout, Args &&...args)
+		bool wait_emplace(const std::chrono::duration<Rep, Period> &timeout, Args &&...args) noexcept
 		{
 			return select_queue().template wait_emplace<POS>(timeout, std::forward<Args>(args)...);
 		}
@@ -182,7 +183,7 @@ namespace HSLL
 		 * @return true if task was enqueued, false if queue was full
 		 */
 		template <INSERT_POS POS = TAIL, class U>
-		bool enqueue(U &&task)
+		bool enqueue(U &&task) noexcept
 		{
 			return select_queue().template push<POS>(std::forward<U>(task));
 		}
@@ -195,7 +196,7 @@ namespace HSLL
 		 * @return true if task was added, false if thread pool was stopped
 		 */
 		template <INSERT_POS POS = TAIL, class U>
-		bool wait_enqueue(U &&task)
+		bool wait_enqueue(U &&task) noexcept
 		{
 			return select_queue().template wait_push<POS>(std::forward<U>(task));
 		}
@@ -211,7 +212,7 @@ namespace HSLL
 		 * @return true if task was added, false on timeout or thread pool stop
 		 */
 		template <INSERT_POS POS = TAIL, class U, class Rep, class Period>
-		bool wait_enqueue(U &&task, const std::chrono::duration<Rep, Period> &timeout)
+		bool wait_enqueue(U &&task, const std::chrono::duration<Rep, Period> &timeout) noexcept
 		{
 			return select_queue().template wait_push<POS>(std::forward<U>(task), timeout);
 		}
@@ -225,7 +226,7 @@ namespace HSLL
 		 * @return Actual number of tasks enqueued
 		 */
 		template <BULK_CMETHOD METHOD = COPY, INSERT_POS POS = TAIL>
-		unsigned int enqueue_bulk(T *tasks, unsigned int count)
+		unsigned int enqueue_bulk(T *tasks, unsigned int count) noexcept
 		{
 			return select_queue_for_bulk(count / 2).template pushBulk<METHOD, POS>(tasks, count);
 		}
@@ -239,7 +240,7 @@ namespace HSLL
 		 * @return Actual number of tasks added before stop
 		 */
 		template <BULK_CMETHOD METHOD = COPY, INSERT_POS POS = TAIL>
-		unsigned int wait_enqueue_bulk(T *tasks, unsigned int count)
+		unsigned int wait_enqueue_bulk(T *tasks, unsigned int count) noexcept
 		{
 			return select_queue().template wait_pushBulk<METHOD, POS>(tasks, count);
 		}
@@ -256,7 +257,7 @@ namespace HSLL
 		 * @return Actual number of tasks added (may be less than count)
 		 */
 		template <BULK_CMETHOD METHOD = COPY, INSERT_POS POS = TAIL, class Rep, class Period>
-		unsigned int wait_enqueue_bulk(T *tasks, unsigned int count, const std::chrono::duration<Rep, Period> &timeout)
+		unsigned int wait_enqueue_bulk(T *tasks, unsigned int count, const std::chrono::duration<Rep, Period> &timeout) noexcept
 		{
 			return select_queue().template wait_pushBulk<METHOD, POS>(tasks, count, timeout);
 		}
@@ -294,7 +295,7 @@ namespace HSLL
 		/**
 		 * @brief Destroys thread pool and releases resources
 		 */
-		~ThreadPool()
+		~ThreadPool() noexcept
 		{
 			exit(false);
 		}
@@ -357,7 +358,7 @@ namespace HSLL
 		/**
 		 * @brief  Processes single task at a time
 		 */
-		static void process_single(TPBlockQueue<T> &queue, std::vector<TPBlockQueue<T> *> &other, bool &safeExit)
+		static void process_single(TPBlockQueue<T> &queue, std::vector<TPBlockQueue<T> *> &other, bool &safeExit) noexcept
 		{
 			struct Stealer
 			{
@@ -452,7 +453,7 @@ namespace HSLL
 		/**
 		 * @brief  Processes multiple tasks at a time
 		 */
-		static void process_bulk(TPBlockQueue<T> &queue, std::vector<TPBlockQueue<T> *> &other, unsigned batchSize, bool &safeExit)
+		static void process_bulk(TPBlockQueue<T> &queue, std::vector<TPBlockQueue<T> *> &other, unsigned batchSize, bool &safeExit) noexcept
 		{
 			struct Stealer
 			{
