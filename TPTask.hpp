@@ -47,6 +47,18 @@ namespace HSLL
 		static constexpr bool value = decltype(test_copy<T>(true))::value;
 	};
 
+	template <typename F>
+	struct is_invalid_construct_rtype {
+	private:
+		using decayed_type = typename std::decay<F>::type;
+
+	public:
+		static constexpr bool value =
+			std::is_rvalue_reference<F>::value
+			? is_move_constructible<decayed_type>::value
+			: is_copy_constructible<decayed_type>::value;
+	};
+
 	template <unsigned int TSIZE, unsigned int ALIGN>
 	class TaskStack;
 
@@ -200,9 +212,10 @@ namespace HSLL
 	{
 		virtual ~TaskBase() = default;
 		virtual void execute() noexcept = 0;					  ///< Executes the stored task
-		virtual void copyTo(void* memory) const  noexcept = 0; ///< Copies task to preallocated memory
-		virtual void moveTo(void* memory) noexcept = 0;		  ///< Moves task to preallocated memory
-		virtual void move(void* memory) noexcept = 0;		  ///< Moves task to preallocated memory,可退化为拷贝
+		virtual void copyTo(void* memory) const  noexcept = 0;		///< Copies task to preallocated memory
+		virtual void moveTo(void* memory) noexcept = 0;			 ///< Moves task to preallocated memory
+		virtual bool is_moveable() const noexcept = 0;
+		virtual bool is_copyable() const noexcept = 0;
 	};
 
 	/**
@@ -258,11 +271,6 @@ namespace HSLL
 			{
 				new (memory) T(std::move(*self));
 			}
-
-			static void move(T* self, void* memory)  noexcept
-			{
-				new (memory) T(std::move(*self));
-			}
 		};
 
 		/**
@@ -272,13 +280,7 @@ namespace HSLL
 		template <typename T>
 		struct MoveHelper<T, false>
 		{
-			static void moveTo(T*, void*)  noexcept
-			{
-				printf("\nTaskImpl must be move constructible for moveTo()");
-				std::abort();
-			}
-
-			static void move(const T* self, void* memory)  noexcept
+			static void moveTo(const T* self, void* memory)  noexcept
 			{
 				new (memory) T(*self);
 			}
@@ -327,16 +329,28 @@ namespace HSLL
 		 */
 		void moveTo(void* memory) noexcept  override
 		{
+			//To be improved:尝试改为不完全退化,即支持移动的参数移动，不支持移动的参数调用拷贝
 			MoveHelper<TaskImpl,
 				are_all_move_constructible< typename std::decay<F>::type,
-				typename std::decay<Args>::type...>::value > ::moveTo(this, memory);
+				typename std::decay<Args>::type...>::value> ::moveTo(this, memory);
 		}
 
-		void move(void* memory) noexcept override
+		bool is_moveable() const noexcept override
 		{
-			MoveHelper<TaskImpl,
-				are_all_move_constructible<typename std::decay<F>::type,
-				typename std::decay<Args>::type...>::value > ::move(this, memory);
+			//To be improved:尝试改为不完全退化,即支持移动的参数移动，不支持移动的参数调用拷贝
+			//之后其将始终返回true(因为成功构造的实例一定有一个构造是可用的)
+			return are_all_move_constructible<
+				typename std::decay<F>::type,
+				typename std::decay<Args>::type...
+			>::value;
+		}
+
+		bool is_copyable() const noexcept override
+		{
+			return are_all_copy_constructible<
+				typename std::decay<F>::type,
+				typename std::decay<Args>::type...
+			>::value;
 		}
 	};
 
@@ -454,6 +468,9 @@ namespace HSLL
 		TaskStack(F&& func, Args &&...args) HSLL_ALLOW_THROW
 		{
 			typedef typename task_stack<F, Args...>::type ImplType;
+			static_assert(all_true<is_invalid_construct_rtype<decltype(func)>::value,
+				is_invalid_construct_rtype<decltype(args)>::value...>::value,
+				"Arguments must satisfy: lvalues require copy construction, rvalues require move construction");
 			static_assert(sizeof(ImplType) <= TSIZE, "TaskImpl size exceeds storage");
 			static_assert(alignof(ImplType) <= ALIGN, "TaskImpl alignment exceeds storage alignment");
 			new (storage) ImplType(std::forward<F>(func), std::forward<Args>(args)...);
@@ -506,6 +523,24 @@ namespace HSLL
 		}
 
 		/**
+		 * @brief Checks if the stored task is move constructible
+		 * @return true if task can be moved, false otherwise
+		 */
+		bool is_moveable() const noexcept
+		{
+			return getBase()->is_moveable();
+		}
+
+		/**
+		 * @brief Checks if the stored task is copy constructible
+		 * @return true if task can be copied, false otherwise
+		 */
+		bool is_copyable() const noexcept
+		{
+			return getBase()->is_copyable();
+		}
+
+		/**
 		 * @brief Copy constructor (deep copy)
 		 * @details Clones the underlying task to new storage
 		 */
@@ -535,11 +570,6 @@ namespace HSLL
 		TaskStack& operator=(TaskStack&& other) = delete;
 
 	private:
-
-		static void move(TaskStack& dst, TaskStack& src)  noexcept
-		{
-			src.getBase()->move(dst.storage);
-		}
 
 		/**
 		 * @brief Gets typed pointer to task storage

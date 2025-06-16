@@ -7,7 +7,7 @@ using namespace HSLL;
 #define SUBMIT_BATCH 1
 #define PROCESS_BATCH 1
 #define PEER 10000000 // Increase task count for multi-round testing
-#define TSIZE 24
+#define TSIZE 16
 #define QUEUELEN 10000
 
 ThreadPool<TaskStack<TSIZE>> pool;

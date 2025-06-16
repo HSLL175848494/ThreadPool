@@ -289,7 +289,7 @@ namespace HSLL
 
 		inline void move_element_pop(TYPE& dst, TYPE& src)
 		{
-			TYPE::move(dst, src);
+			new (&dst) TYPE(std::move(src));
 			conditional_destroy<TYPE>(src);
 		}
 
