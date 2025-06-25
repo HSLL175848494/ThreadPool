@@ -1,46 +1,6 @@
 #ifndef HSLL_THREADPOOL
 #define HSLL_THREADPOOL
 
-#if defined(__linux__)
-#include <pthread.h>
-#elif defined(_WIN32)
-#define WIN32_LEAN_AND_MEAN
-#define NOMINMAX
-#include <windows.h>
-#endif
-
-namespace HSLL
-{
-	struct ThreadBinder
-	{
-		/**
-		 * @brief Binds the calling thread to a specific CPU core
-		 * @param id Target core ID (0-indexed)
-		 * @return true if binding succeeded, false otherwise
-		 *
-		 * @note Platform-specific implementation:
-		 *       - Linux: Uses pthread affinity
-		 *       - Windows: Uses thread affinity mask
-		 *       - Other platforms: No-op (always returns true)
-		 */
-		static bool bind_current_thread_to_core(unsigned id) noexcept
-		{
-#if defined(__linux__)
-			cpu_set_t cpuset;
-			CPU_ZERO(&cpuset);
-			CPU_SET(id, &cpuset);
-			return pthread_setaffinity_np(pthread_self(), sizeof(cpu_set_t), &cpuset) == 0;
-
-#elif defined(_WIN32)
-			return SetThreadAffinityMask(GetCurrentThread(), 1ull << id) != 0;
-
-#else
-			return true;
-#endif
-		}
-	};
-};
-
 #include <vector>
 #include <thread>
 #include <atomic>
@@ -164,20 +124,15 @@ namespace HSLL
 				}
 			}
 
-			unsigned cores = std::thread::hardware_concurrency();
+			this->index = 0;
 			this->threadNum = threadNum;
 			this->queueLength = queueLength;
 			workers.reserve(threadNum);
 
 			for (unsigned i = 0; i < threadNum; ++i)
 			{
-				workers.emplace_back([this, i, cores, batchSize] {
-					if (cores > 0)
-					{
-						unsigned id = i % cores;
-						ThreadBinder::bind_current_thread_to_core(id);
-					}
-					worker(i, batchSize); });
+				workers.emplace_back([this, i, batchSize] {
+				worker(i, batchSize); });
 			}
 
 			return true;
@@ -373,10 +328,10 @@ namespace HSLL
 		TPBlockQueue<T>& select_queue() noexcept
 		{
 			unsigned int index = next_index();
+
 			if (queues[index].get_exact_size() < queueLength)
-			{
 				return queues[index];
-			}
+			
 			unsigned int half = threadNum / 2;
 			return queues[(index + half) % threadNum];
 		}
@@ -384,10 +339,10 @@ namespace HSLL
 		TPBlockQueue<T>& select_queue_for_bulk(unsigned required) noexcept
 		{
 			unsigned int index = next_index();
+
 			if (queues[index].get_exact_size() + required <= queueLength)
-			{
 				return queues[index];
-			}
+			
 			unsigned int half = threadNum / 2;
 			return queues[(index + half) % threadNum];
 		}
