@@ -6,15 +6,21 @@ using namespace HSLL;
 #define PRODUCER 1
 #define SUBMIT_BATCH 1
 #define PROCESS_BATCH 1
-#define PEER 10000000 // Increase task count for multi-round testing
+#define PEER 1000000
 #define TSIZE 16
 #define QUEUELEN 10000
 
 ThreadPool<TaskStack<TSIZE>> pool;
 using task_type = TaskStack<TSIZE>;
 
+unsigned int k;
+
 // Empty task function
-void test() {}
+void test() {
+
+	for (int i = 0; i < 10000; i++)
+		k = k*2+i;
+}
 
 // Worker thread for batch submission
 void bulk_submit_worker()
@@ -87,9 +93,8 @@ double test_single_submit()
 	return duration.count();
 }
 
-
 int main()
-{	
+{
 	const long long total_tasks = static_cast<long long>(PEER) * PRODUCER;
 	printf("\n=== Configuration Parameters ===\n");
 	printf("%-20s: %d\n", "Submit Batch Size", SUBMIT_BATCH);
@@ -127,5 +132,6 @@ int main()
 	printf("%-20s: %10.5f\n", "Ratio (Bulk/Single)", single_time / bulk_time);
 
 	std::this_thread::sleep_for(std::chrono::seconds(1));
+
 	return 0;
 }
