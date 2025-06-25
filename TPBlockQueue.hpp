@@ -24,7 +24,7 @@ namespace HSLL
 #define ALIGNED_MALLOC(size, align) _aligned_malloc(size, align)
 #define ALIGNED_FREE(ptr) _aligned_free(ptr)
 #else
-#define ALIGNED_MALLOC(size, align) aligned_alloc(align, size)
+#define ALIGNED_MALLOC(size, align) aligned_alloc(align,(size + align - 1) & ~(align - 1))
 #define ALIGNED_FREE(ptr) free(ptr)
 #endif
 
@@ -50,7 +50,7 @@ namespace HSLL
 	 * @brief Circular buffer based blocking queue implementation
 	 */
 	template <class TYPE>
-	class TPBlockQueue
+	class alignas(64) TPBlockQueue
 	{
 		static_assert(is_generic_ts<TYPE>::value, "TYPE must be a TaskStack type");
 
@@ -299,16 +299,14 @@ namespace HSLL
 
 		/**
 		 * @brief Initializes queue with fixed capacity
-		 */
+		 */ 
 		bool init(unsigned int capacity)
 		{
 			if (memoryBlock || !capacity)
 				return false;
 
-			constexpr unsigned int align = std::max(alignof(TYPE), (size_t)64);
 			totalsize = sizeof(TYPE) * capacity;
-			totalsize = (totalsize + align - 1) & ~(align - 1);
-			memoryBlock = ALIGNED_MALLOC(totalsize, align);
+			memoryBlock = ALIGNED_MALLOC(totalsize, std::max(alignof(TYPE), (size_t)64));
 
 			if (!memoryBlock)
 				return false;

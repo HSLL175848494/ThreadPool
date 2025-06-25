@@ -144,48 +144,45 @@ namespace HSLL
 			if (batchSize == 0 || threadNum == 0 || batchSize > queueLength)
 				return false;
 
-			queues = new (std::nothrow) TPBlockQueue<T>[threadNum];
+			queues = (TPBlockQueue<T>*)ALIGNED_MALLOC(threadNum * sizeof(TPBlockQueue<T>), 64);
 
 			if (!queues)
 				return false;
 
 			for (unsigned i = 0; i < threadNum; ++i)
 			{
+				new (&queues[i]) TPBlockQueue<T>();
+
 				if (!queues[i].init(queueLength))
 				{
-					delete[] queues;
+					for (unsigned j = 0; j < i; ++j)
+						queues[j].~TPBlockQueue<T>();
+
+					ALIGNED_FREE(queues);
 					queues = nullptr;
 					return false;
 				}
 			}
 
 			unsigned cores = std::thread::hardware_concurrency();
-
-			if (!cores)
-			{
-				delete[] queues;
-				queues = nullptr;
-				return false;
-			}
-
 			this->threadNum = threadNum;
 			this->queueLength = queueLength;
 			workers.reserve(threadNum);
 
 			for (unsigned i = 0; i < threadNum; ++i)
 			{
-				workers.emplace_back([this, i, cores, batchSize]
+				workers.emplace_back([this, i, cores, batchSize] {
+					if (cores > 0)
 					{
-						if (cores > 0)
-						{
-							unsigned id = i % cores;
-							ThreadBinder::bind_current_thread_to_core(id);
-						}
-						worker(i, batchSize); });
+						unsigned id = i % cores;
+						ThreadBinder::bind_current_thread_to_core(id);
+					}
+					worker(i, batchSize); });
 			}
 
 			return true;
 		}
+
 
 		/**
 		 * @brief Non-blocking task emplacement with perfect forwarding
@@ -341,10 +338,14 @@ namespace HSLL
 
 				workers.clear();
 				workers.shrink_to_fit();
+
+				for (unsigned i = 0; i < threadNum; ++i)
+					queues[i].~TPBlockQueue<T>();
+
+				ALIGNED_FREE(queues);
+				queues = nullptr;
 				threadNum = 0;
 				queueLength = 0;
-				delete[] queues;
-				queues = nullptr;
 			}
 		}
 
@@ -482,10 +483,7 @@ namespace HSLL
 		 */
 		void process_bulk(TPBlockQueue<T>& queue, std::vector<TPBlockQueue<T>*>& other, unsigned batchSize) noexcept
 		{
-			constexpr unsigned int align = alignof(T);
-			unsigned int totalsize = sizeof(T) * batchSize;
-			totalsize = (totalsize + align - 1) & ~(align - 1);
-			T* tasks = (T*)ALIGNED_MALLOC(totalsize, align);
+			T* tasks = (T*)ALIGNED_MALLOC(sizeof(T) * batchSize, alignof(T));
 
 			if (!tasks)
 			{
