@@ -29,14 +29,16 @@ class ThreadPool
 
 #### 初始化方法
 ```cpp
-bool init(unsigned queueLength, unsigned threadNum, unsigned batchSize = 1)
+bool init(unsigned int queueLength, unsigned int minThreadNum,
+            unsigned int maxThreadNum, unsigned int batchSize = 1)
 ```
 - **参数**：
   - `queueLength`: 每个工作队列的容量
-  - `threadNum`: 工作线程数量
+  - `minThreadNum`: 工作线程最小数量
+  - `maxThreadNum`:工作线程最大数量
   - `batchSize`: 单次处理任务数
 - **返回值**：初始化成功返回true
-- **功能**：分配资源并启动工作线程
+- **功能**：分配资源并启动工作线程(初始值为最大数量)
 
 #### 任务提交接口
 

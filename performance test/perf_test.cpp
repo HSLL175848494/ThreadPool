@@ -2,7 +2,7 @@
 
 using namespace HSLL;
 
-#define WORKER 1
+#define WORKER 8
 #define PRODUCER 1
 #define SUBMIT_BATCH 1
 #define PROCESS_BATCH 1
@@ -52,7 +52,7 @@ void single_submit_worker()
 // Batch submission test
 double test_bulk_submit()
 {
-	pool.init(QUEUELEN, WORKER, PROCESS_BATCH);
+	pool.init(QUEUELEN,1, WORKER, PROCESS_BATCH);
 
 	auto start = std::chrono::high_resolution_clock::now();
 
@@ -74,7 +74,7 @@ double test_bulk_submit()
 // Single task submission test
 double test_single_submit()
 {
-	pool.init(QUEUELEN, WORKER, PROCESS_BATCH);
+	pool.init(QUEUELEN,1,WORKER, PROCESS_BATCH);
 	auto start = std::chrono::high_resolution_clock::now();
 
 	std::vector<std::thread> producers;
@@ -104,7 +104,7 @@ int main()
 	printf("%-20s: %d\n", "Producer Threads", PRODUCER);
 	printf("%-20s: %d\n", "Worker Threads", WORKER);
 	printf("%-20s: %d\n", "Queue Length", QUEUELEN);
-	printf("%-20s: %lu\n", "Memory Usage", sizeof(task_type) * QUEUELEN * WORKER);
+	printf("%-20s: %lu\n", "Max memory Usage", sizeof(task_type) * QUEUELEN * WORKER);
 	printf("%-20s: %d\n", "Tasks per Producer", PEER);
 	printf("%-20s: %lld\n", "Total Tasks", total_tasks);
 

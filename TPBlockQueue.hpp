@@ -64,35 +64,15 @@ namespace HSLL
 		};
 
 		template <typename T>
-		struct is_duration : std::false_type
+		struct is_generic_dr : std::false_type
 		{
 		};
 
 		template <typename Rep, typename Period>
-		struct is_duration<std::chrono::duration<Rep, Period>> : std::true_type
+		struct is_generic_dr<std::chrono::duration<Rep, Period>> : std::true_type
 		{
 		};
 
-		/**
-		 * @brief Helper template for conditional object destruction
-		 */
-		template <typename T, bool IsTrivial = std::is_trivially_destructible<T>::value>
-		struct DestroyHelper
-		{
-			static void destroy(T& obj) { obj.~T(); }
-		};
-
-		template <typename T>
-		struct DestroyHelper<T, true>
-		{
-			static void destroy(T&) {}
-		};
-
-		template <typename T>
-		void conditional_destroy(T& obj)
-		{
-			DestroyHelper<T>::destroy(obj);
-		}
 
 		/**
 		 * @brief Helper template for bulk construction (copy/move)
@@ -282,13 +262,13 @@ namespace HSLL
 		inline void move_element_push(TYPE& dst, TYPE& src)
 		{
 			new (&dst) TYPE(std::move(src));
-			conditional_destroy<TYPE>(src);
+			src.~TYPE();
 		}
 
 		inline void move_element_pop(TYPE& dst, TYPE& src)
 		{
 			new (&dst) TYPE(std::move(src));
-			conditional_destroy<TYPE>(src);
+			src.~TYPE();
 		}
 
 	public:
@@ -339,7 +319,7 @@ namespace HSLL
 		 * @brief Blocking element emplacement with indefinite wait
 		 */
 		template <INSERT_POS POS = TAIL, typename... Args>
-		typename std::enable_if<!is_duration<typename std::tuple_element<0, std::tuple<Args...>>::type>::value, bool>::type
+		typename std::enable_if<!is_generic_dr<typename std::tuple_element<0, std::tuple<Args...>>::type>::value, bool>::type
 			wait_emplace(Args &&...args)
 		{
 			std::unique_lock<std::mutex> lock(dataMutex);
@@ -616,7 +596,7 @@ namespace HSLL
 				TYPE* current = dataListHead;
 				for (unsigned int i = 0; i < size; ++i)
 				{
-					conditional_destroy<TYPE>(*current);
+					current->~TYPE();
 					current = (TYPE*)((char*)current + sizeof(TYPE));
 					if ((uintptr_t)(current) == border)
 						current = (TYPE*)(memoryBlock);
