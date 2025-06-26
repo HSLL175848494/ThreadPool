@@ -12,7 +12,7 @@
 namespace HSLL
 {
 
-#define HSLL_THREADPOOL_TIMEOUT 5
+#define HSLL_THREADPOOL_TIMEOUT_Q 5
 #define HSLL_THREADPOOL_TIMEOUT_M std::chrono::seconds(1)
 
 	/**
@@ -484,7 +484,7 @@ namespace HSLL
 				}
 				else
 				{
-					if (queue->wait_pop(*task, std::chrono::milliseconds(HSLL_THREADPOOL_TIMEOUT)))
+					if (queue->wait_pop(*task, std::chrono::milliseconds(HSLL_THREADPOOL_TIMEOUT_Q)))
 					{
 						task->execute();
 						task->~T();
@@ -542,7 +542,7 @@ namespace HSLL
 				}
 				else
 				{
-					count = queue->wait_popBulk(tasks, batchSize, std::chrono::milliseconds(HSLL_THREADPOOL_TIMEOUT));
+					count = queue->wait_popBulk(tasks, batchSize, std::chrono::milliseconds(HSLL_THREADPOOL_TIMEOUT_Q));
 
 					if (count)
 						execute_tasks(tasks, count);
