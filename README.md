@@ -29,14 +29,16 @@ class ThreadPool
 
 #### 初始化方法
 ```cpp
-bool init(unsigned queueLength, unsigned threadNum, unsigned batchSize = 1)
+bool init(unsigned int queueLength, unsigned int minThreadNum,
+            unsigned int maxThreadNum, unsigned int batchSize = 1)
 ```
 - **参数**：
   - `queueLength`: 每个工作队列的容量
-  - `threadNum`: 工作线程数量
+  - `minThreadNum`: 工作线程最小数量
+  - `maxThreadNum`:工作线程最大数量
   - `batchSize`: 单次处理任务数
 - **返回值**：初始化成功返回true
-- **功能**：分配资源并启动工作线程
+- **功能**：分配资源并启动工作线程(初始值为最大数量)
 
 #### 任务提交接口
 
@@ -102,8 +104,6 @@ void exit(bool shutdownPolicy = true)
 #### 工作机制
 - **任务分发**：采用轮询+跳半队列负载均衡策略
 - **工作线程**：每个线程优先处理自己的队列，空闲时支持任务窃取
-- **核心绑定**：自动将工作线程绑定到不同CPU核心（需硬件支持）
-
 
 ### 基本使用
 ```cpp
@@ -178,8 +178,8 @@ graph TD
 | 批量任务     | enqueue_bulk| wait_enqueue_bulk | wait_enqueue_bulk |
 
 ## 平台支持
-- Linux (pthread affinity)
-- Windows (SetThreadAffinityMask)
+- Linux (aligned_alloc)
+- Windows (aligned_malloc)
 - C++11 或更新标准
 
 ## 其它
