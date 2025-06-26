@@ -12,7 +12,7 @@ HSLL::ThreadPool 是一个轻量级C++11线程池实现，具有以下特性：
 
 ## 引入
 ```cpp
-//依赖于TPBlockQueue.hpp和TPTask.hpp，请确保处于ThreadPool.hpp同级目录
+//依赖于（TPBlockQueue.hpp，TPTask.hpp，TPRWLock.hpp），请确保它们处于ThreadPool.hpp同级目录
 #include "ThreadPool.hpp"
 ```
 
