@@ -5,7 +5,7 @@
 
 #include "TPTask.hpp"
 #include "TPRWLock.hpp"
-#include "Semaphore.hpp"
+#include "TPSemaphore.hpp"
 #include "TPBlockQueue.hpp"
 
 namespace HSLL
