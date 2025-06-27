@@ -1,5 +1,5 @@
-#ifndef HSLL_SEMAPHORE
-#define HSLL_SEMAPHORE
+#ifndef HSLL_TPSEMAPHORE
+#define HSLL_TPSEMAPHORE
 
 #include <chrono>
 #include <thread>
@@ -146,4 +146,4 @@ namespace HSLL
 #endif
 	};
 }
-#endif // !HSLL_SEMAPHORE
+#endif // !HSLL_TPSEMAPHORE
