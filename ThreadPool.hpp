@@ -2,11 +2,10 @@
 #define HSLL_THREADPOOL
 
 #include <vector>
-#include <thread>
-#include <atomic>
 
 #include "TPTask.hpp"
 #include "TPRWLock.hpp"
+#include "Semaphore.hpp"
 #include "TPBlockQueue.hpp"
 
 namespace HSLL
@@ -30,16 +29,18 @@ namespace HSLL
 		unsigned int maxThreadNum;
 		unsigned int batchSize;
 		unsigned int queueLength;		  ///< Capacity of each internal queue
-
-		std::thread monitor;
-		std::mutex exitMutex;
 		std::atomic<bool>  exitFlag;
-		std::condition_variable exitCV;
+
+		Semaphore exitSem;
+		Semaphore* stopSem;
+		Semaphore* startSem;
+		std::thread monitor;
+		std::vector<std::thread> workers; ///< Worker thread collection
 
 		ReadWriteLock rwLock;
-		TPBlockQueue<T>* queues;		  ///< Per-worker task queues
-		std::vector<std::thread> workers; ///< Worker thread collection
 		std::atomic<unsigned int> index;  ///< Atomic counter for round-robin task distribution to worker queues
+		TPBlockQueue<T>* queues;		  ///< Per-worker task queues
+
 
 		static struct SingleStealer
 		{
@@ -137,7 +138,8 @@ namespace HSLL
 		/**
 		 * @brief Constructs an uninitialized thread pool
 		 */
-		ThreadPool() : queues(nullptr), threadNum(0), queueLength(0), exitFlag(false), shutdownPolicy(true) {}
+		ThreadPool() : queues(nullptr), stopSem(nullptr), startSem(nullptr), threadNum(0), index(0),
+			queueLength(0), exitFlag(false), shutdownPolicy(true) {}
 
 		/**
 		* @brief Initializes thread pool resources
@@ -150,30 +152,33 @@ namespace HSLL
 		bool init(unsigned int queueLength, unsigned int minThreadNum,
 			unsigned int maxThreadNum, unsigned int batchSize = 1) noexcept
 		{
+			unsigned int succeed = 0;
+
 			if (batchSize == 0 || minThreadNum == 0 || batchSize > queueLength || minThreadNum > maxThreadNum)
-				return false;
+				goto clean_1;
+
+			stopSem = new(std::nothrow) Semaphore[maxThreadNum];
+			if (!stopSem)
+				goto clean_1;
+
+			startSem = new(std::nothrow) Semaphore[maxThreadNum];
+			if (!startSem)
+				goto clean_2;
 
 			queues = (TPBlockQueue<T>*)ALIGNED_MALLOC(maxThreadNum * sizeof(TPBlockQueue<T>), 64);
-
 			if (!queues)
-				return false;
+				goto clean_3;
 
 			for (unsigned i = 0; i < maxThreadNum; ++i)
 			{
 				new (&queues[i]) TPBlockQueue<T>();
 
 				if (!queues[i].init(queueLength))
-				{
-					for (unsigned j = 0; j < i; ++j)
-						queues[j].~TPBlockQueue<T>();
+					goto clean_4;
 
-					ALIGNED_FREE(queues);
-					queues = nullptr;
-					return false;
-				}
+				succeed++;
 			}
 
-			this->index = 0;
 			this->minThreadNum = minThreadNum;
 			this->maxThreadNum = maxThreadNum;
 			this->threadNum = maxThreadNum;
@@ -187,6 +192,25 @@ namespace HSLL
 			monitor = std::thread(&ThreadPool::load_monitor, this);
 
 			return true;
+
+		clean_4:
+
+			for (unsigned i = 0; i < succeed; ++i)
+				queues[i].~TPBlockQueue<T>();
+
+		clean_3:
+
+			ALIGNED_FREE(queues);
+			queues = nullptr;
+
+		clean_2:
+
+			delete[] stopSem;
+			stopSem = nullptr;
+
+		clean_1:
+
+			return false;
 		}
 
 
@@ -339,14 +363,17 @@ namespace HSLL
 			if (queues)
 			{
 				exitFlag = true;
-				exitCV.notify_one();
+				exitSem.release();
 				monitor.join();
-
-				ReadLockGuard lock(rwLock);
 				this->shutdownPolicy = shutdownPolicy;
 
+				ReadLockGuard lock(rwLock);
+
 				for (unsigned i = 0; i < workers.size(); ++i)
+				{
+					startSem[i].release();
 					queues[i].stopWait();
+				}
 
 				for (auto& worker : workers)
 					worker.join();
@@ -358,7 +385,12 @@ namespace HSLL
 					queues[i].~TPBlockQueue<T>();
 
 				ALIGNED_FREE(queues);
+				delete[] stopSem;
+				delete[] startSem;
 				queues = nullptr;
+				stopSem = nullptr;
+				startSem = nullptr;
+				index = 0;
 				threadNum = 0;
 				queueLength = 0;
 				exitFlag = false;
@@ -366,22 +398,16 @@ namespace HSLL
 			}
 		}
 
-		/**
-		 * @brief Destroys thread pool and releases resources
-		 */
 		~ThreadPool() noexcept
 		{
 			exit(false);
 		}
 
-		// Deleted copy operations
 		ThreadPool(const ThreadPool&) = delete;
 		ThreadPool& operator=(const ThreadPool&) = delete;
 
 	private:
-		/**
-		 * @brief Gets next queue index using round-robin
-		 */
+
 		unsigned int next_index() noexcept
 		{
 			return index.fetch_add(1, std::memory_order_relaxed) % threadNum;
@@ -419,50 +445,50 @@ namespace HSLL
 				for (int i = 0; i < threadNum; ++i)
 					totalSize += queues[i].get_exact_size();
 
-				if (totalSize < allSize * 0.15 && threadNum > minThreadNum)
+				if (totalSize < allSize * 0.25 && threadNum > minThreadNum)
 				{
 					rwLock.lock_write();
 					threadNum--;
 					rwLock.unlock_write();
 					queues[threadNum].stopWait();
-					workers[threadNum].join();
-					workers.pop_back();
+					stopSem[threadNum].acquire();
 					queues[threadNum].release();
 				}
-				else if (totalSize > allSize * 0.85 && threadNum < maxThreadNum)
+				else if (totalSize > allSize * 0.75 && threadNum < maxThreadNum)
 				{
-					rwLock.lock_write();
-					if (queues[threadNum].init(queueLength))
+					unsigned int newThreads = std::max(1u, (maxThreadNum - threadNum) / 2);
+					unsigned int succeed = 0;
+					for (int i = threadNum; i < threadNum + newThreads; ++i)
 					{
-						workers.emplace_back(&ThreadPool::worker, this, threadNum);
-						threadNum++;
+						if (!queues[i].init(queueLength))
+							break;
+
+						startSem[i].release();
+						succeed++;
 					}
-					rwLock.unlock_write();
+
+					if (succeed > 0)
+					{
+						rwLock.lock_write();
+						threadNum += succeed;
+						rwLock.unlock_write();
+					}
 				}
 
-				std::unique_lock<std::mutex> lock(exitMutex);
-
-				if (exitCV.wait_for(lock, HSLL_THREADPOOL_TIMEOUT_M,
-					[this] { return exitFlag.load(); }))
-					break;
+				if (exitSem.try_acquire_for(HSLL_THREADPOOL_TIMEOUT_M))
+					return;
 			}
 		}
 
-		/**
-		 * @brief Worker thread processing function
-		 */
 		void worker(unsigned int index) noexcept
 		{
 			if (batchSize == 1)
-				process_single(queues + index);
+				process_single(queues + index, index);
 			else
-				process_bulk(queues + index, batchSize);
+				process_bulk(queues + index, index, batchSize);
 		}
 
-		/**
-		 * @brief  Processes single task at a time
-		 */
-		void process_single(TPBlockQueue<T>* queue) noexcept
+		void process_single(TPBlockQueue<T>* queue, unsigned int index) noexcept
 		{
 			alignas(alignof(T)) char storage[sizeof(T)];
 			T* task = (T*)(&storage);
@@ -471,40 +497,46 @@ namespace HSLL
 
 			while (true)
 			{
-				while (queue->get_exact_size() && queue->pop(*task))
+				while (true)
 				{
-					task->execute();
-					task->~T();
-				}
-
-				if (stealer.steal(*task))
-				{
-					task->execute();
-					task->~T();
-				}
-				else
-				{
-					if (queue->wait_pop(*task, std::chrono::milliseconds(HSLL_THREADPOOL_TIMEOUT_Q)))
+					while (queue->get_exact_size() && queue->pop(*task))
 					{
 						task->execute();
 						task->~T();
 					}
+
+					if (stealer.steal(*task))
+					{
+						task->execute();
+						task->~T();
+					}
+					else
+					{
+						if (queue->wait_pop(*task, std::chrono::milliseconds(HSLL_THREADPOOL_TIMEOUT_Q)))
+						{
+							task->execute();
+							task->~T();
+						}
+					}
+
+					if (queue->is_Stopped())
+						break;
 				}
 
-				if (queue->is_Stopped())
-					break;
-			}
+				while (shutdownPolicy && queue->pop(*task))
+				{
+					task->execute();
+					task->~T();
+				}
 
-			while (shutdownPolicy && queue->pop(*task))
-			{
-				task->execute();
-				task->~T();
+				stopSem[index].release();
+				startSem[index].acquire();
+
+				if (exitFlag)
+					break;
 			}
 		}
 
-		/**
-		 * @brief  Execute multiple tasks at a time
-		 */
 		static inline void execute_tasks(T* tasks, unsigned int count)
 		{
 			for (unsigned int i = 0; i < count; ++i)
@@ -514,16 +546,13 @@ namespace HSLL
 			}
 		}
 
-		/**
-		 * @brief  Processes multiple tasks at a time
-		 */
-		void process_bulk(TPBlockQueue<T>* queue, unsigned batchSize) noexcept
+		void process_bulk(TPBlockQueue<T>* queue, unsigned int index, unsigned batchSize) noexcept
 		{
 			T* tasks = (T*)ALIGNED_MALLOC(sizeof(T) * batchSize, alignof(T));
 
 			if (!tasks)
 			{
-				process_single(queue);
+				process_single(queue, index);
 				return;
 			}
 
@@ -532,28 +561,37 @@ namespace HSLL
 
 			while (true)
 			{
-				while (queue->get_exact_size() && (count = queue->popBulk(tasks, batchSize)))
-					execute_tasks(tasks, count);
-
-				count = stealer.steal(tasks);
-				if (count)
+				while (true)
 				{
-					execute_tasks(tasks, count);
-				}
-				else
-				{
-					count = queue->wait_popBulk(tasks, batchSize, std::chrono::milliseconds(HSLL_THREADPOOL_TIMEOUT_Q));
-
-					if (count)
+					while (queue->get_exact_size() && (count = queue->popBulk(tasks, batchSize)))
 						execute_tasks(tasks, count);
+
+					count = stealer.steal(tasks);
+					if (count)
+					{
+						execute_tasks(tasks, count);
+					}
+					else
+					{
+						count = queue->wait_popBulk(tasks, batchSize, std::chrono::milliseconds(HSLL_THREADPOOL_TIMEOUT_Q));
+
+						if (count)
+							execute_tasks(tasks, count);
+					}
+
+					if (queue->is_Stopped())
+						break;
 				}
 
-				if (queue->is_Stopped())
+				while (shutdownPolicy && (count = queue->popBulk(tasks, batchSize)))
+					execute_tasks(tasks, count);
+
+				stopSem[index].release();
+				startSem[index].acquire();
+
+				if (exitFlag)
 					break;
 			}
-
-			while (shutdownPolicy && (count = queue->popBulk(tasks, batchSize)))
-				execute_tasks(tasks, count);
 
 			ALIGNED_FREE(tasks);
 		}
