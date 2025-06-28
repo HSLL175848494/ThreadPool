@@ -23,7 +23,7 @@ HSLL::ThreadPool 是一个无第三方依赖、head-only的轻量级C++11线程�
 template <class TYPE = TaskStack<>>
 class ThreadPool
 ```
-- `TYPE`: 基于栈的预分配任务容器
+- `TYPE`: 基于栈的预分配任务容器（详见TaskStack.md文档）
 
 ### 初始化方法
 ```cpp
@@ -57,24 +57,39 @@ void exit(bool shutdownPolicy = true)
 
 ## 基本使用
 ```cpp
-HSLL::ThreadPool<> pool;
+using Type = TaskStack<64,8>;//最大容量为64字节,最大对齐值为8的任务容器
 
-pool.init(1000,1,4); // 队列容量1000,最小活跃线程数1，最大线程数4
+HSLL::ThreadPool<Type> pool;//创建线程池对象
 
-// 提交lambda任务
-pool.emplace([]{
-    std::cout << "Task executed!\n";
-});
+pool.init(1000,1,4); // 初始化线程池：队列容量1000,最小活跃线程数1，最大线程数4
 
-// 提交带参数的函数
-void taskFunc(int a, double b) { /*...*/ }
+void Func(int a, double b) { /*...*/ }
 
-//添加任务示例
-pool.enqueue(taskFunc, 42, 3.14);//taskFunc,42,3.14 隐式转化为TaskStack对象
+//添加任务_基本示例
+Type task(Func, 42, 3.14);
+pool.enqueue(task);
 
-//异步示例
+//添加任务_就地构造
+pool.emplace(Func, 42, 3.14);//相比于enqueue减少了一次临时对象的构造
+
+//添加任务_lambda
+pool.enqueue([](int a,int b){});
+
+//添加任务_function
+std::function<void(int,int)> func(Func);
+pool.enqueue(f,42,3.14);
+
+//线程池析构时自动调用exit(false), 但仍然建议手动调用以控制退出行为
+pool.exit(true); // 优雅关闭。调用后可通过init重新初始化队列
+```
+
+## 异步示例
+
+```cpp
+
 std::promise<int> resultPromise;
 auto resultFuture = resultPromise.get_future();
+
 pool.emplace([&resultPromise] {
       int sum = 0;
       for (int i = 1; i <= 100; i++) {
@@ -82,11 +97,11 @@ pool.emplace([&resultPromise] {
    }
   resultPromise.set_value(sum); 
 });
-int total = resultFuture.get();
 
-//线程池析构时自动调用exit(false), 但仍然建议手动调用以控制退出行为
-pool.exit(true); // 优雅关闭。调用后可通过init重新初始化队列
+int total = resultFuture.get();
 ```
+
+
 
 ### 任务生命周期
 ```mermaid
