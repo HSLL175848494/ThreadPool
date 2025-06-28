@@ -1,33 +1,31 @@
 # HSLL::ThreadPool
 
 ## 概述
-HSLL::ThreadPool 是一个轻量级C++11线程池实现，具有以下特性：
+HSLL::ThreadPool 是一个无第三方依赖、head-only的轻量级C++11线程池实现，具有以下特性：
 
-1. **多队列架构** - 每个工作线程拥有独立的任务队列，减少锁争用
-2. **负载均衡** - 采用round-robin+二级队列选取机制+任务窃取机制实现负载均衡
-3. **定长任务容器** - 基于栈的预分配任务容器，将所有参数储存在栈上，避免动态申请空间
-4. **多提交接口** - 提供阻塞/非阻塞、单任务/批量任务等多种接口
-5. **双端插入支持** - 支持从队列头/尾插入以适应不同任务优先级
+1. **定长任务容器** - 基于栈的预分配任务容器，将所有参数储存在栈上，避免动态申请空间
+2. **多提交接口** - 提供阻塞/非阻塞、单任务/批量任务等多种接口
+3. **双端插入支持** - 支持从队列头/尾插入
+4. **负载均衡** - 采用round-robin+二级队列选取机制+任务窃取实现负载均衡
+5. **动态线程** - 活跃线程数量动态调整以调整内存占用
 6. **优雅关闭** - 支持立即关闭和等待任务完成的优雅关闭模式
 
 ## 引入
 ```cpp
-//依赖于（TPBlockQueue.hpp，TPTask.hpp，TPRWLock.hpp TPSemaphore.hpp），请确保它们处于ThreadPool.hpp同级目录
+//请保证basic文件夹及其内容在ThreadPool.hpp的同级目录
 #include "ThreadPool.hpp"
 ```
 
-## 核心组件
+## ThreadPool 类模板
 
-### ThreadPool 类模板
-
-#### 模板参数
+### 模板参数
 ```cpp
 template <class TYPE = TaskStack<>>
 class ThreadPool
 ```
 - `TYPE`: 基于栈的预分配任务容器
 
-#### 初始化方法
+### 初始化方法
 ```cpp
 bool init(unsigned int queueLength, unsigned int minThreadNum,
             unsigned int maxThreadNum, unsigned int batchSize = 1)
@@ -40,60 +38,7 @@ bool init(unsigned int queueLength, unsigned int minThreadNum,
 - **返回值**：初始化成功返回true
 - **功能**：分配资源并启动工作线程(初始值为最大数量)
 
-#### 任务提交接口
-
-```cpp
-
-enum INSERT_POS
-{
-    TAIL, //插入到队列尾部 
-    HEAD  //插入到队列头部
-};
-```
-
-1. **单任务提交(就地构造)**
-```cpp
-template <INSERT_POS POS = TAIL, typename... Args>
-bool emplace(Args &&...args)
-
-template <INSERT_POS POS = TAIL, typename... Args>
-bool wait_emplace(Args &&...args)
-
-template <INSERT_POS POS = TAIL, class Rep, class Period, typename... Args>
-bool wait_emplace(const std::chrono::duration<Rep, Period> &timeout, Args &&...args)
-```
-
-2. **单任务提交**
-```cpp
-template <INSERT_POS POS = TAIL, class U>
-bool enqueue(U &&task)
-
-template <INSERT_POS POS = TAIL, class U>
-bool wait_enqueue(U &&task)
-
-template <INSERT_POS POS = TAIL, class U, class Rep, class Period>
-bool wait_enqueue(U &&task, const std::chrono::duration<Rep, Period> &timeout)
-```
-
-3. **批量提交**
-```cpp
-template <BULK_CMETHOD METHOD = COPY, INSERT_POS POS = TAIL>
-unsigned int enqueue_bulk(T *tasks, unsigned int count)
-
-template <BULK_CMETHOD METHOD = COPY, INSERT_POS POS = TAIL>
-unsigned int wait_enqueue_bulk(T *tasks, unsigned int count)
-
-template <BULK_CMETHOD METHOD = COPY, INSERT_POS POS = TAIL, class Rep, class Period>
-unsigned int wait_enqueue_bulk(T *tasks, unsigned int count, const std::chrono::duration<Rep, Period> &timeout)
-```
-```cpp
-enum BULK_CMETHOD
-{
-  COPY, // 使用拷贝语义，将任务拷贝到队列。原任务数组依旧有效
-  MOVE  // 使用移动语义，将任务移动到队列
-};
-```
-#### 关闭方法
+### 关闭方法
 ```cpp
 void exit(bool shutdownPolicy = true)
 ```
@@ -101,14 +46,20 @@ void exit(bool shutdownPolicy = true)
   - true: 优雅关闭（执行完队列剩余任务）
   - false: 立即关闭
 
-#### 工作机制
-- **任务分发**：采用轮询+跳半队列负载均衡策略
-- **工作线程**：每个线程优先处理自己的队列，空闲时支持任务窃取
+## 任务提交接口
 
-### 基本使用
+| 方法类型      | 非阻塞      | 阻塞等待    | 超时等待      |
+|-------------|------------|------------|--------------|
+| 单任务提交    | emplace    | wait_emplace| wait_emplace |
+| 预构建任务   | enqueue     | wait_enqueue| wait_enqueue  |
+| 批量任务     | enqueue_bulk| wait_enqueue_bulk | wait_enqueue_bulk |
+
+
+## 基本使用
 ```cpp
 HSLL::ThreadPool<> pool;
-pool.init(1000, 4); // 4线程，每队列容量1000
+
+pool.init(1000,1,4); // 队列容量1000,最小活跃线程数1，最大线程数4
 
 // 提交lambda任务
 pool.emplace([]{
@@ -119,7 +70,7 @@ pool.emplace([]{
 void taskFunc(int a, double b) { /*...*/ }
 
 //添加任务示例
-pool.enqueue(taskFunc, 42, 3.14);
+pool.enqueue(taskFunc, 42, 3.14);//taskFunc,42,3.14 隐式转化为TaskStack对象
 
 //异步示例
 std::promise<int> resultPromise;
@@ -134,7 +85,7 @@ pool.emplace([&resultPromise] {
 int total = resultFuture.get();
 
 //线程池析构时自动调用exit(false), 但仍然建议手动调用以控制退出行为
-pool.exit(true); // 优雅关闭
+pool.exit(true); // 优雅关闭。调用后可通过init重新初始化队列
 ```
 
 ### 任务生命周期
@@ -168,15 +119,6 @@ graph TD
    - 使用std::promise/std::future获取异步结果
    - promise必须在任务执行期间保持有效
 
-
-## 接口对比表
-
-| 方法类型      | 非阻塞      | 阻塞等待    | 超时等待      |
-|-------------|------------|------------|--------------|
-| 单任务提交    | emplace    | wait_emplace| wait_emplace |
-| 预构建任务   | enqueue     | wait_enqueue| wait_enqueue  |
-| 批量任务     | enqueue_bulk| wait_enqueue_bulk | wait_enqueue_bulk |
-
 ## 平台支持
 - Linux (aligned_alloc)
 - Windows (aligned_malloc)
@@ -184,4 +126,4 @@ graph TD
 
 ## 其它
 - **组件文档**: `document`文件夹
-- **性能测试**: `performance test`文件夹
+- **性能测试**: `test`文件夹
