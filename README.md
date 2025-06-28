@@ -83,6 +83,47 @@ pool.enqueue(f,42,3.14);
 pool.exit(true); // 优雅关闭。调用后可通过init重新初始化队列
 ```
 
+## 双端插入示例
+
+```cpp
+pool.enqueue<INSERT_POS::HEAD>([](int a,int b){});//插入到任务队列头部
+
+pool.enqueue<INSERT_POS::TAIL>([](int a,int b){});//插入到任务队列尾部
+
+pool.enqueue([](int a,int b){});//默认尾部插入
+
+```
+
+## 多任务提交示例
+
+```cpp
+using Type = TaskStack<64,8>;//最大容量为64字节,最大对齐值为8的任务容器
+
+void Func1(int a) { /*...*/ }
+void Func2(int a,int b) { /*...*/ }
+void Func3(int a,int b,int c) { /*...*/ }
+
+alignas(alignof(Type)) char buf[3 * sizeof(Type)];
+
+Type* p = (Type*) buf;
+
+new (p) Type(Func1,1);//构造任务
+new (p+1) Type(Func2,1,2);
+new (p+2) Type(Func3,1,2,3);
+
+//批提交,默认拷贝(COPY)任务到队列
+pool.enqueue_bulk((Type*)buf,3);
+
+//批提交,采用移动的方式(原任务不再有效)
+pool.enqueue_bulk<MOVE>((Type*)buf,3);
+
+//析构
+for (int i = 0; i <3; i++)
+   P[i].~Type()；
+    
+
+```
+
 ## 异步示例
 
 ```cpp
@@ -101,9 +142,7 @@ pool.emplace([&resultPromise] {
 int total = resultFuture.get();
 ```
 
-
-
-### 任务生命周期
+## 任务生命周期
 ```mermaid
 graph TD
     A[任务提交] --> B{提交方式}
