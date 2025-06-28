@@ -40,8 +40,7 @@ namespace HSLL
 		TPBlockQueue<T>* queues;		  ///< Per-worker task queues
 		std::atomic<unsigned int> index;  ///< Atomic counter for round-robin task distribution to worker queues
 
-
-		static struct SingleStealer
+		struct SingleStealer
 		{
 			unsigned int index;
 			unsigned int queueLength;
@@ -85,7 +84,7 @@ namespace HSLL
 			}
 		};
 
-		static struct BulkStealer
+		struct BulkStealer
 		{
 			unsigned int index;
 			unsigned int batchSize;
