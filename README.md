@@ -72,74 +72,15 @@ pool.enqueue(task);
 //添加任务_就地构造
 pool.emplace(Func, 42, 3.14);//相比于enqueue减少了一次临时对象的构造
 
+//添加任务_function
+std::function<void(int,int)> func(Func);
+pool.emplace(f,42,3.14);
+
 //添加任务_lambda
 pool.enqueue([](int a,int b){});
 
-//添加任务_function
-std::function<void(int,int)> func(Func);
-pool.enqueue(f,42,3.14);
-
 //线程池析构时自动调用exit(false), 但仍然建议手动调用以控制退出行为
 pool.exit(true); // 优雅关闭。调用后可通过init重新初始化队列
-```
-
-## 双端插入示例
-
-```cpp
-pool.enqueue<INSERT_POS::HEAD>([](int a,int b){});//插入到任务队列头部
-
-pool.enqueue<INSERT_POS::TAIL>([](int a,int b){});//插入到任务队列尾部
-
-pool.enqueue([](int a,int b){});//默认尾部插入
-
-```
-
-## 多任务提交示例
-
-```cpp
-using Type = TaskStack<64,8>;//最大容量为64字节,最大对齐值为8的任务容器
-
-void Func1(int a) { /*...*/ }
-void Func2(int a,int b) { /*...*/ }
-void Func3(int a,int b,int c) { /*...*/ }
-
-alignas(alignof(Type)) char buf[3 * sizeof(Type)];
-
-Type* p = (Type*) buf;
-
-new (p) Type(Func1,1);//构造任务
-new (p+1) Type(Func2,1,2);
-new (p+2) Type(Func3,1,2,3);
-
-//批提交,默认拷贝(COPY)任务到队列
-pool.enqueue_bulk((Type*)buf,3);
-
-//批提交,采用移动的方式(原任务不再有效)
-pool.enqueue_bulk<MOVE>((Type*)buf,3);
-
-//析构
-for (int i = 0; i <3; i++)
-   P[i].~Type()；
-    
-
-```
-
-## 异步示例
-
-```cpp
-
-std::promise<int> resultPromise;
-auto resultFuture = resultPromise.get_future();
-
-pool.emplace([&resultPromise] {
-      int sum = 0;
-      for (int i = 1; i <= 100; i++) {
-        sum += i;
-   }
-  resultPromise.set_value(sum); 
-});
-
-int total = resultFuture.get();
 ```
 
 ## 任务生命周期
@@ -180,4 +121,5 @@ graph TD
 
 ## 其它
 - **组件文档**: `document`文件夹
+- **使用示例**: `example`文件夹
 - **性能测试**: `test`文件夹
