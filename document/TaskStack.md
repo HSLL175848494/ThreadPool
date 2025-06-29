@@ -215,5 +215,3 @@ TaskStack<> task1(std::move(pack));  // 正确：移动构造
     
     task.execute();
 ```
-
-**注意**：自动适配仍然需要保证TaskStack可储存HeapCallable对象。 即32位程序需要(TSIZE>=12)，64位程序需要(TSIZE>=24）

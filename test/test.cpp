@@ -7,11 +7,11 @@ using namespace HSLL;
 #define SUBMIT_BATCH 1
 #define PROCESS_BATCH 1
 #define PEER 10000000
-#define TSIZE 16
+#define TSIZE 24
 #define QUEUELEN 10000
 
 ThreadPool<TaskStack<TSIZE>> pool;
-using task_type = TaskStack<TSIZE>;
+using Type = TaskStack<TSIZE>;
 
 unsigned int k;
 
@@ -19,40 +19,52 @@ unsigned int k;
 void test() {
 
 	for (int i = 0; i < 10000; i++)
-		k = k*2+i;
+		k = k * 2 + i;
 }
 
 // Worker thread for batch submission
 void bulk_submit_worker()
 {
-	unsigned char buf[SUBMIT_BATCH * sizeof(task_type)];
+	alignas(alignof(Type)) unsigned char buf[SUBMIT_BATCH * sizeof(Type)];
+
+	Type* p = (Type*)buf;
+
 	for (int i = 0; i < SUBMIT_BATCH; i++)
-		new (buf + i * sizeof(task_type)) task_type(test);
+		new (p + i) Type(test);
 
 	int remaining = PEER;
 	while (remaining > 0)
 	{
-		remaining -= pool.wait_enqueue_bulk<COPY>(
-			reinterpret_cast<task_type*>(buf),
-			std::min(SUBMIT_BATCH, remaining));
+		unsigned int num = pool.enqueue_bulk<COPY>(
+			(Type*)buf, std::min(SUBMIT_BATCH, remaining));
+		if (num)
+			remaining -= num;
+		else
+			std::this_thread::yield();
 	}
+
+	for (int i = 0; i < SUBMIT_BATCH; i++)
+		(p + i)->~Type();
 }
 
 // Worker thread for single task submission
 void single_submit_worker()
 {
 	int remaining = PEER;
+
 	while (remaining > 0)
 	{
-		pool.wait_emplace(test);
-		remaining--;
+		if (pool.emplace(test))
+			remaining--;
+		else
+			std::this_thread::yield();
 	}
 }
 
 // Batch submission test
 double test_bulk_submit()
 {
-	pool.init(QUEUELEN,1, WORKER, PROCESS_BATCH);
+	pool.init(QUEUELEN, 1, WORKER, PROCESS_BATCH);
 
 	auto start = std::chrono::high_resolution_clock::now();
 
@@ -75,7 +87,7 @@ double test_bulk_submit()
 // Single task submission test
 double test_single_submit()
 {
-	pool.init(QUEUELEN,1,WORKER, PROCESS_BATCH);
+	pool.init(QUEUELEN, 1, WORKER, PROCESS_BATCH);
 	auto start = std::chrono::high_resolution_clock::now();
 
 	std::vector<std::thread> producers;
@@ -94,8 +106,9 @@ double test_single_submit()
 	return duration.count();
 }
 
+
 int main()
-{	
+{
 	const long long total_tasks = static_cast<long long>(PEER) * PRODUCER;
 	printf("\n=== Configuration Parameters ===\n");
 	printf("%-20s: %d\n", "Submit Batch Size", SUBMIT_BATCH);
@@ -105,7 +118,7 @@ int main()
 	printf("%-20s: %d\n", "Producer Threads", PRODUCER);
 	printf("%-20s: %d\n", "Worker Threads", WORKER);
 	printf("%-20s: %d\n", "Queue Length", QUEUELEN);
-	printf("%-20s: %lu\n", "Max memory Usage", sizeof(task_type) * QUEUELEN * WORKER);
+	printf("%-20s: %lu\n", "Max memory Usage", sizeof(Type) * QUEUELEN * WORKER);
 	printf("%-20s: %d\n", "Tasks per Producer", PEER);
 	printf("%-20s: %lld\n", "Total Tasks", total_tasks);
 

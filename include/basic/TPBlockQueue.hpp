@@ -280,7 +280,7 @@ namespace HSLL
 
 		/**
 		 * @brief Initializes queue with fixed capacity
-		 */ 
+		 */
 		bool init(unsigned int capacity)
 		{
 			if (memoryBlock || !capacity)
