@@ -93,9 +93,9 @@ namespace HSLL
 		template <typename T>
 		struct BulkConstructHelper<T, MOVE>
 		{
-			static void construct(T& ptr, T& source)
+			static void construct(T& dst, T& source)
 			{
-				new (&ptr) T(std::move(source));
+				new (&dst) T(std::move(source));
 			}
 		};
 
