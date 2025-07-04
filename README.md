@@ -85,7 +85,7 @@ pool.exit(true); // 优雅关闭。调用后可通过init重新初始化队列
 graph TD
     A[任务提交] --> B{提交方式}
     B -->|emplace| C[在队列中直接构造任务]
-    B -->|enqueue/enqueue_bulk| D[用户构造任务对象后拷贝/移动到队列存储]
+    B -->|enqueue/enqueue_bulk| D[将已构造的任务对象后拷贝/移动到队列中]
     
     C --> E[以移动构造的形式取出任务]
     D --> E
