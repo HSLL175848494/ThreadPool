@@ -84,13 +84,13 @@ pool.exit(true); // 优雅关闭。调用后可通过init重新初始化队列
 ```mermaid
 graph TD
     A[任务提交] --> B{提交方式}
-    B -->|emplace/wait_emplace| C[在队列存储中<br/>直接构造任务]
-    B -->|enqueue/wait_enqueue| D[用户构造任务对象<br/>拷贝/移动到队列存储]
+    B -->|emplace| C[在队列中直接构造任务]
+    B -->|enqueue/enqueue_bulk| D[用户构造任务对象后拷贝/移动到队列存储]
     
     C --> E[工作线程从队列取出任务]
     D --> E
     
-    E --> F[在预分配执行内存上<br/>就地构造（移动构造）]
+    E --> F[以移动构造的形式取出任务]
     F --> G[执行execute方法]
     G --> H[显式调用析构函数]
     H --> I[清理执行内存]
