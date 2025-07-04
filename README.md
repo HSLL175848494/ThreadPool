@@ -54,30 +54,57 @@ void exit(bool shutdownPolicy = true)
 
 ## 基本使用
 ```cpp
+
+#include "ThreadPool.hpp"
+
+using namespace HSLL;
 using Type = TaskStack<64,8>;//最大容量为64字节,最大对齐值为8的任务容器
-
-HSLL::ThreadPool<Type> pool;//创建线程池对象
-
-pool.init(1000,1,4); // 初始化线程池：队列容量1000,最小活跃线程数1，最大线程数4
 
 void Func(int a, double b) { /*...*/ }
 
-//添加任务_基本示例
-Type task(Func, 42, 3.14);
-pool.enqueue(task);
+int main()
+{
+    //创建线程池实例,任务容器使用Type类型
+    ThreadPool<Type> pool;
 
-//添加任务_就地构造
-pool.emplace(Func, 42, 3.14);//相比于enqueue减少了一次临时对象的构造
+    // 初始化线程池: 队列容量1000，最小活跃线程数1，最大线程数4，批处理大小为1（default）
+    pool.init(1000,1,4); 
 
-//添加任务_function
-std::function<void(int,int)> func(Func);
-pool.emplace(f,42,3.14);
+    //添加任务_基本示例
+    Type task(Func, 42, 3.14);
+    pool.enqueue(task);
 
-//添加任务_lambda
-pool.enqueue([](int a,int b){});
+    //添加任务_就地构造
+    pool.emplace(Func, 42, 3.14);//相比于enqueue减少了一次临时对象的构造
 
-//线程池析构时自动调用exit(false), 但仍然建议手动调用以控制退出行为
-pool.exit(true); // 优雅关闭。调用后可通过init重新初始化队列
+    //添加任务_std::function
+    std::function<void(int,int)> func(Func);
+    pool.emplace(f,42,3.14);
+
+    //添加任务_lambda
+    pool.enqueue([](int a,int b){});
+
+    //线程池析构时自动调用exit(false), 但仍然建议手动调用以控制退出行为
+    pool.exit(true); // 优雅关闭。调用后可通过init重新初始化队列
+
+    return 0;
+}
+```
+**其它用法可参照example中的示例文件**
+
+## 任务生命周期
+```mermaid
+graph TD
+    A[任务提交] --> B{提交方式}
+    B -->|emplace| C[在队列中直接构造任务]
+    B -->|enqueue/enqueue_bulk| D[将已构造的任务对象后拷贝/移动到队列中]
+    
+    C --> E[以移动的形式取出任务]
+    D --> E
+    
+    E --> F[执行execute方法]
+    F --> G[显式调用析构函数]
+    G --> H[清理执行内存]
 ```
 
 ## 参数传递过程
@@ -101,21 +128,6 @@ graph LR
     K --> O[不支持：右值引用 T&& ]:::unsupported
     
     classDef unsupported fill:#f10,stroke:#333
-```
-
-## 任务生命周期
-```mermaid
-graph TD
-    A[任务提交] --> B{提交方式}
-    B -->|emplace| C[在队列中直接构造任务]
-    B -->|enqueue/enqueue_bulk| D[将已构造的任务对象后拷贝/移动到队列中]
-    
-    C --> E[以移动的形式取出任务]
-    D --> E
-    
-    E --> F[执行execute方法]
-    F --> G[显式调用析构函数]
-    G --> H[清理执行内存]
 ```
 
 ## 注意事项

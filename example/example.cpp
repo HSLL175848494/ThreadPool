@@ -88,7 +88,6 @@ void example_bigtask_callable()
 	//Type task= Type::make_heap(TestBigFunc, param, param, param, param, param, param, param);
 
 	pool.enqueue(task);
-
 }
 
 void example_bigtask_auto()
