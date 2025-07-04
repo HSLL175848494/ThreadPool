@@ -80,6 +80,29 @@ pool.enqueue([](int a,int b){});
 pool.exit(true); // 优雅关闭。调用后可通过init重新初始化队列
 ```
 
+## 参数传递过程
+```mermaid
+graph LR
+    A[构造任务] --> B[参数传递方式]
+    B --> C{左值参数}
+    B --> D{右值参数}
+    C --> E[拷贝到任务容器]
+    D --> F[移动到任务容器]
+    
+    H[执行任务]  --> I[容器中存储的参数以左值引用方式传递]
+    E --> H
+    F --> H
+    
+    I --> J[函数调用]
+    J --> K{传参类型}
+    K --> L[值类型 T]
+    K --> M[左值引用 T&]
+    K --> N[const 引用 const T&]
+    K --> O[不支持：右值引用 T&& ]:::unsupported
+    
+    classDef unsupported fill:#f10,stroke:#333
+```
+
 ## 任务生命周期
 ```mermaid
 graph TD
@@ -87,7 +110,7 @@ graph TD
     B -->|emplace| C[在队列中直接构造任务]
     B -->|enqueue/enqueue_bulk| D[将已构造的任务对象后拷贝/移动到队列中]
     
-    C --> E[以移动构造的形式取出任务]
+    C --> E[以移动的形式取出任务]
     D --> E
     
     E --> F[执行execute方法]
