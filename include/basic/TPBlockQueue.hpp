@@ -25,7 +25,16 @@ namespace HSLL
 #define ALIGNED_MALLOC(size, align) _aligned_malloc(size, align)
 #define ALIGNED_FREE(ptr) _aligned_free(ptr)
 #else
-#define ALIGNED_MALLOC(size, align) aligned_alloc(align,(size + align - 1) & ~(align - 1))
+#include <stdlib.h>
+#if !defined(_ISOC11_SOURCE) && !defined(__APPLE__)
+#define ALIGNED_MALLOC(size, align) ({ \
+    void* ptr = NULL; \
+    if (posix_memalign(&ptr, align, size) != 0) ptr = NULL; \
+    ptr; \
+})
+#else
+#define ALIGNED_MALLOC(size, align) aligned_alloc(align, (size + align - 1) & ~(size_t)(align - 1))
+#endif
 #define ALIGNED_FREE(ptr) free(ptr)
 #endif
 
