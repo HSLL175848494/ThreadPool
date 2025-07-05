@@ -15,7 +15,6 @@ using Type = TaskStack<TSIZE>;
 
 unsigned int k;
 
-// Empty task function
 void test() {
 
 	for (int i = 0; i < 10000; i++)
@@ -35,12 +34,9 @@ void bulk_submit_worker()
 	int remaining = PEER;
 	while (remaining > 0)
 	{
-		unsigned int num = pool.enqueue_bulk<COPY>(
+		unsigned int num = pool.wait_enqueue_bulk<COPY>(
 			(Type*)buf, std::min(SUBMIT_BATCH, remaining));
-		if (num)
-			remaining -= num;
-		else
-			std::this_thread::yield();
+		remaining -= num;
 	}
 
 	for (int i = 0; i < SUBMIT_BATCH; i++)
@@ -54,17 +50,15 @@ void single_submit_worker()
 
 	while (remaining > 0)
 	{
-		if (pool.emplace(test))
-			remaining--;
-		else
-			std::this_thread::yield();
+		pool.wait_emplace(test);
+		remaining--;
 	}
 }
 
 // Batch submission test
 double test_bulk_submit()
 {
-	pool.init(QUEUELEN, 1, WORKER, PROCESS_BATCH);
+	pool.init(QUEUELEN,1, WORKER, PROCESS_BATCH);
 
 	auto start = std::chrono::high_resolution_clock::now();
 
@@ -87,7 +81,7 @@ double test_bulk_submit()
 // Single task submission test
 double test_single_submit()
 {
-	pool.init(QUEUELEN, 1, WORKER, PROCESS_BATCH);
+	pool.init(QUEUELEN,1, WORKER, PROCESS_BATCH);
 	auto start = std::chrono::high_resolution_clock::now();
 
 	std::vector<std::thread> producers;
@@ -113,7 +107,7 @@ int main()
 	printf("\n=== Configuration Parameters ===\n");
 	printf("%-20s: %d\n", "Submit Batch Size", SUBMIT_BATCH);
 	printf("%-20s: %d\n", "Process Batch Size", PROCESS_BATCH);
-	printf("%-20s: %d\n", "Task Space Size", TSIZE);
+	printf("%-20s: %d\n", "Task Container Size", TSIZE);
 	printf("%-20s: %u\n", "Actual Task Size", task_stack<decltype(test)>::size);
 	printf("%-20s: %d\n", "Producer Threads", PRODUCER);
 	printf("%-20s: %d\n", "Worker Threads", WORKER);

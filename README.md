@@ -25,13 +25,15 @@ class ThreadPool
 ### 初始化方法
 ```cpp
 bool init(unsigned int queueLength, unsigned int minThreadNum,
-            unsigned int maxThreadNum, unsigned int batchSize = 1)
+            unsigned int maxThreadNum, unsigned int batchSize = 1,
+            std::chrono::milliseconds adjustInterval = std::chrono::milliseconds(3000))
 ```
 - **参数**：
   - `queueLength`: 每个工作队列的容量
   - `minThreadNum`: 工作线程最小数量
   - `maxThreadNum`:工作线程最大数量
   - `batchSize`: 单次处理任务数
+  - `adjustInterval`：活跃线程数动态调整间隔
 - **返回值**：初始化成功返回true
 - **功能**：分配资源并启动工作线程(初始值为最大数量)
 

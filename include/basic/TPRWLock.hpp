@@ -3,7 +3,47 @@
 
 #include <mutex>
 
-#if defined(__linux__) || defined(__unix__)
+#if defined(_WIN32)
+#define NOMINMAX
+#include <windows.h>
+
+namespace HSLL
+{
+	class ReadWriteLock {
+	public:
+		ReadWriteLock() {
+			InitializeSRWLock(&srwlock_);
+		}
+
+		~ReadWriteLock() = default;
+
+		void lock_read() {
+			AcquireSRWLockShared(&srwlock_);
+		}
+
+		void unlock_read() {
+			ReleaseSRWLockShared(&srwlock_);
+		}
+
+		void lock_write() {
+			AcquireSRWLockExclusive(&srwlock_);
+		}
+
+		void unlock_write() {
+			ReleaseSRWLockExclusive(&srwlock_);
+		}
+
+		ReadWriteLock(const ReadWriteLock&) = delete;
+		ReadWriteLock& operator=(const ReadWriteLock&) = delete;
+
+	private:
+		SRWLOCK srwlock_;
+	};
+}
+
+#elif defined(__linux__) || defined(__unix__) || \
+      defined(__APPLE__) || defined(__FreeBSD__) || \
+      defined(__OpenBSD__) || defined(__NetBSD__)
 
 #include <pthread.h>
 
@@ -41,48 +81,11 @@ namespace HSLL
 	private:
 		pthread_rwlock_t rwlock_;
 	};
-
 }
 
-#elif defined(_WIN32)
-#define NOMINMAX
-#include <windows.h>
 
-namespace HSLL
-{
-	class ReadWriteLock {
-	public:
-		ReadWriteLock() {
-			InitializeSRWLock(&srwlock_);
-		}
-
-		~ReadWriteLock() = default;
-
-		void lock_read() {
-			AcquireSRWLockShared(&srwlock_);
-		}
-
-		void unlock_read() {
-			ReleaseSRWLockShared(&srwlock_);
-		}
-
-		void lock_write() {
-			AcquireSRWLockExclusive(&srwlock_);
-		}
-
-		void unlock_write() {
-			ReleaseSRWLockExclusive(&srwlock_);
-		}
-
-		ReadWriteLock(const ReadWriteLock&) = delete;
-		ReadWriteLock& operator=(const ReadWriteLock&) = delete;
-
-	private:
-		SRWLOCK srwlock_;
-	};
-
-}
-
+#else
+#error "Unsupported platform: no ReadWriteLock implementation available"
 #endif
 
 namespace HSLL

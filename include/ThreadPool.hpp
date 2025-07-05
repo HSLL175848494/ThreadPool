@@ -10,8 +10,14 @@
 namespace HSLL
 {
 
-#define HSLL_THREADPOOL_TIMEOUT_Q 5
-#define HSLL_THREADPOOL_TIMEOUT_M std::chrono::seconds(1)
+#define HSLL_THREADPOOL_TIMEOUT 5
+#define HSLL_THREADPOOL_SHRINK_FACTOR 0.25
+#define HSLL_THREADPOOL_EXPAND_FACTOR 0.75
+
+	
+	static_assert(HSLL_THREADPOOL_TIMEOUT > 0, "Invalid timeout value.");
+	static_assert(HSLL_THREADPOOL_SHRINK_FACTOR < HSLL_THREADPOOL_EXPAND_FACTOR&& HSLL_THREADPOOL_EXPAND_FACTOR < 1.0
+		&& HSLL_THREADPOOL_SHRINK_FACTOR>0.0, "Invalid factors.");
 
 	/**
 	 * @brief Thread pool implementation with multiple queues for task distribution
@@ -23,21 +29,22 @@ namespace HSLL
 	private:
 
 		bool shutdownPolicy;			  ///< Thread pool shutdown policy: true for graceful shutdown	
-		unsigned int threadNum;			  ///< Number of worker threads/queues to create
+		unsigned int threadNum;			  ///< Number of worker threads/queues
 		unsigned int minThreadNum;
 		unsigned int maxThreadNum;
 		unsigned int batchSize;
 		unsigned int queueLength;		  ///< Capacity of each internal queue
-		std::atomic<bool>  exitFlag;
+		std::chrono::milliseconds adjustInterval;
 
 		Semaphore exitSem;
 		Semaphore* stopSem;
 		Semaphore* startSem;
-		std::thread monitor;
-		std::vector<std::thread> workers; ///< Worker thread collection
-
 		ReadWriteLock rwLock;
+		std::atomic<bool> exitFlag;
+
+		std::thread monitor;
 		TPBlockQueue<T>* queues;		  ///< Per-worker task queues
+		std::vector<std::thread> workers; ///< Worker thread collection
 		std::atomic<unsigned int> index;  ///< Atomic counter for round-robin task distribution to worker queues
 
 		struct SingleStealer
@@ -136,23 +143,24 @@ namespace HSLL
 		/**
 		 * @brief Constructs an uninitialized thread pool
 		 */
-		ThreadPool() : queues(nullptr), stopSem(nullptr), startSem(nullptr), threadNum(0), index(0),
-			queueLength(0), exitFlag(false), shutdownPolicy(true) {}
+		ThreadPool() : queues(nullptr) {}
 
 		/**
 		* @brief Initializes thread pool resources
-		* @param queueLength Capacity of each internal queue
+		* @param capacity Capacity of each internal queue
 		* @param minThreadNum Minimum number of worker threads
 		* @param maxThreadNum Maximum number of worker threads
 		* @param batchSize Maximum tasks to process per batch (min 1)
+		* @param adjustInterval Time interval for checking the load and adjusting the number of active threads
 		* @return true if initialization succeeded, false otherwise
 		*/
-		bool init(unsigned int queueLength, unsigned int minThreadNum,
-			unsigned int maxThreadNum, unsigned int batchSize = 1) noexcept
+		bool init(unsigned int capacity, unsigned int minThreadNum,
+			unsigned int maxThreadNum, unsigned int batchSize = 1,
+			std::chrono::milliseconds adjustInterval = std::chrono::milliseconds(3000)) noexcept
 		{
 			unsigned int succeed = 0;
 
-			if (batchSize == 0 || minThreadNum == 0 || batchSize > queueLength || minThreadNum > maxThreadNum)
+			if (batchSize == 0 || minThreadNum == 0 || batchSize > capacity || minThreadNum > maxThreadNum)
 				goto clean_1;
 
 			stopSem = new(std::nothrow) Semaphore[maxThreadNum];
@@ -171,17 +179,21 @@ namespace HSLL
 			{
 				new (&queues[i]) TPBlockQueue<T>();
 
-				if (!queues[i].init(queueLength))
+				if (!queues[i].init(capacity))
 					goto clean_4;
 
 				succeed++;
 			}
 
+			this->index = 0;
+			this->exitFlag = false;
+			this->shutdownPolicy = true;
 			this->minThreadNum = minThreadNum;
 			this->maxThreadNum = maxThreadNum;
 			this->threadNum = maxThreadNum;
 			this->batchSize = batchSize;
-			this->queueLength = queueLength;
+			this->queueLength = capacity;
+			this->adjustInterval = adjustInterval;
 			workers.reserve(maxThreadNum);
 
 			for (unsigned i = 0; i < maxThreadNum; ++i)
@@ -384,13 +396,6 @@ namespace HSLL
 				delete[] stopSem;
 				delete[] startSem;
 				queues = nullptr;
-				stopSem = nullptr;
-				startSem = nullptr;
-				index = 0;
-				threadNum = 0;
-				queueLength = 0;
-				exitFlag = false;
-				shutdownPolicy = true;
 			}
 		}
 
@@ -435,7 +440,7 @@ namespace HSLL
 		{
 			while (true)
 			{
-				if (exitSem.try_acquire_for(HSLL_THREADPOOL_TIMEOUT_M))
+				if (exitSem.try_acquire_for(adjustInterval))
 					return;
 
 				unsigned int allSize = queueLength * threadNum;
@@ -444,7 +449,7 @@ namespace HSLL
 				for (int i = 0; i < threadNum; ++i)
 					totalSize += queues[i].get_exact_size();
 
-				if (totalSize < allSize * 0.25 && threadNum > minThreadNum)
+				if (totalSize < allSize * HSLL_THREADPOOL_SHRINK_FACTOR && threadNum > minThreadNum)
 				{
 					rwLock.lock_write();
 					threadNum--;
@@ -453,7 +458,7 @@ namespace HSLL
 					stopSem[threadNum].acquire();
 					queues[threadNum].release();
 				}
-				else if (totalSize > allSize * 0.75 && threadNum < maxThreadNum)
+				else if (totalSize > allSize * HSLL_THREADPOOL_EXPAND_FACTOR && threadNum < maxThreadNum)
 				{
 					unsigned int newThreads = std::max(1u, (maxThreadNum - threadNum) / 2);
 					unsigned int succeed = 0;
@@ -508,7 +513,7 @@ namespace HSLL
 					}
 					else
 					{
-						if (queue->wait_pop(*task, std::chrono::milliseconds(HSLL_THREADPOOL_TIMEOUT_Q)))
+						if (queue->wait_pop(*task, std::chrono::milliseconds(HSLL_THREADPOOL_TIMEOUT)))
 						{
 							task->execute();
 							task->~T();
@@ -569,7 +574,7 @@ namespace HSLL
 					}
 					else
 					{
-						count = queue->wait_popBulk(tasks, batchSize, std::chrono::milliseconds(HSLL_THREADPOOL_TIMEOUT_Q));
+						count = queue->wait_popBulk(tasks, batchSize, std::chrono::milliseconds(HSLL_THREADPOOL_TIMEOUT));
 
 						if (count)
 							execute_tasks(tasks, count);

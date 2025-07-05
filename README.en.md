@@ -24,18 +24,21 @@ class ThreadPool
 ```
 - `TYPE`: Stack-based preallocated task container (see TaskStack.md)
 
+
 ### Initialization Method
 ```cpp
 bool init(unsigned int queueLength, unsigned int minThreadNum,
-            unsigned int maxThreadNum, unsigned int batchSize = 1)
+            unsigned int maxThreadNum, unsigned int batchSize = 1,
+            std::chrono::milliseconds adjustInterval = std::chrono::milliseconds(3000))
 ```
-- **Parameters**:
-  - `queueLength`: Capacity per worker queue
-  - `minThreadNum`: Minimum number of worker threads
-  - `maxThreadNum`: Maximum number of worker threads
-  - `batchSize`: Number of tasks processed per batch
-- **Returns**: `true` if initialization succeeds
-- **Functionality**: Allocates resources and starts worker threads (initialized to maxThreadNum)
+- **Parameters**:  
+  - `queueLength`: Capacity of each work queue  
+  - `minThreadNum`: Minimum number of worker threads  
+  - `maxThreadNum`: Maximum number of worker threads  
+  - `batchSize`: Number of tasks processed per batch (default: `1`)  
+  - `adjustInterval`: Interval for dynamically adjusting active thread count (default: `3000 milliseconds`)  
+- **Return Value**: Returns `true` if initialization succeeds  
+- **Functionality**: Allocates resources and starts worker threads (initialized to `maxThreadNum` value)  
 
 ### Shutdown Method
 ```cpp

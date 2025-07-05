@@ -88,6 +88,7 @@ void example_bigtask_callable()
 	//Type task= Type::make_heap(TestBigFunc, param, param, param, param, param, param, param);
 
 	pool.enqueue(task);
+
 }
 
 void example_bigtask_auto()
@@ -111,6 +112,7 @@ void example_static()
 	//获取任务实际需要存储空间大小
 	printf("TestFunc size: %d\n", task_stack<decltype(TestFunc), std::string&>::size);
 }
+
 
 int main()
 {
