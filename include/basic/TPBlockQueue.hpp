@@ -62,8 +62,6 @@ namespace HSLL
 	template <class TYPE>
 	class alignas(64) TPBlockQueue
 	{
-		static_assert(is_generic_ts<TYPE>::value, "TYPE must be a TaskStack type");
-
 		// Insert position tags for zero-overhead dispatch
 		struct InsertAtHeadTag
 		{
