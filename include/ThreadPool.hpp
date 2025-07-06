@@ -26,6 +26,8 @@ namespace HSLL
 	template <class T = TaskStack<>>
 	class ThreadPool
 	{
+		static_assert(is_generic_ts<T>::value, "TYPE must be a TaskStack type");
+
 	private:
 
 		bool shutdownPolicy;			  ///< Thread pool shutdown policy: true for graceful shutdown	
@@ -163,13 +165,16 @@ namespace HSLL
 			if (batchSize == 0 || minThreadNum == 0 || batchSize > capacity || minThreadNum > maxThreadNum)
 				goto clean_1;
 
-			stopSem = new(std::nothrow) Semaphore[maxThreadNum];
-			if (!stopSem)
-				goto clean_1;
+			if (maxThreadNum > 1)
+			{
+				stopSem = new(std::nothrow) Semaphore[maxThreadNum];
+				if (!stopSem)
+					goto clean_1;
 
-			startSem = new(std::nothrow) Semaphore[maxThreadNum];
-			if (!startSem)
-				goto clean_2;
+				startSem = new(std::nothrow) Semaphore[maxThreadNum];
+				if (!startSem)
+					goto clean_2;
+			}
 
 			queues = (TPBlockQueue<T>*)ALIGNED_MALLOC(maxThreadNum * sizeof(TPBlockQueue<T>), 64);
 			if (!queues)
@@ -199,6 +204,7 @@ namespace HSLL
 			for (unsigned i = 0; i < maxThreadNum; ++i)
 				workers.emplace_back(&ThreadPool::worker, this, i);
 
+			if (maxThreadNum > 1)
 			monitor = std::thread(&ThreadPool::load_monitor, this);
 
 			return true;
@@ -215,8 +221,11 @@ namespace HSLL
 
 		clean_2:
 
-			delete[] stopSem;
-			stopSem = nullptr;
+			if (maxThreadNum > 1)
+			{
+				delete[] stopSem;
+				stopSem = nullptr;
+			}
 
 		clean_1:
 
@@ -235,6 +244,9 @@ namespace HSLL
 		template <INSERT_POS POS = TAIL, typename... Args>
 		bool emplace(Args &&...args) noexcept
 		{
+			if(maxThreadNum==1)
+			return queues->template emplace<POS>(std::forward<Args>(args)...);
+
 			ReadLockGuard lock(rwLock);
 			return select_queue().template emplace<POS>(std::forward<Args>(args)...);
 		}
@@ -250,6 +262,9 @@ namespace HSLL
 		template <INSERT_POS POS = TAIL, typename... Args>
 		bool wait_emplace(Args &&...args) noexcept
 		{
+			if (maxThreadNum == 1)
+				return queues->template wait_emplace<POS>(std::forward<Args>(args)...);
+
 			ReadLockGuard lock(rwLock);
 			return select_queue().template wait_emplace<POS>(std::forward<Args>(args)...);
 		}
@@ -267,6 +282,9 @@ namespace HSLL
 		template <INSERT_POS POS = TAIL, class Rep, class Period, typename... Args>
 		bool wait_emplace(const std::chrono::duration<Rep, Period>& timeout, Args &&...args) noexcept
 		{
+			if (maxThreadNum == 1)
+				return queues->template wait_emplace<POS>(timeout, std::forward<Args>(args)...);
+
 			ReadLockGuard lock(rwLock);
 			return select_queue().template wait_emplace<POS>(timeout, std::forward<Args>(args)...);
 		}
@@ -281,6 +299,9 @@ namespace HSLL
 		template <INSERT_POS POS = TAIL, class U>
 		bool enqueue(U&& task) noexcept
 		{
+			if (maxThreadNum == 1)
+				return queues->template push<POS>(std::forward<U>(task));
+
 			ReadLockGuard lock(rwLock);
 			return select_queue().template push<POS>(std::forward<U>(task));
 		}
@@ -295,6 +316,9 @@ namespace HSLL
 		template <INSERT_POS POS = TAIL, class U>
 		bool wait_enqueue(U&& task) noexcept
 		{
+			if (maxThreadNum == 1)
+				return queues->template wait_push<POS>(std::forward<U>(task));
+
 			ReadLockGuard lock(rwLock);
 			return select_queue().template wait_push<POS>(std::forward<U>(task));
 		}
@@ -312,6 +336,9 @@ namespace HSLL
 		template <INSERT_POS POS = TAIL, class U, class Rep, class Period>
 		bool wait_enqueue(U&& task, const std::chrono::duration<Rep, Period>& timeout) noexcept
 		{
+			if (maxThreadNum == 1)
+				return queues->template wait_push<POS>(std::forward<U>(task), timeout);
+
 			ReadLockGuard lock(rwLock);
 			return select_queue().template wait_push<POS>(std::forward<U>(task), timeout);
 		}
@@ -327,6 +354,9 @@ namespace HSLL
 		template <BULK_CMETHOD METHOD = COPY, INSERT_POS POS = TAIL>
 		unsigned int enqueue_bulk(T* tasks, unsigned int count) noexcept
 		{
+			if (maxThreadNum == 1)
+				return queues->template pushBulk<METHOD, POS>(tasks, count);
+
 			ReadLockGuard lock(rwLock);
 			return select_queue_for_bulk(count / 2).template pushBulk<METHOD, POS>(tasks, count);
 		}
@@ -342,6 +372,9 @@ namespace HSLL
 		template <BULK_CMETHOD METHOD = COPY, INSERT_POS POS = TAIL>
 		unsigned int wait_enqueue_bulk(T* tasks, unsigned int count) noexcept
 		{
+			if (maxThreadNum == 1)
+				return queues->template wait_pushBulk<METHOD, POS>(tasks, count);
+
 			ReadLockGuard lock(rwLock);
 			return select_queue().template wait_pushBulk<METHOD, POS>(tasks, count);
 		}
@@ -360,6 +393,9 @@ namespace HSLL
 		template <BULK_CMETHOD METHOD = COPY, INSERT_POS POS = TAIL, class Rep, class Period>
 		unsigned int wait_enqueue_bulk(T* tasks, unsigned int count, const std::chrono::duration<Rep, Period>& timeout) noexcept
 		{
+			if (maxThreadNum == 1)
+				return queues->template wait_pushBulk<METHOD, POS>(tasks, count, timeout);
+
 			ReadLockGuard lock(rwLock);
 			return select_queue().template wait_pushBulk<METHOD, POS>(tasks, count, timeout);
 		}
@@ -372,16 +408,20 @@ namespace HSLL
 		{
 			if (queues)
 			{
-				exitFlag = true;
-				exitSem.release();
-				monitor.join();
+				if (maxThreadNum > 1)
+				{
+					exitFlag = true;
+					exitSem.release();
+					monitor.join();
+
+					for (unsigned i = 0; i < workers.size(); ++i)
+						startSem[i].release();
+				}
+
 				this->shutdownPolicy = shutdownPolicy;
 
 				for (unsigned i = 0; i < workers.size(); ++i)
-				{
-					startSem[i].release();
 					queues[i].stopWait();
-				}
 
 				for (auto& worker : workers)
 					worker.join();
@@ -389,12 +429,16 @@ namespace HSLL
 				workers.clear();
 				workers.shrink_to_fit();
 
+				if (maxThreadNum > 1)
+				{
+					delete[] stopSem;
+					delete[] startSem;
+				}
+
 				for (unsigned i = 0; i < maxThreadNum; ++i)
 					queues[i].~TPBlockQueue<T>();
 
 				ALIGNED_FREE(queues);
-				delete[] stopSem;
-				delete[] startSem;
 				queues = nullptr;
 			}
 		}
@@ -494,6 +538,29 @@ namespace HSLL
 			alignas(alignof(T)) char storage[sizeof(T)];
 			T* task = (T*)(&storage);
 
+			if (maxThreadNum == 1)
+			{
+				while (true)
+				{
+					if (queue->wait_pop(*task))
+					{
+						task->execute();
+						task->~T();
+					}
+					else
+					{
+						break;
+					}
+				}
+
+				while (shutdownPolicy && queue->pop(*task))
+				{
+					task->execute();
+					task->~T();
+				}
+				return;
+			}
+
 			SingleStealer stealer(&rwLock, queues, queue, queueLength, &threadNum);
 
 			while (true)
@@ -549,6 +616,7 @@ namespace HSLL
 
 		void process_bulk(TPBlockQueue<T>* queue, unsigned int index, unsigned batchSize) noexcept
 		{
+			unsigned int count;
 			T* tasks = (T*)ALIGNED_MALLOC(sizeof(T) * batchSize, alignof(T));
 
 			if (!tasks)
@@ -557,7 +625,25 @@ namespace HSLL
 				return;
 			}
 
-			unsigned int count;
+			if (maxThreadNum == 1)
+			{
+				while (true)
+				{
+					count = queue->wait_popBulk(tasks, batchSize);
+
+					if (count)
+						execute_tasks(tasks, count);
+					else
+						break;
+				}
+
+				while (shutdownPolicy && (count = queue->popBulk(tasks, batchSize)))
+					execute_tasks(tasks, count);
+
+				ALIGNED_FREE(tasks);
+				return;
+			}
+
 			BulkStealer stealer(&rwLock, queues, queue, queueLength, &threadNum, batchSize);
 
 			while (true)
