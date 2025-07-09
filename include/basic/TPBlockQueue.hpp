@@ -1,16 +1,9 @@
 #ifndef HSLL_TPBLOCKQUEUE
 #define HSLL_TPBLOCKQUEUE
 
-#include <new>
-#include <mutex>
 #include <atomic>
-#include <chrono>
-#include <cstdint>
 #include <assert.h>
 #include <condition_variable>
-
-namespace HSLL
-{
 
 #if defined(__GNUC__) || defined(__clang__)
 #define LIKELY(x) __builtin_expect(!!(x), 1)
@@ -38,6 +31,8 @@ namespace HSLL
 #define ALIGNED_FREE(ptr) free(ptr)
 #endif
 
+namespace HSLL
+{
 	/**
 	 * @brief Enumeration defining the method of bulk construction
 	 */

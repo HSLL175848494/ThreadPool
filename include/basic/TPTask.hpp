@@ -1,14 +1,10 @@
 #ifndef HSLL_TPTASK
 #define HSLL_TPTASK
 
-#include <new>
-#include <tuple>
-#include <memory>
-#include <cstdio>
-#include <cstdlib>
-#include <cstddef>
-#include <utility>
-#include <type_traits>
+#include<tuple>
+#include<memory>
+#include<cstdio>
+#include<cstdlib>
 
 #define HSLL_ALLOW_THROW
 
