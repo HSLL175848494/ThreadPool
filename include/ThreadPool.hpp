@@ -14,10 +14,110 @@ namespace HSLL
 #define HSLL_THREADPOOL_SHRINK_FACTOR 0.25
 #define HSLL_THREADPOOL_EXPAND_FACTOR 0.75
 
-	
 	static_assert(HSLL_THREADPOOL_TIMEOUT > 0, "Invalid timeout value.");
 	static_assert(HSLL_THREADPOOL_SHRINK_FACTOR < HSLL_THREADPOOL_EXPAND_FACTOR&& HSLL_THREADPOOL_EXPAND_FACTOR < 1.0
 		&& HSLL_THREADPOOL_SHRINK_FACTOR>0.0, "Invalid factors.");
+
+	template <class T>
+	class SingleStealer
+	{
+		template <class TYPE>
+		friend class ThreadPool;
+	private:
+
+		unsigned int index;
+		unsigned int queueLength;
+		unsigned int* threadNum;
+		unsigned int threshold;
+
+		ReadWriteLock* rwLock;
+		TPBlockQueue<T>* queues;
+		TPBlockQueue<T>* ignore;
+
+		SingleStealer(ReadWriteLock* rwLock, TPBlockQueue<T>* queues, TPBlockQueue<T>* ignore,
+			unsigned int queueLength, unsigned int* threadNum)
+		{
+			this->index = 0;
+			this->queueLength = queueLength;
+			this->threadNum = threadNum;
+			this->threshold = std::min((unsigned int)2, queueLength);
+			this->rwLock = rwLock;
+			this->queues = queues;
+			this->ignore = ignore;
+		}
+
+		unsigned int steal(T& element)
+		{
+			ReadLockGuard lock(*rwLock);
+			unsigned int num = *threadNum;
+			for (int i = 0; i < num; ++i)
+			{
+				unsigned int now = (index + i) % num;
+				TPBlockQueue<T>* queue = queues + now;
+				if (queue->get_size() >= threshold && queue != ignore)
+				{
+					if (queue->pop(element))
+					{
+						index = now;
+						return 1;
+					}
+				}
+			}
+			return 0;
+		}
+	};
+
+	template <class T>
+	class BulkStealer
+	{
+		template <class TYPE>
+		friend class ThreadPool;
+	private:
+
+		unsigned int index;
+		unsigned int batchSize;
+		unsigned int queueLength;
+		unsigned int* threadNum;
+		unsigned int threshold;
+
+		ReadWriteLock* rwLock;
+		TPBlockQueue<T>* queues;
+		TPBlockQueue<T>* ignore;
+
+		BulkStealer(ReadWriteLock* rwLock, TPBlockQueue<T>* queues, TPBlockQueue<T>* ignore, unsigned int queueLength,
+			unsigned int* threadNum, unsigned int batchSize)
+		{
+			this->index = 0;
+			this->batchSize = batchSize;
+			this->queueLength = queueLength;
+			this->threadNum = threadNum;
+			this->threshold = std::min(2 * batchSize, queueLength);
+			this->rwLock = rwLock;
+			this->queues = queues;
+			this->ignore = ignore;
+		}
+
+		unsigned int steal(T* elements)
+		{
+			ReadLockGuard lock(*rwLock);
+			unsigned int num = *threadNum;
+			for (int i = 0; i < num; ++i)
+			{
+				unsigned int now = (index + i) % num;
+				TPBlockQueue<T>* queue = queues + now;
+				if (queue->get_size() >= threshold && queue != ignore)
+				{
+					unsigned int count = queue->popBulk(elements, batchSize);
+					if (count)
+					{
+						index = now;
+						return count;
+					}
+				}
+			}
+			return 0;
+		}
+	};
 
 	/**
 	 * @brief Thread pool implementation with multiple queues for task distribution
@@ -49,97 +149,6 @@ namespace HSLL
 		std::vector<std::thread> workers; ///< Worker thread collection
 		std::atomic<unsigned int> index;  ///< Atomic counter for round-robin task distribution to worker queues
 
-		struct SingleStealer
-		{
-			unsigned int index;
-			unsigned int queueLength;
-			unsigned int* threadNum;
-			unsigned int threshold;
-
-			ReadWriteLock* rwLock;
-			TPBlockQueue<T>* queues;
-			TPBlockQueue<T>* ignore;
-
-			SingleStealer(ReadWriteLock* rwLock, TPBlockQueue<T>* queues, TPBlockQueue<T>* ignore,
-				unsigned int queueLength, unsigned int* threadNum)
-			{
-				this->index = 0;
-				this->queueLength = queueLength;
-				this->threadNum = threadNum;
-				this->threshold = std::min((unsigned int)2, queueLength);
-				this->rwLock = rwLock;
-				this->queues = queues;
-				this->ignore = ignore;
-			}
-
-			unsigned int steal(T& element)
-			{
-				ReadLockGuard lock(*rwLock);
-				unsigned int num = *threadNum;
-				for (int i = 0; i < num; ++i)
-				{
-					unsigned int now = (index + i) % num;
-					TPBlockQueue<T>* queue = queues + now;
-					if (queue->get_size() >= threshold && queue != ignore)
-					{
-						if (queue->pop(element))
-						{
-							index = now;
-							return 1;
-						}
-					}
-				}
-				return 0;
-			}
-		};
-
-		struct BulkStealer
-		{
-			unsigned int index;
-			unsigned int batchSize;
-			unsigned int queueLength;
-			unsigned int* threadNum;
-			unsigned int threshold;
-
-			ReadWriteLock* rwLock;
-			TPBlockQueue<T>* queues;
-			TPBlockQueue<T>* ignore;
-
-			BulkStealer(ReadWriteLock* rwLock, TPBlockQueue<T>* queues, TPBlockQueue<T>* ignore, unsigned int queueLength,
-				unsigned int* threadNum, unsigned int batchSize)
-			{
-				this->index = 0;
-				this->batchSize = batchSize;
-				this->queueLength = queueLength;
-				this->threadNum = threadNum;
-				this->threshold = std::min(2 * batchSize, queueLength);
-				this->rwLock = rwLock;
-				this->queues = queues;
-				this->ignore = ignore;
-			}
-
-			unsigned int steal(T* elements)
-			{
-				ReadLockGuard lock(*rwLock);
-				unsigned int num = *threadNum;
-				for (int i = 0; i < num; ++i)
-				{
-					unsigned int now = (index + i) % num;
-					TPBlockQueue<T>* queue = queues + now;
-					if (queue->get_size() >= threshold && queue != ignore)
-					{
-						unsigned int count = queue->popBulk(elements, batchSize);
-						if (count)
-						{
-							index = now;
-							return count;
-						}
-					}
-				}
-				return 0;
-			}
-		};
-
 	public:
 
 		/**
@@ -160,10 +169,10 @@ namespace HSLL
 			unsigned int maxThreadNum, unsigned int batchSize = 1,
 			std::chrono::milliseconds adjustInterval = std::chrono::milliseconds(3000)) noexcept
 		{
-			unsigned int succeed = 0;
-
 			if (batchSize == 0 || minThreadNum == 0 || batchSize > capacity || minThreadNum > maxThreadNum)
-				goto clean_1;
+				return false;
+
+			unsigned int succeed = 0;
 
 			if (maxThreadNum > 1)
 			{
@@ -205,7 +214,7 @@ namespace HSLL
 				workers.emplace_back(&ThreadPool::worker, this, i);
 
 			if (maxThreadNum > 1)
-			monitor = std::thread(&ThreadPool::load_monitor, this);
+				monitor = std::thread(&ThreadPool::load_monitor, this);
 
 			return true;
 
@@ -244,8 +253,8 @@ namespace HSLL
 		template <INSERT_POS POS = TAIL, typename... Args>
 		bool emplace(Args &&...args) noexcept
 		{
-			if(maxThreadNum==1)
-			return queues->template emplace<POS>(std::forward<Args>(args)...);
+			if (maxThreadNum == 1)
+				return queues->template emplace<POS>(std::forward<Args>(args)...);
 
 			ReadLockGuard lock(rwLock);
 			return select_queue().template emplace<POS>(std::forward<Args>(args)...);
@@ -480,6 +489,15 @@ namespace HSLL
 			return queues[(index + half) % threadNum];
 		}
 
+		static inline void execute_tasks(T* tasks, unsigned int count)
+		{
+			for (unsigned int i = 0; i < count; ++i)
+			{
+				tasks[i].execute();
+				tasks[i].~T();
+			}
+		}
+
 		void load_monitor() noexcept
 		{
 			while (true)
@@ -561,7 +579,7 @@ namespace HSLL
 				return;
 			}
 
-			SingleStealer stealer(&rwLock, queues, queue, queueLength, &threadNum);
+			SingleStealer<T> stealer(&rwLock, queues, queue, queueLength, &threadNum);
 
 			while (true)
 			{
@@ -605,15 +623,6 @@ namespace HSLL
 			}
 		}
 
-		static inline void execute_tasks(T* tasks, unsigned int count)
-		{
-			for (unsigned int i = 0; i < count; ++i)
-			{
-				tasks[i].execute();
-				tasks[i].~T();
-			}
-		}
-
 		void process_bulk(TPBlockQueue<T>* queue, unsigned int index, unsigned batchSize) noexcept
 		{
 			unsigned int count;
@@ -644,7 +653,7 @@ namespace HSLL
 				return;
 			}
 
-			BulkStealer stealer(&rwLock, queues, queue, queueLength, &threadNum, batchSize);
+			BulkStealer<T> stealer(&rwLock, queues, queue, queueLength, &threadNum, batchSize);
 
 			while (true)
 			{

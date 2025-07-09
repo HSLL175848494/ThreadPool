@@ -41,29 +41,22 @@ namespace HSLL
         template<typename Rep, typename Period>
         bool try_acquire_for(const std::chrono::duration<Rep, Period>& timeout)
         {
-            return try_acquire_until(std::chrono::steady_clock::now() + timeout);
-        }
+            auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(timeout);
+            if (ms.count() < 0) ms = std::chrono::milliseconds(0);
 
-        template<typename Clock, typename Duration>
-        bool try_acquire_until(const std::chrono::time_point<Clock, Duration>& abs_timeout)
-        {
-            auto now = Clock::now();
-            if (now >= abs_timeout)
-                return false;
-
-            auto timeout_duration = abs_timeout - now;
-            auto timeout_ms = std::chrono::duration_cast<std::chrono::milliseconds>(timeout_duration);
-            DWORD wait_ms = (timeout_ms.count() > MAX_WAIT_MS) ?
-                MAX_WAIT_MS :
-                static_cast<DWORD>(timeout_ms.count());
+            DWORD wait_ms;
+            if (ms.count() > MAX_WAIT_MS)
+                wait_ms = MAX_WAIT_MS;
+            else
+                wait_ms = static_cast<DWORD>(ms.count());
 
             DWORD result = WaitForSingleObject(m_sem, wait_ms);
             if (result == WAIT_OBJECT_0)
                 return true;
             else if (result == WAIT_TIMEOUT)
                 return false;
-
-            throw std::system_error(GetLastError(), std::system_category());
+            else
+                throw std::system_error(GetLastError(), std::system_category());
         }
 
         void release(unsigned int count = 1)
@@ -120,37 +113,25 @@ namespace HSLL
         template<typename Rep, typename Period>
         bool try_acquire_for(const std::chrono::duration<Rep, Period>& timeout)
         {
-            return try_acquire_until(std::chrono::steady_clock::now() + timeout);
-        }
+            auto abs_time = std::chrono::system_clock::now() + timeout;
+            struct timespec ts;
+            auto s = std::chrono::time_point_cast<std::chrono::seconds>(abs_time);
+            auto ns = std::chrono::duration_cast<std::chrono::nanoseconds>(abs_time - s);
 
-        template<typename Clock, typename Duration>
-        bool try_acquire_until(const std::chrono::time_point<Clock, Duration>& abs_timeout)
-        {
-            auto nowSys = std::chrono::system_clock::now();
-            auto nowClk = Clock::now();
-            auto sysTimeout = nowSys + (abs_timeout - nowClk);
+            ts.tv_sec = s.time_since_epoch().count();
+            ts.tv_nsec = ns.count();
 
-            auto t = std::chrono::system_clock::to_time_t(sysTimeout);
-            auto duration = sysTimeout.time_since_epoch();
-            auto sec = std::chrono::duration_cast<std::chrono::seconds>(duration);
-            duration -= sec;
-            auto ns = std::chrono::duration_cast<std::chrono::nanoseconds>(duration);
-
-            timespec ts{};
-            ts.tv_sec = t;
-            ts.tv_nsec = static_cast<long>(ns.count());
-
-            int ret;
-            do {
-                ret = sem_timedwait(&m_sem, &ts);
-            } while (ret != 0 && errno == EINTR);
-
-            if (ret == 0)
-                return true;
-            else if (errno == ETIMEDOUT)
-                return false;
-
-            throw std::system_error(errno, std::system_category());
+            while (true) {
+                int result = sem_timedwait(&m_sem, &ts);
+                if (result == 0)
+                    return true;
+                else if (errno == EINTR)
+                    continue;
+                else if (errno == ETIMEDOUT)
+                    return false;
+                else
+                    throw std::system_error(errno, std::system_category());
+            }
         }
 
         void release(unsigned int count = 1)
