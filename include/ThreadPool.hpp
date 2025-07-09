@@ -2,6 +2,7 @@
 #define HSLL_THREADPOOL
 
 #include <vector>
+#include <thread>
 #include "basic/TPTask.hpp"
 #include "basic/TPRWLock.hpp"
 #include "basic/TPSemaphore.hpp"
