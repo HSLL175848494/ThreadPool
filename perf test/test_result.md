@@ -26,10 +26,9 @@ void C() {
 
 ## 2. 测试结果（吞吐量：百万任务/秒）
 
-**sp_tp**：[GitHub开源的简单线程池实现](https://github.com/progschj/ThreadPool.git)
+**sp_tp**：  [GitHub开源的简单线程池实现](https://github.com/progschj/ThreadPool.git)
 
-**hsll_tp**：HSLL::ThreadPool
-
+**hsll_tp**：   HSLL::ThreadPool
 
 | 线程池类型               | 线程数 | 任务A (M/s) | 任务B (M/s) | 任务C (M/s) |
 |--------------------------|--------|-------------|-------------|-------------|

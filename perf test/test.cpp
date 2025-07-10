@@ -1,18 +1,5 @@
 #include "ThreadPool.hpp"
 
-using namespace HSLL;
-
-#define WORKER 1
-#define PRODUCER 1
-#define SUBMIT_BATCH 1
-#define PROCESS_BATCH 32
-#define PEER 10000000
-#define TSIZE 24
-#define QUEUELEN 10000
-
-ThreadPool<TaskStack<TSIZE>> pool;
-using Type = TaskStack<TSIZE>;
-
 unsigned int k;
 
 void testA() {
@@ -32,6 +19,19 @@ void testC() {
 
 }
 
+#define WORKER 8
+#define PRODUCER 1
+#define SUBMIT_BATCH 32
+#define PROCESS_BATCH 32
+#define PEER 10000000
+#define TSIZE 24
+#define QUEUELEN 10000
+#define FUNC testC
+
+using namespace HSLL;
+using Type = TaskStack<TSIZE>;
+ThreadPool<Type> pool;
+
 // Worker thread for batch submission
 void bulk_submit_worker()
 {
@@ -40,7 +40,7 @@ void bulk_submit_worker()
 	Type* p = (Type*)buf;
 
 	for (int i = 0; i < SUBMIT_BATCH; i++)
-		new (p + i) Type(testC);
+		new (p + i) Type(FUNC);
 
 	int remaining = PEER;
 	while (remaining > 0)
@@ -61,7 +61,7 @@ void single_submit_worker()
 
 	while (remaining > 0)
 	{
-		pool.wait_emplace(testC);
+		pool.wait_emplace(FUNC);
 		remaining--;
 	}
 }
