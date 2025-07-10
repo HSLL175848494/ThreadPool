@@ -48,4 +48,4 @@ void C() {
 | Optimization    | /O2 Maximize Speed                |  
 | Processor       | Intel i7-11800H (8C/16T)          |  
 | Base Frequency  | 2.3 GHz                           |  
-| OS              | Windows 10/11 x64                 |  
+| OS              | Windows 10 x64 19045.5737         |  
