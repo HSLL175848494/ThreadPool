@@ -2,10 +2,10 @@
 
 using namespace HSLL;
 
-#define WORKER 8
+#define WORKER 1
 #define PRODUCER 1
 #define SUBMIT_BATCH 1
-#define PROCESS_BATCH 1
+#define PROCESS_BATCH 32
 #define PEER 10000000
 #define TSIZE 24
 #define QUEUELEN 10000
@@ -15,10 +15,21 @@ using Type = TaskStack<TSIZE>;
 
 unsigned int k;
 
-void test() {
+void testA() {
 
 	for (int i = 0; i < 10000; i++)
 		k = k * 2 + i;
+}
+
+void testB() {
+
+	for (int i = 0; i < 100; i++)
+		k = k * 2 + i;
+}
+
+
+void testC() {
+
 }
 
 // Worker thread for batch submission
@@ -29,7 +40,7 @@ void bulk_submit_worker()
 	Type* p = (Type*)buf;
 
 	for (int i = 0; i < SUBMIT_BATCH; i++)
-		new (p + i) Type(test);
+		new (p + i) Type(testC);
 
 	int remaining = PEER;
 	while (remaining > 0)
@@ -50,7 +61,7 @@ void single_submit_worker()
 
 	while (remaining > 0)
 	{
-		pool.wait_emplace(test);
+		pool.wait_emplace(testC);
 		remaining--;
 	}
 }
@@ -58,7 +69,7 @@ void single_submit_worker()
 // Batch submission test
 double test_bulk_submit()
 {
-	pool.init(QUEUELEN,1, WORKER, PROCESS_BATCH);
+	pool.init(QUEUELEN, 1, WORKER, PROCESS_BATCH);
 
 	auto start = std::chrono::high_resolution_clock::now();
 
@@ -81,7 +92,7 @@ double test_bulk_submit()
 // Single task submission test
 double test_single_submit()
 {
-	pool.init(QUEUELEN,1, WORKER, PROCESS_BATCH);
+	pool.init(QUEUELEN, 1, WORKER, PROCESS_BATCH);
 	auto start = std::chrono::high_resolution_clock::now();
 
 	std::vector<std::thread> producers;
@@ -108,7 +119,7 @@ int main()
 	printf("%-20s: %d\n", "Submit Batch Size", SUBMIT_BATCH);
 	printf("%-20s: %d\n", "Process Batch Size", PROCESS_BATCH);
 	printf("%-20s: %d\n", "Task Container Size", TSIZE);
-	printf("%-20s: %u\n", "Actual Task Size", task_stack<decltype(test)>::size);
+	printf("%-20s: %u\n", "Actual Task Size", task_stack<decltype(testC)>::size);
 	printf("%-20s: %d\n", "Producer Threads", PRODUCER);
 	printf("%-20s: %d\n", "Worker Threads", WORKER);
 	printf("%-20s: %d\n", "Queue Length", QUEUELEN);
