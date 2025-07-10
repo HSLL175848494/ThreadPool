@@ -1,13 +1,16 @@
 # HSLL::ThreadPool
 
-## Overview
-HSLL::ThreadPool is a lightweight, header-only C++11 thread pool implementation with no third-party dependencies. It utilizes a stack-based preallocated task container to store all parameters on the stack, avoiding dynamic memory allocation. The pool provides both blocking/non-blocking and single/bulk task submission interfaces, supporting double-ended operations for task insertion at either the head or tail of the queue. 
+## Overview  
 
-Key features include:
-- Round-robin scheduling with two-level queue selection
-- Work-stealing mechanism for efficient load balancing
-- Dynamic thread adjustment based on workload
-- Graceful shutdown modes (immediate or wait-for-completion)
+This is a lightweight C++11 thread pool implementation that **requires no third-party dependencies and can be used with just a header file**.  
+
+Its core strengths lie in **efficiency and flexibility**:  
+*   **Avoids dynamic memory allocation:** Utilizes a stack-based pre-allocated task container to store tasks and their parameters directly on the stack.  
+*   **Multiple submission methods:** Supports submitting single or batch tasks either blocking or non-blocking, catering to diverse scenarios.  
+*   **Flexible task management:** Allows inserting tasks at either the head or tail of the task queue (dual-end insertion).  
+*   **Intelligent load balancing:** Combines Round-Robin scheduling, secondary queue selection, and task stealing mechanisms to effectively distribute workload.  
+*   **Resource optimization:** Dynamically adjusts the number of active threads based on current load, minimizing unnecessary memory footprint.  
+*   **Graceful shutdown:** Offers both immediate shutdown and shutdown-after-all-tasks-complete modes.
 
 ## Inclusion
 ```cpp
