@@ -151,4 +151,4 @@ graph LR
 ## Additional Resources
 - **Component Documentation**: `document` folder
 - **Usage Examples**: `example` folder
-- **Performance Tests**: `test` folder
+- **Performance Tests**: `perf test` folder

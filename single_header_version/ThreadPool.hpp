@@ -1534,9 +1534,9 @@ namespace HSLL
 	};
 
 	/**
-	 * @brief Thread pool implementation with multiple queues for task distribution
-	 * @tparam T Type of task objects to be processed, must implement execute() method
-	 */
+		 * @brief Thread pool implementation with multiple queues for task distribution
+		 * @tparam T Type of task objects to be processed, must implement execute() method
+		 */
 	template <class T = TaskStack<>>
 	class ThreadPool
 	{
@@ -1781,7 +1781,7 @@ namespace HSLL
 				return queues->template pushBulk<METHOD, POS>(tasks, count);
 
 			ReadLockGuard lock(rwLock);
-			return select_queue_for_bulk(count / 2).template pushBulk<METHOD, POS>(tasks, count);
+			return select_queue_for_bulk(std::max(1u, count / 2)).template pushBulk<METHOD, POS>(tasks, count);
 		}
 
 		/**
@@ -2073,7 +2073,16 @@ namespace HSLL
 			{
 				while (true)
 				{
-					while (queue->get_exact_size() && (count = queue->popBulk(tasks, batchSize)))
+					unsigned int round = 1;
+					unsigned int size = queue->get_exact_size();
+					while (size < batchSize && round < batchSize)
+					{
+						std::this_thread::yield();
+						size = queue->get_exact_size();
+						round++;
+					}
+
+					if (size && (count = queue->popBulk(tasks, batchSize)))
 						execute_tasks(tasks, count);
 
 					count = stealer.steal(tasks);
