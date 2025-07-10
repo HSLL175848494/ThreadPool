@@ -151,7 +151,12 @@ graph LR
 - Windows (_aligned_malloc)
 - C++11 or newer
 
-## Additional Resources
-- **Component Documentation**: `document` folder
-- **Usage Examples**: `example` folder
-- **Performance Tests**: `perf test` folder
+## Project Structure
+
+├── 📂 document/              # Component Documentation
+├── 📂 example/               # Usage Examples
+├── 📂 include/               # Include Directory (Header Files)
+├── 📂 perf_test/             # Performance Tests
+├── 📂 single_header_version/ # Single-header Version
+├── 📄 README.md              # Chinese Project Documentation
+└── 📄 README.en.md           # English Project Documentation
