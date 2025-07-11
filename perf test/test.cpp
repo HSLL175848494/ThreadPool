@@ -21,12 +21,12 @@ void testC() {
 
 #define WORKER 8
 #define PRODUCER 1
-#define SUBMIT_BATCH 32
+#define SUBMIT_BATCH 1
 #define PROCESS_BATCH 32
 #define PEER 10000000
 #define TSIZE 24
 #define QUEUELEN 10000
-#define FUNC testC
+#define FUNC testA
 
 using namespace HSLL;
 using Type = TaskStack<TSIZE>;
@@ -35,23 +35,23 @@ ThreadPool<Type> pool;
 // Worker thread for batch submission
 void bulk_submit_worker()
 {
-	alignas(alignof(Type)) unsigned char buf[SUBMIT_BATCH * sizeof(Type)];
-
-	Type* p = (Type*)buf;
-
-	for (int i = 0; i < SUBMIT_BATCH; i++)
-		new (p + i) Type(FUNC);
+	BatchSubmitter<Type, SUBMIT_BATCH> submitter(&pool);
 
 	int remaining = PEER;
+
 	while (remaining > 0)
 	{
-		unsigned int num = pool.wait_enqueue_bulk<COPY>(
-			(Type*)buf, std::min(SUBMIT_BATCH, remaining));
-		remaining -= num;
+		if (submitter.emplace(FUNC))
+			remaining--;
+		else
+			std::this_thread::yield();
 	}
 
-	for (int i = 0; i < SUBMIT_BATCH; i++)
-		(p + i)->~Type();
+	while (submitter.get_size())
+	{
+		if (!submitter.submit())
+		std::this_thread::yield();
+	}
 }
 
 // Worker thread for single task submission
@@ -69,8 +69,6 @@ void single_submit_worker()
 // Batch submission test
 double test_bulk_submit()
 {
-	pool.init(QUEUELEN, 1, WORKER, PROCESS_BATCH);
-
 	auto start = std::chrono::high_resolution_clock::now();
 
 	std::vector<std::thread> producers;
@@ -82,7 +80,7 @@ double test_bulk_submit()
 	for (auto& t : producers)
 		t.join();
 
-	pool.exit(true);
+	pool.join();
 	auto end = std::chrono::high_resolution_clock::now();
 	std::chrono::duration<double, std::milli> duration = end - start;
 
@@ -92,7 +90,6 @@ double test_bulk_submit()
 // Single task submission test
 double test_single_submit()
 {
-	pool.init(QUEUELEN, 1, WORKER, PROCESS_BATCH);
 	auto start = std::chrono::high_resolution_clock::now();
 
 	std::vector<std::thread> producers;
@@ -104,8 +101,7 @@ double test_single_submit()
 	for (auto& t : producers)
 		t.join();
 
-	pool.exit(true);
-
+	pool.join();
 	auto end = std::chrono::high_resolution_clock::now();
 	std::chrono::duration<double, std::milli> duration = end - start;
 	return duration.count();
@@ -114,6 +110,8 @@ double test_single_submit()
 
 int main()
 {
+	pool.init(QUEUELEN, WORKER, WORKER, PROCESS_BATCH);
+
 	const long long total_tasks = static_cast<long long>(PEER) * PRODUCER;
 	printf("\n=== Configuration Parameters ===\n");
 	printf("%-20s: %d\n", "Submit Batch Size", SUBMIT_BATCH);
@@ -150,7 +148,7 @@ int main()
 
 	printf("%-20s: %10.5f\n", "Ratio (Bulk/Single)", single_time / bulk_time);
 
+	pool.exit(true);
 	std::this_thread::sleep_for(std::chrono::seconds(1));
-
 	return 0;
 }
