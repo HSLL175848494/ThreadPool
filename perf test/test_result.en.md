@@ -28,6 +28,8 @@ void C() {
 
 **sp_tp**：  [Open-source simple thread pool implementation](https://github.com/progschj/ThreadPool.git)  
 
+**boost_tp**：  boost::asio::thread_pool
+
 **hsll_tp**：   HSLL::ThreadPool  
 
 | Thread Pool Type               | Threads | Task A (M/s) | Task B (M/s) | Task C (M/s) |  
@@ -35,6 +37,9 @@ void C() {
 | **sp_tp**                      | 1       | 0.36         | 2.36         | 1.75         |  
 |                                | 4       | 1.10         | 0.95         | 0.93         |  
 |                                | 8       | 0.65         | 0.62         | 0.61         |  
+| **boost_tp**                   | 1       | 0.40         | 2.87         | 2.70         |
+|                                | 4       | 1.31         | 0.94         | 0.90         |
+|                                | 8       | 0.80         | 0.65         | 0.64         |
 | **hsll_tp**                    | 1       | 0.36         | 5.14         | 14.24        |  
 |                                | 4       | 1.44         | 3.15         | 3.05         |  
 |                                | 8       | 2.30         | 1.80         | 1.94         |  
