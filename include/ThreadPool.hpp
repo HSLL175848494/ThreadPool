@@ -453,6 +453,35 @@ namespace HSLL
 			}
 		}
 
+		/**
+		 * @brief Waits until all task queues are empty (all tasks have been taken from queues)
+		 * @note This does NOT guarantee all tasks have completed execution - it only ensures:
+		 *       1. All tasks have been dequeued by worker threads
+		 *       2. May return while some tasks are still being processed by workers
+		 * @details Continuously checks all active queues until they're empty.
+		 *          Uses yield() between checks to avoid busy waiting.
+		 */
+		void join()
+		{
+			while (true)
+			{
+				bool flag = true;
+				for (int i = 0; i < threadNum; ++i)
+				{
+					if (queues[i].get_exact_size())
+					{
+						flag = false;
+						break;
+					}
+				}
+
+				if (flag)
+					return;
+				else
+					std::this_thread::yield();
+			}
+		}
+
 		~ThreadPool() noexcept
 		{
 			exit(false);
@@ -703,6 +732,126 @@ namespace HSLL
 
 			ALIGNED_FREE(tasks);
 		}
+	};
+
+	template <class T, unsigned int BATCH, INSERT_POS POS = TAIL>
+	class BatchSubmitter
+	{
+		static_assert(is_generic_ts<T>::value, "TYPE must be a TaskStack type");
+		static_assert(BATCH > 0, "BATCH > 0");
+		alignas(alignof(T)) unsigned char buf[BATCH * sizeof(T)];
+
+		T* elements;
+		unsigned int size;
+		unsigned int index;
+		ThreadPool<T>* pool;
+
+		bool check_and_submit()
+		{
+			if (size == BATCH)
+			return submit() == BATCH;
+			
+			return true;
+		}
+
+	public:
+		BatchSubmitter(ThreadPool<T>* pool) : size(0), index(0),elements((T*)buf), pool(pool) {
+			assert(pool);
+		}
+
+		unsigned int get_size() const noexcept
+		{
+			return size;
+		}
+
+		bool empty() const noexcept
+		{
+			return size == 0;
+		}
+
+		bool full() const noexcept
+		{
+			return size == BATCH;
+		}
+
+		template <typename... Args>
+		bool emplace(Args &&...args) noexcept
+		{
+			if (!check_and_submit())
+				return false;
+
+			new (elements + index) T(std::forward<Args>(args)...);
+			index = (index + 1) % BATCH;
+			size++;
+			return true;
+		}
+
+		template <class U>
+		bool add(U&& task) noexcept
+		{
+			if (!check_and_submit())
+				return false;
+
+			new (elements + index) T(std::forward<U>(task));
+			index = (index + 1) % BATCH;
+			size++;
+			return true;
+		}
+
+		unsigned int submit() noexcept
+		{
+			if (size == 0)
+				return 0;
+
+			unsigned int start = (index - size + BATCH) % BATCH;
+			unsigned int len1 = (start + size <= BATCH) ? size : (BATCH - start);
+			unsigned int len2 = size - len1;
+			unsigned int submitted = 0;
+			unsigned int submitted1 = 0;
+			unsigned int submitted2 = 0;
+
+			if (len1 > 0) 
+			{
+				submitted1 = pool->template enqueue_bulk<MOVE, POS>(elements + start, len1);
+				submitted += submitted1;
+
+				for (unsigned int i = 0; i < submitted1; ++i) 
+					elements[(start + i) % BATCH].~T();
+
+				if (submitted1 == len1 && len2 > 0) 
+				{
+					submitted2 = pool->template enqueue_bulk<MOVE, POS>(elements, len2);
+					submitted += submitted2;
+
+					for (unsigned int i = 0; i < submitted2; ++i) 
+						elements[i].~T();
+				}
+			}
+
+			size -= submitted;
+			return submitted;
+		}
+
+		~BatchSubmitter() noexcept
+		{
+			if (size > 0) 
+			{
+				unsigned int start = (index - size + BATCH) % BATCH;
+				unsigned int len1 = (start + size <= BATCH) ? size : (BATCH - start);
+				unsigned int len2 = size - len1;
+
+				for (unsigned int i = 0; i < len1; i++) 
+					elements[(start + i) % BATCH].~T();
+
+				for (unsigned int i = 0; i < len2; i++) 
+					elements[i].~T();
+			}
+		}
+
+		BatchSubmitter(const BatchSubmitter&) = delete;
+		BatchSubmitter& operator=(const BatchSubmitter&) = delete;
+		BatchSubmitter(BatchSubmitter&&) = delete;
+		BatchSubmitter& operator=(BatchSubmitter&&) = delete;
 	};
 }
 
