@@ -774,8 +774,8 @@ namespace HSLL
 	};
 
 	/**
- * @brief Circular buffer based blocking queue implementation
- */
+	 * @brief Circular buffer based blocking queue implementation
+	 */
 	template <class TYPE>
 	class alignas(64) TPBlockQueue
 	{
@@ -921,6 +921,38 @@ namespace HSLL
 			}
 		}
 
+		template <BULK_CMETHOD METHOD>
+		void bulk_push_impl(InsertAtTailTag, TYPE* part1, unsigned int count1, TYPE* part2, unsigned int count2)
+		{
+			for (unsigned int i = 0; i < count1; ++i)
+			{
+				bulk_construct<METHOD>(*dataListTail, part1[i]);
+				move_tail_next();
+			}
+
+			for (unsigned int i = 0; i < count2; ++i)
+			{
+				bulk_construct<METHOD>(*dataListTail, part2[i]);
+				move_tail_next();
+			}
+		}
+
+		template <BULK_CMETHOD METHOD>
+		void bulk_push_impl(InsertAtHeadTag, TYPE* part1, unsigned int count1, TYPE* part2, unsigned int count2)
+		{
+			for (unsigned int i = 0; i < count1; ++i)
+			{
+				move_head_prev();
+				bulk_construct<METHOD>(*dataListHead, part1[count1 - i - 1]);
+			}
+
+			for (unsigned int i = 0; i < count2; ++i)
+			{
+				move_head_prev();
+				bulk_construct<METHOD>(*dataListHead, part2[count2 - i - 1]);
+			}
+		}
+
 		template <INSERT_POS POS, typename... Args>
 		void emplace_helper(std::unique_lock<std::mutex>& lock, Args &&...args)
 		{
@@ -930,7 +962,6 @@ namespace HSLL
 			lock.unlock();
 			notEmptyCond.notify_one();
 		}
-
 
 		template <INSERT_POS POS, class T>
 		void push_helper(std::unique_lock<std::mutex>& lock, T&& element)
@@ -942,7 +973,6 @@ namespace HSLL
 			notEmptyCond.notify_one();
 		}
 
-
 		template <BULK_CMETHOD METHOD, INSERT_POS POS>
 		unsigned int pushBulk_helper(std::unique_lock<std::mutex>& lock, TYPE* elements, unsigned int count)
 		{
@@ -950,6 +980,28 @@ namespace HSLL
 			size.fetch_add(toPush, std::memory_order_release);
 			using InsertTag = typename std::conditional<POS == HEAD, InsertAtHeadTag, InsertAtTailTag>::type;
 			bulk_push_impl<METHOD>(InsertTag(), elements, toPush);
+			lock.unlock();
+
+			if (UNLIKELY(toPush == 1))
+				notEmptyCond.notify_one();
+			else
+				notEmptyCond.notify_all();
+			return toPush;
+		}
+
+		template <BULK_CMETHOD METHOD, INSERT_POS POS>
+		unsigned int pushBulk_helper(std::unique_lock<std::mutex>& lock,
+			TYPE* part1, unsigned int count1, TYPE* part2, unsigned int count2)
+		{
+			unsigned int toPush = std::min(count1 + count2, maxSize - size.load(std::memory_order_relaxed));
+			size.fetch_add(toPush, std::memory_order_release);
+			using InsertTag = typename std::conditional<POS == HEAD, InsertAtHeadTag, InsertAtTailTag>::type;
+
+			if (toPush > count1)
+				bulk_push_impl<METHOD>(InsertTag(), part1, count1, part2, toPush - count1);
+			else
+				bulk_push_impl<METHOD>(InsertTag(), part1, toPush);
+
 			lock.unlock();
 
 			if (UNLIKELY(toPush == 1))
@@ -1144,6 +1196,22 @@ namespace HSLL
 				return 0;
 
 			return pushBulk_helper<METHOD, POS>(lock, elements, count);
+		}
+
+		/**
+		 * @brief Bulk push for multiple elements
+		 */
+		template <BULK_CMETHOD METHOD = COPY, INSERT_POS POS = TAIL>
+		unsigned int pushBulk(TYPE* part1, unsigned int count1, TYPE* part2, unsigned int count2)
+		{
+			assert(part1 && part1 && count1 && count2);
+
+			std::unique_lock<std::mutex> lock(dataMutex);
+
+			if (UNLIKELY(!(maxSize - size.load(std::memory_order_relaxed))))
+				return 0;
+
+			return pushBulk_helper<METHOD, POS>(lock, part1, count1, part2, count2);
 		}
 
 		/**
@@ -1458,9 +1526,9 @@ namespace HSLL
 	};
 
 	/**
-		 * @brief Thread pool implementation with multiple queues for task distribution
-		 * @tparam T Type of task objects to be processed, must implement execute() method
-		 */
+	 * @brief Thread pool implementation with multiple queues for task distribution
+	 * @tparam T Type of task objects to be processed, must implement execute() method
+	 */
 	template <class T = TaskStack<>>
 	class ThreadPool
 	{
@@ -1706,6 +1774,27 @@ namespace HSLL
 
 			ReadLockGuard lock(rwLock);
 			return select_queue_for_bulk(std::max(1u, count / 2)).template pushBulk<METHOD, POS>(tasks, count);
+		}
+
+		/**
+		 * @brief Non-blocking bulk push for multiple tasks (dual-part version)
+		 * @tparam METHOD Bulk construction method (COPY or MOVE, default COPY)
+		 * @tparam POS Insertion position (HEAD or TAIL, default TAIL)
+		 * @param part1 First array segment of tasks to enqueue
+		 * @param count1 Number of tasks in first segment
+		 * @param part2 Second array segment of tasks to enqueue
+		 * @param count2 Number of tasks in second segment
+		 * @return Actual number of tasks successfully enqueued (sum of both segments minus failures)
+		 * @note Designed for ring buffers that benefit from batched two-part insertion.
+		 */
+		template <BULK_CMETHOD METHOD = COPY, INSERT_POS POS = TAIL>
+		unsigned int enqueue_bulk(T* part1, unsigned int count1, T* part2, unsigned int count2) noexcept
+		{
+			if (maxThreadNum == 1)
+				return queues->template pushBulk<METHOD, POS>(part1, count1, part2, count2);
+
+			ReadLockGuard lock(rwLock);
+			return select_queue_for_bulk(std::max(1u, (count1 + count2) / 2)).template pushBulk<METHOD, POS>(part1, count1, part2, count2);
 		}
 
 		/**
@@ -2092,25 +2181,49 @@ namespace HSLL
 		}
 
 	public:
+		/**
+		* @brief Constructs a batch submitter associated with a thread pool
+		* @param pool Pointer to the thread pool for batch task submission
+		*/
 		BatchSubmitter(ThreadPool<T>* pool) : size(0), index(0), elements((T*)buf), pool(pool) {
 			assert(pool);
 		}
 
+		/**
+		 * @brief Gets current number of buffered tasks
+		 * @return Number of tasks currently held in the batch buffer
+		 */
 		unsigned int get_size() const noexcept
 		{
 			return size;
 		}
 
+		/**
+		 * @brief Checks if batch buffer is empty
+		 * @return true if no tasks are buffered, false otherwise
+		 */
 		bool empty() const noexcept
 		{
 			return size == 0;
 		}
 
+		/**
+		 * @brief Checks if batch buffer is full
+		 * @return true if batch buffer has reached maximum capacity (BATCH), false otherwise
+		 */
 		bool full() const noexcept
 		{
 			return size == BATCH;
 		}
 
+		/**
+		 * @brief Constructs task in-place in batch buffer
+		 * @tparam Args Types of arguments for task constructor
+		 * @param args Arguments forwarded to task constructor
+		 * @return true if task was added to buffer or submitted successfully,
+		 *         false if submission failed due to full thread pool queues
+		 * @details Automatically submits batch if buffer becomes full during emplace
+		 */
 		template <typename... Args>
 		bool emplace(Args &&...args) noexcept
 		{
@@ -2123,6 +2236,14 @@ namespace HSLL
 			return true;
 		}
 
+		/**
+		 * @brief Adds preconstructed task to batch buffer
+		 * @tparam U Deduced task type
+		 * @param task Task object to buffer
+		 * @return true if task was added to buffer or submitted successfully,
+		 *         false if submission failed due to full thread pool queues
+		 * @details Automatically submits batch if buffer becomes full during add
+		 */
 		template <class U>
 		bool add(U&& task) noexcept
 		{
@@ -2135,6 +2256,11 @@ namespace HSLL
 			return true;
 		}
 
+		/**
+		 * @brief Submits all buffered tasks to thread pool
+		 * @return Number of tasks successfully submitted
+		 * @details Moves buffered tasks to thread pool in bulk.
+		 */
 		unsigned int submit() noexcept
 		{
 			if (size == 0)
@@ -2143,29 +2269,31 @@ namespace HSLL
 			unsigned int start = (index - size + BATCH) % BATCH;
 			unsigned int len1 = (start + size <= BATCH) ? size : (BATCH - start);
 			unsigned int len2 = size - len1;
-			unsigned int submitted = 0;
-			unsigned int submitted1 = 0;
-			unsigned int submitted2 = 0;
 
-			if (len1 > 0)
+			unsigned int submitted = pool->template enqueue_bulk<MOVE, POS>(
+				elements + start, len1,
+				elements, len2
+			);
+
+			if (submitted > 0)
 			{
-				submitted1 = pool->template enqueue_bulk<MOVE, POS>(elements + start, len1);
-				submitted += submitted1;
-
-				for (unsigned int i = 0; i < submitted1; ++i)
-					elements[(start + i) % BATCH].~T();
-
-				if (submitted1 == len1 && len2 > 0)
+				if (submitted <= len1)
 				{
-					submitted2 = pool->template enqueue_bulk<MOVE, POS>(elements, len2);
-					submitted += submitted2;
+					for (unsigned i = 0; i < submitted; ++i)
+						elements[(start + i) % BATCH].~T();
+				}
+				else
+				{
+					for (unsigned i = 0; i < len1; ++i)
+						elements[(start + i) % BATCH].~T();
 
-					for (unsigned int i = 0; i < submitted2; ++i)
+					for (unsigned i = 0; i < submitted - len1; ++i)
 						elements[i].~T();
 				}
+
+				size -= submitted;
 			}
 
-			size -= submitted;
 			return submitted;
 		}
 

@@ -1,4 +1,5 @@
 #include"ThreadPool.hpp"
+#include<string>
 #include<future>
 
 using namespace HSLL;
@@ -29,21 +30,13 @@ void example_emplace()
 
 void example_bulk()
 {
-	alignas(alignof(Type)) unsigned char buf[4 * sizeof(Type)];
-
-	Type* p = (Type*)buf;
+	BatchSubmitter<Type, 4> submitter(&pool);
 
 	for (int i = 0; i < 4; i++)
-		new (p + i) Type(TestFunc, std::string("example_bulk") + std::to_string(i));
+	submitter.emplace(TestFunc, std::string("example_bulk") + std::to_string(i));
 
-	//参数以拷贝的形式储存到队列
-	unsigned int num = pool.enqueue_bulk<COPY>((Type*)buf, 4);
-
-	//参数以移动的形式储存到队列
-	//unsigned int num = pool.enqueue_bulk<MOVE>((Type*)buf, 4);
-
-	for (int i = 0; i < 4; i++)
-		(p + i)->~Type();
+	//主动提交任务
+	submitter.submit();
 }
 
 void example_async()
