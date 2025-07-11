@@ -209,15 +209,6 @@ namespace HSLL
 			notEmptyCond.notify_one();
 		}
 
-		template <INSERT_POS POS, typename... Args>
-		void emplace_helper_(Args &&...args)
-		{
-			size.fetch_add(1, std::memory_order_release);
-			using InsertTag = typename std::conditional<POS == HEAD, InsertAtHeadTag, InsertAtTailTag>::type;
-			emplace_impl(InsertTag(), std::forward<Args>(args)...);
-			dataMutex.unlock();
-			notEmptyCond.notify_one();
-		}
 
 		template <INSERT_POS POS, class T>
 		void push_helper(std::unique_lock<std::mutex>& lock, T&& element)
@@ -229,15 +220,6 @@ namespace HSLL
 			notEmptyCond.notify_one();
 		}
 
-		template <INSERT_POS POS, class T>
-		void push_helper_(T&& element)
-		{
-			size.fetch_add(1, std::memory_order_release);
-			using InsertTag = typename std::conditional<POS == HEAD, InsertAtHeadTag, InsertAtTailTag>::type;
-			push_impl(InsertTag(), std::forward<T>(element));
-			dataMutex.unlock();
-			notEmptyCond.notify_one();
-		}
 
 		template <BULK_CMETHOD METHOD, INSERT_POS POS>
 		unsigned int pushBulk_helper(std::unique_lock<std::mutex>& lock, TYPE* elements, unsigned int count)
@@ -255,37 +237,12 @@ namespace HSLL
 			return toPush;
 		}
 
-		template <BULK_CMETHOD METHOD, INSERT_POS POS>
-		unsigned int pushBulk_helper_(TYPE* elements, unsigned int count)
-		{
-			unsigned int toPush = std::min(count, maxSize - size.load(std::memory_order_relaxed));
-			size.fetch_add(toPush, std::memory_order_release);
-			using InsertTag = typename std::conditional<POS == HEAD, InsertAtHeadTag, InsertAtTailTag>::type;
-			bulk_push_impl<METHOD>(InsertTag(), elements, toPush);
-			dataMutex.unlock();
-
-			if (UNLIKELY(toPush == 1))
-				notEmptyCond.notify_one();
-			else
-				notEmptyCond.notify_all();
-			return toPush;
-		}
-
 		void pop_helper(std::unique_lock<std::mutex>& lock, TYPE& element)
 		{
 			size.fetch_sub(1, std::memory_order_release);
 			move_element_pop(element, *dataListHead);
 			move_head_next();
 			lock.unlock();
-			notFullCond.notify_one();
-		}
-
-		void pop_helper_(TYPE& element)
-		{
-			size.fetch_sub(1, std::memory_order_release);
-			move_element_pop(element, *dataListHead);
-			move_head_next();
-			dataMutex.unlock();
 			notFullCond.notify_one();
 		}
 
@@ -299,24 +256,6 @@ namespace HSLL
 				move_head_next();
 			}
 			lock.unlock();
-
-			if (UNLIKELY(toPop == 1))
-				notFullCond.notify_one();
-			else
-				notFullCond.notify_all();
-			return toPop;
-		}
-
-		unsigned int popbulk_helper_(TYPE* elements, unsigned int count)
-		{
-			unsigned int toPop = std::min(count, size.load(std::memory_order_relaxed));
-			size.fetch_sub(toPop, std::memory_order_release);
-			for (unsigned int i = 0; i < toPop; ++i)
-			{
-				move_element_pop(elements[i], *dataListHead);
-				move_head_next();
-			}
-			dataMutex.unlock();
 
 			if (UNLIKELY(toPop == 1))
 				notFullCond.notify_one();
@@ -372,15 +311,12 @@ namespace HSLL
 		template <INSERT_POS POS = TAIL, typename... Args>
 		bool emplace(Args &&...args)
 		{
-			dataMutex.lock();
+			std::unique_lock<std::mutex> lock(dataMutex);
 
 			if (UNLIKELY(size.load(std::memory_order_relaxed) == maxSize))
-			{
-				dataMutex.unlock();
 				return false;
-			}
 
-			emplace_helper_<POS>(std::forward<Args>(args)...);
+			emplace_helper<POS>(lock, std::forward<Args>(args)...);
 			return true;
 		}
 
@@ -427,15 +363,12 @@ namespace HSLL
 		template <INSERT_POS POS = TAIL, class T>
 		bool push(T&& element)
 		{
-			dataMutex.lock();
+			std::unique_lock<std::mutex> lock(dataMutex);
 
 			if (UNLIKELY(size.load(std::memory_order_relaxed) == maxSize))
-			{
-				dataMutex.unlock();
 				return false;
-			}
 
-			push_helper_<POS>(std::forward<T>(element));
+			push_helper<POS>(lock, std::forward<T>(element));
 			return true;
 		}
 
@@ -483,15 +416,12 @@ namespace HSLL
 		{
 			assert(elements && count);
 
-			dataMutex.lock();
+			std::unique_lock<std::mutex> lock(dataMutex);
 
 			if (UNLIKELY(!(maxSize - size.load(std::memory_order_relaxed))))
-			{
-				dataMutex.unlock();
 				return 0;
-			}
 
-			return pushBulk_helper_<METHOD, POS>(elements, count);
+			return pushBulk_helper<METHOD, POS>(lock, elements, count);
 		}
 
 		/**
@@ -537,15 +467,12 @@ namespace HSLL
 		 */
 		bool pop(TYPE& element)
 		{
-			dataMutex.lock();
+			std::unique_lock<std::mutex> lock(dataMutex);
 
 			if (UNLIKELY(!size.load(std::memory_order_relaxed)))
-			{
-				dataMutex.unlock();
 				return false;
-			}
 
-			pop_helper_(element);
+			pop_helper(lock, element);
 			return true;
 		}
 
@@ -591,15 +518,12 @@ namespace HSLL
 		{
 			assert(elements && count);
 
-			dataMutex.lock();
+			std::unique_lock<std::mutex> lock(dataMutex);
 
 			if (UNLIKELY(!size.load(std::memory_order_relaxed)))
-			{
-				dataMutex.unlock();
 				return 0;
-			}
 
-			return popbulk_helper_(elements, count);
+			return popbulk_helper(lock, elements, count);
 		}
 
 		/**
