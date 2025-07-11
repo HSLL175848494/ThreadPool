@@ -22,7 +22,7 @@ void testC() {
 #define WORKER 8
 #define PRODUCER 1
 #define SUBMIT_BATCH 1
-#define PROCESS_BATCH 1
+#define PROCESS_BATCH 32
 #define PEER 10000000
 #define TSIZE 24
 #define QUEUELEN 10000

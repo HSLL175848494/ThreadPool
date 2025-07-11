@@ -73,6 +73,7 @@ namespace HSLL
 	{
 		template <class TYPE>
 		friend class ThreadPool;
+
 	private:
 
 		unsigned int index;
@@ -369,6 +370,27 @@ namespace HSLL
 
 			ReadLockGuard lock(rwLock);
 			return select_queue_for_bulk(std::max(1u, count / 2)).template pushBulk<METHOD, POS>(tasks, count);
+		}
+
+		/**
+		 * @brief Non-blocking bulk push for multiple tasks (dual-part version)
+		 * @tparam METHOD Bulk construction method (COPY or MOVE, default COPY)
+		 * @tparam POS Insertion position (HEAD or TAIL, default TAIL)
+		 * @param part1 First array segment of tasks to enqueue
+		 * @param count1 Number of tasks in first segment
+		 * @param part2 Second array segment of tasks to enqueue
+		 * @param count2 Number of tasks in second segment
+		 * @return Actual number of tasks successfully enqueued (sum of both segments minus failures)
+		 * @note Designed for ring buffers that benefit from batched two-part insertion.
+		 */
+		template <BULK_CMETHOD METHOD = COPY, INSERT_POS POS = TAIL>
+		unsigned int enqueue_bulk(T* part1, unsigned int count1, T* part2, unsigned int count2) noexcept
+		{
+			if (maxThreadNum == 1)
+				return queues->template pushBulk<METHOD, POS>(part1, count1, part2, count2);
+
+			ReadLockGuard lock(rwLock);
+			return select_queue_for_bulk(std::max(1u, (count1 + count2) / 2)).template pushBulk<METHOD, POS>(part1, count1, part2, count2);
 		}
 
 		/**
@@ -749,31 +771,55 @@ namespace HSLL
 		bool check_and_submit()
 		{
 			if (size == BATCH)
-			return submit() == BATCH;
-			
+				return submit() == BATCH;
+
 			return true;
 		}
 
 	public:
-		BatchSubmitter(ThreadPool<T>* pool) : size(0), index(0),elements((T*)buf), pool(pool) {
+		/**
+		* @brief Constructs a batch submitter associated with a thread pool
+		* @param pool Pointer to the thread pool for batch task submission
+		*/
+		BatchSubmitter(ThreadPool<T>* pool) : size(0), index(0), elements((T*)buf), pool(pool) {
 			assert(pool);
 		}
 
+		/**
+		 * @brief Gets current number of buffered tasks
+		 * @return Number of tasks currently held in the batch buffer
+		 */
 		unsigned int get_size() const noexcept
 		{
 			return size;
 		}
 
+		/**
+		 * @brief Checks if batch buffer is empty
+		 * @return true if no tasks are buffered, false otherwise
+		 */
 		bool empty() const noexcept
 		{
 			return size == 0;
 		}
 
+		/**
+		 * @brief Checks if batch buffer is full
+		 * @return true if batch buffer has reached maximum capacity (BATCH), false otherwise
+		 */
 		bool full() const noexcept
 		{
 			return size == BATCH;
 		}
 
+		/**
+		 * @brief Constructs task in-place in batch buffer
+		 * @tparam Args Types of arguments for task constructor
+		 * @param args Arguments forwarded to task constructor
+		 * @return true if task was added to buffer or submitted successfully,
+		 *         false if submission failed due to full thread pool queues
+		 * @details Automatically submits batch if buffer becomes full during emplace
+		 */
 		template <typename... Args>
 		bool emplace(Args &&...args) noexcept
 		{
@@ -786,6 +832,14 @@ namespace HSLL
 			return true;
 		}
 
+		/**
+		 * @brief Adds preconstructed task to batch buffer
+		 * @tparam U Deduced task type
+		 * @param task Task object to buffer
+		 * @return true if task was added to buffer or submitted successfully,
+		 *         false if submission failed due to full thread pool queues
+		 * @details Automatically submits batch if buffer becomes full during add
+		 */
 		template <class U>
 		bool add(U&& task) noexcept
 		{
@@ -798,6 +852,11 @@ namespace HSLL
 			return true;
 		}
 
+		/**
+		 * @brief Submits all buffered tasks to thread pool
+		 * @return Number of tasks successfully submitted
+		 * @details Moves buffered tasks to thread pool in bulk. 
+		 */
 		unsigned int submit() noexcept
 		{
 			if (size == 0)
@@ -806,44 +865,46 @@ namespace HSLL
 			unsigned int start = (index - size + BATCH) % BATCH;
 			unsigned int len1 = (start + size <= BATCH) ? size : (BATCH - start);
 			unsigned int len2 = size - len1;
-			unsigned int submitted = 0;
-			unsigned int submitted1 = 0;
-			unsigned int submitted2 = 0;
 
-			if (len1 > 0) 
+			unsigned int submitted = pool->template enqueue_bulk<MOVE, POS>(
+				elements + start, len1,
+				elements, len2
+			);
+
+			if (submitted > 0)
 			{
-				submitted1 = pool->template enqueue_bulk<MOVE, POS>(elements + start, len1);
-				submitted += submitted1;
-
-				for (unsigned int i = 0; i < submitted1; ++i) 
-					elements[(start + i) % BATCH].~T();
-
-				if (submitted1 == len1 && len2 > 0) 
+				if (submitted <= len1)
 				{
-					submitted2 = pool->template enqueue_bulk<MOVE, POS>(elements, len2);
-					submitted += submitted2;
+					for (unsigned i = 0; i < submitted; ++i)
+						elements[(start + i) % BATCH].~T();
+				}
+				else
+				{
+					for (unsigned i = 0; i < len1; ++i)
+						elements[(start + i) % BATCH].~T();
 
-					for (unsigned int i = 0; i < submitted2; ++i) 
+					for (unsigned i = 0; i < submitted - len1; ++i)
 						elements[i].~T();
 				}
+
+				size -= submitted;
 			}
 
-			size -= submitted;
 			return submitted;
 		}
 
 		~BatchSubmitter() noexcept
 		{
-			if (size > 0) 
+			if (size > 0)
 			{
 				unsigned int start = (index - size + BATCH) % BATCH;
 				unsigned int len1 = (start + size <= BATCH) ? size : (BATCH - start);
 				unsigned int len2 = size - len1;
 
-				for (unsigned int i = 0; i < len1; i++) 
+				for (unsigned int i = 0; i < len1; i++)
 					elements[(start + i) % BATCH].~T();
 
-				for (unsigned int i = 0; i < len2; i++) 
+				for (unsigned int i = 0; i < len2; i++)
 					elements[i].~T();
 			}
 		}
