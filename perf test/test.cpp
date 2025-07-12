@@ -22,11 +22,11 @@ void testC() {
 #define WORKER 8
 #define PRODUCER 1
 #define SUBMIT_BATCH 1
-#define PROCESS_BATCH 32
+#define PROCESS_BATCH 1
 #define PEER 10000000
 #define TSIZE 24
 #define QUEUELEN 10000
-#define FUNC testA
+#define FUNC testC
 
 using namespace HSLL;
 using Type = TaskStack<TSIZE>;
@@ -50,7 +50,7 @@ void bulk_submit_worker()
 	while (submitter.get_size())
 	{
 		if (!submitter.submit())
-		std::this_thread::yield();
+			std::this_thread::yield();
 	}
 }
 
@@ -80,7 +80,7 @@ double test_bulk_submit()
 	for (auto& t : producers)
 		t.join();
 
-	pool.join();
+	pool.join(std::chrono::milliseconds(1));
 	auto end = std::chrono::high_resolution_clock::now();
 	std::chrono::duration<double, std::milli> duration = end - start;
 
@@ -101,7 +101,7 @@ double test_single_submit()
 	for (auto& t : producers)
 		t.join();
 
-	pool.join();
+	pool.join(std::chrono::milliseconds(1));
 	auto end = std::chrono::high_resolution_clock::now();
 	std::chrono::duration<double, std::milli> duration = end - start;
 	return duration.count();
