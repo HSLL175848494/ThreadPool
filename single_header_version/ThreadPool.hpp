@@ -1892,7 +1892,8 @@ namespace HSLL
 			while (true)
 			{
 				bool flag = true;
-				for (int i = 0; i < threadNum; ++i)
+
+				for (int i = 0; i < maxThreadNum; ++i)
 				{
 					if (queues[i].get_exact_size())
 					{
@@ -1905,6 +1906,38 @@ namespace HSLL
 					return;
 				else
 					std::this_thread::yield();
+			}
+		}
+
+		/**
+		 * @brief Waits until all task queues are empty (all tasks dequeued) or sleeps for specified intervals between checks.
+		 * @note This does NOT guarantee all tasks have completed execution - it only ensures:
+		 *       1. All tasks have been dequeued by worker threads
+		 *       2. May return while some tasks are still being processed by workers
+		 * @tparam Rep Arithmetic type representing tick count
+		 * @tparam Period Type representing tick period
+		 * @param interval Sleep duration between queue checks. Smaller values increase responsiveness
+		 *                 but may use more CPU, larger values reduce CPU load but delay detection.
+		 */
+		template <class Rep, class Period>
+		void join(const std::chrono::duration<Rep, Period>& interval)
+		{
+			while (true)
+			{
+				bool flag = true;
+				for (int i = 0; i < maxThreadNum; ++i)
+				{
+					if (queues[i].get_exact_size())
+					{
+						flag = false;
+						break;
+					}
+				}
+
+				if (flag)
+					return;
+				else
+					std::this_thread::sleep_for(interval);
 			}
 		}
 
@@ -2018,6 +2051,12 @@ namespace HSLL
 			{
 				while (true)
 				{
+					while (queue->get_exact_size() && queue->pop(*task))
+					{
+						task->execute();
+						task->~T();
+					}
+
 					if (queue->wait_pop(*task))
 					{
 						task->execute();
@@ -2096,6 +2135,18 @@ namespace HSLL
 			{
 				while (true)
 				{
+					unsigned int round = 1;
+					unsigned int size = queue->get_exact_size();
+					while (size < batchSize && round < batchSize)
+					{
+						std::this_thread::yield();
+						size = queue->get_exact_size();
+						round++;
+					}
+
+					if (size && (count = queue->popBulk(tasks, batchSize)))
+						execute_tasks(tasks, count);
+
 					count = queue->wait_popBulk(tasks, batchSize);
 
 					if (count)
