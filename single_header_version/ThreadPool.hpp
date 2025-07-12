@@ -1526,9 +1526,9 @@ namespace HSLL
 	};
 
 	/**
-	 * @brief Thread pool implementation with multiple queues for task distribution
-	 * @tparam T Type of task objects to be processed, must implement execute() method
-	 */
+	* @brief Thread pool implementation with multiple queues for task distribution
+	* @tparam T Type of task objects to be processed, must implement execute() method
+	*/
 	template <class T = TaskStack<>>
 	class ThreadPool
 	{
@@ -2051,12 +2051,6 @@ namespace HSLL
 			{
 				while (true)
 				{
-					while (queue->get_exact_size() && queue->pop(*task))
-					{
-						task->execute();
-						task->~T();
-					}
-
 					if (queue->wait_pop(*task))
 					{
 						task->execute();
@@ -2082,7 +2076,7 @@ namespace HSLL
 			{
 				while (true)
 				{
-					while (queue->get_exact_size() && queue->pop(*task))
+					while (queue->pop(*task))
 					{
 						task->execute();
 						task->~T();
@@ -2135,18 +2129,6 @@ namespace HSLL
 			{
 				while (true)
 				{
-					unsigned int round = 1;
-					unsigned int size = queue->get_exact_size();
-					while (size < batchSize && round < batchSize)
-					{
-						std::this_thread::yield();
-						size = queue->get_exact_size();
-						round++;
-					}
-
-					if (size && (count = queue->popBulk(tasks, batchSize)))
-						execute_tasks(tasks, count);
-
 					count = queue->wait_popBulk(tasks, batchSize);
 
 					if (count)
@@ -2170,8 +2152,9 @@ namespace HSLL
 				{
 					unsigned int round = 1;
 					unsigned int size = queue->get_exact_size();
-					while (size < batchSize && round < batchSize)
+					while (size < batchSize && round < batchSize / 2)
 					{
+						std::this_thread::yield();
 						std::this_thread::yield();
 						size = queue->get_exact_size();
 						round++;
