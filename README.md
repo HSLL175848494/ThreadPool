@@ -162,3 +162,8 @@ graph LR
 - 📂 single_header_version-------单头文件版本
 - 📄 README.md-------------------中文项目说明
 - 📄 README.en.md----------------英文项目说明
+
+## 其它
+
+尽管我尝试使用无锁队列替换原版本中的队列，但在单生产者性能测试中并未观察到明显的性能提升。  
+**无锁队列替换版本**：[LFThreadPool](https://github.com/HSLL175848494/LFThreadPool)

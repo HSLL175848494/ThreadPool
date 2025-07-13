@@ -160,3 +160,8 @@ graph LR
 - 📂 single_header_version-------Single-Header Version
 - 📄 README.md-------------------Project Documentation (Chinese)
 - 📄 README.en.md----------------Project Documentation (English)
+
+## Others  
+
+Although I attempted to replace the queue in the original version with a lock-free queue, no significant performance improvement was observed in the single-producer performance tests.  
+**Lock-free queue replacement version**: [LFThreadPool](https://github.com/HSLL175848494/LFThreadPool)
