@@ -1204,7 +1204,7 @@ namespace HSLL
 		template <BULK_CMETHOD METHOD = COPY, INSERT_POS POS = TAIL>
 		unsigned int pushBulk(TYPE* part1, unsigned int count1, TYPE* part2, unsigned int count2)
 		{
-			assert(part1 && part1 && count1 && count2);
+			assert(part1 && part2 && count1);
 
 			std::unique_lock<std::mutex> lock(dataMutex);
 
