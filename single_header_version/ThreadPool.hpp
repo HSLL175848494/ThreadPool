@@ -1357,14 +1357,19 @@ namespace HSLL
 			return size.load(std::memory_order_relaxed);
 		}
 
+		unsigned int get_exact_size()
+		{
+			return size.load(std::memory_order_acquire);
+		}
+
 		unsigned int is_Stopped()
 		{
 			return isStopped;
 		}
 
-		unsigned int get_exact_size()
+		unsigned long long get_bsize()
 		{
-			return size.load(std::memory_order_acquire);
+			return (unsigned long long)border - (unsigned long long)memoryBlock;
 		}
 
 		/**
@@ -1526,9 +1531,9 @@ namespace HSLL
 	};
 
 	/**
-	* @brief Thread pool implementation with multiple queues for task distribution
-	* @tparam T Type of task objects to be processed, must implement execute() method
-	*/
+	 * @brief Thread pool implementation with multiple queues for task distribution
+	 * @tparam T Type of task objects to be processed, must implement execute() method
+	 */
 	template <class T = TaskStack<>>
 	class ThreadPool
 	{
@@ -1836,47 +1841,10 @@ namespace HSLL
 			return select_queue().template wait_pushBulk<METHOD, POS>(tasks, count, timeout);
 		}
 
-		/**
-		 * @brief Stops all workers and releases resources
-		 * @param shutdownPolicy true for graceful shutdown (waiting for tasks to complete), false for immediate shutdown
-		 */
-		void exit(bool shutdownPolicy = true) noexcept
+		//Get the maximum occupied space of the thread pool.
+		unsigned long long get_max_usage()
 		{
-			if (queues)
-			{
-				if (maxThreadNum > 1)
-				{
-					exitFlag = true;
-					exitSem.release();
-					monitor.join();
-
-					for (unsigned i = 0; i < workers.size(); ++i)
-						startSem[i].release();
-				}
-
-				this->shutdownPolicy = shutdownPolicy;
-
-				for (unsigned i = 0; i < workers.size(); ++i)
-					queues[i].stopWait();
-
-				for (auto& worker : workers)
-					worker.join();
-
-				workers.clear();
-				workers.shrink_to_fit();
-
-				if (maxThreadNum > 1)
-				{
-					delete[] stopSem;
-					delete[] startSem;
-				}
-
-				for (unsigned i = 0; i < maxThreadNum; ++i)
-					queues[i].~TPBlockQueue<T>();
-
-				ALIGNED_FREE(queues);
-				queues = nullptr;
-			}
+			return  maxThreadNum * queues->get_bsize();
 		}
 
 		/**
@@ -1938,6 +1906,49 @@ namespace HSLL
 					return;
 				else
 					std::this_thread::sleep_for(interval);
+			}
+		}
+
+		/**
+		 * @brief Stops all workers and releases resources
+		 * @param shutdownPolicy true for graceful shutdown (waiting for tasks to complete), false for immediate shutdown
+		 */
+		void exit(bool shutdownPolicy = true) noexcept
+		{
+			if (queues)
+			{
+				if (maxThreadNum > 1)
+				{
+					exitFlag = true;
+					exitSem.release();
+					monitor.join();
+
+					for (unsigned i = 0; i < workers.size(); ++i)
+						startSem[i].release();
+				}
+
+				this->shutdownPolicy = shutdownPolicy;
+
+				for (unsigned i = 0; i < workers.size(); ++i)
+					queues[i].stopWait();
+
+				for (auto& worker : workers)
+					worker.join();
+
+				workers.clear();
+				workers.shrink_to_fit();
+
+				if (maxThreadNum > 1)
+				{
+					delete[] stopSem;
+					delete[] startSem;
+				}
+
+				for (unsigned i = 0; i < maxThreadNum; ++i)
+					queues[i].~TPBlockQueue<T>();
+
+				ALIGNED_FREE(queues);
+				queues = nullptr;
 			}
 		}
 
@@ -2116,19 +2127,34 @@ namespace HSLL
 
 		void process_bulk(TPBlockQueue<T>* queue, unsigned int index, unsigned batchSize) noexcept
 		{
+			T* tasks;
 			unsigned int count;
-			T* tasks = (T*)ALIGNED_MALLOC(sizeof(T) * batchSize, alignof(T));
 
-			if (!tasks)
-			{
-				process_single(queue, index);
-				return;
-			}
+			if (!(tasks = (T*)ALIGNED_MALLOC(sizeof(T) * batchSize, alignof(T))))
+				std::abort();
 
 			if (maxThreadNum == 1)
 			{
 				while (true)
 				{
+					while (true)
+					{
+						unsigned int round = 1;
+						unsigned int size = queue->get_exact_size();
+						while (size < batchSize && round < batchSize / 2)
+						{
+							std::this_thread::yield();
+							size = queue->get_exact_size();
+							round++;
+							std::this_thread::yield();
+						}
+
+						if (size && (count = queue->popBulk(tasks, batchSize)))
+							execute_tasks(tasks, count);
+						else
+							break;
+					}
+
 					count = queue->wait_popBulk(tasks, batchSize);
 
 					if (count)
@@ -2150,18 +2176,23 @@ namespace HSLL
 			{
 				while (true)
 				{
-					unsigned int round = 1;
-					unsigned int size = queue->get_exact_size();
-					while (size < batchSize && round < batchSize / 2)
+					while (true)
 					{
-						std::this_thread::yield();
-						std::this_thread::yield();
-						size = queue->get_exact_size();
-						round++;
-					}
+						unsigned int round = 1;
+						unsigned int size = queue->get_exact_size();
+						while (size < batchSize && round < batchSize / 2)
+						{
+							std::this_thread::yield();
+							size = queue->get_exact_size();
+							round++;
+							std::this_thread::yield();
+						}
 
-					if (size && (count = queue->popBulk(tasks, batchSize)))
-						execute_tasks(tasks, count);
+						if (size && (count = queue->popBulk(tasks, batchSize)))
+							execute_tasks(tasks, count);
+						else
+							break;
+					}
 
 					count = stealer.steal(tasks);
 					if (count)
@@ -2303,11 +2334,22 @@ namespace HSLL
 			unsigned int start = (index - size + BATCH) % BATCH;
 			unsigned int len1 = (start + size <= BATCH) ? size : (BATCH - start);
 			unsigned int len2 = size - len1;
+			unsigned int submitted;
 
-			unsigned int submitted = pool->template enqueue_bulk<MOVE, POS>(
-				elements + start, len1,
-				elements, len2
-			);
+			if (!len2)
+			{
+				if (len1 == 1)
+					submitted = pool->template enqueue<POS>(std::move(*(elements + start))) ? 1 : 0;
+				else
+					submitted = pool->template enqueue_bulk<MOVE, POS>(elements + start, len1);
+			}
+			else
+			{
+				submitted = pool->template enqueue_bulk<MOVE, POS>(
+					elements + start, len1,
+					elements, len2
+				);
+			}
 
 			if (submitted > 0)
 			{

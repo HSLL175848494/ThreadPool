@@ -635,14 +635,19 @@ namespace HSLL
 			return size.load(std::memory_order_relaxed);
 		}
 
+		unsigned int get_exact_size()
+		{
+			return size.load(std::memory_order_acquire);
+		}
+
 		unsigned int is_Stopped()
 		{
 			return isStopped;
 		}
 
-		unsigned int get_exact_size()
+		unsigned long long get_bsize()
 		{
-			return size.load(std::memory_order_acquire);
+			return (unsigned long long)border - (unsigned long long)memoryBlock;
 		}
 
 		/**
