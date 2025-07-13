@@ -121,7 +121,7 @@ int main()
 	printf("%-20s: %d\n", "Producer Threads", PRODUCER);
 	printf("%-20s: %d\n", "Worker Threads", WORKER);
 	printf("%-20s: %d\n", "Queue Length", QUEUELEN);
-	printf("%-20s: %lu\n", "Max memory Usage", pool.get_max_usage());
+	printf("%-20s: %llu\n", "Max memory Usage", pool.get_max_usage());
 	printf("%-20s: %d\n", "Tasks per Producer", PEER);
 	printf("%-20s: %lld\n", "Total Tasks", total_tasks);
 
