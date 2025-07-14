@@ -332,8 +332,6 @@ namespace HSLL
 
 		TPBlockQueue() : memoryBlock(nullptr), isStopped(0) {}
 
-		~TPBlockQueue() { release(); }
-
 		/**
 		 * @brief Initializes queue with fixed capacity
 		 */
@@ -363,6 +361,7 @@ namespace HSLL
 		template <INSERT_POS POS = TAIL, typename... Args>
 		bool emplace(Args &&...args)
 		{
+			assert(memoryBlock);
 			std::unique_lock<std::mutex> lock(dataMutex);
 
 			if (UNLIKELY(size.load(std::memory_order_relaxed) == maxSize))
@@ -379,6 +378,7 @@ namespace HSLL
 		typename std::enable_if<!is_generic_dr<typename std::tuple_element<0, std::tuple<Args...>>::type>::value, bool>::type
 			wait_emplace(Args &&...args)
 		{
+			assert(memoryBlock);
 			std::unique_lock<std::mutex> lock(dataMutex);
 
 			notFullCond.wait(lock, [this]
@@ -397,6 +397,7 @@ namespace HSLL
 		template <INSERT_POS POS = TAIL, class Rep, class Period, typename... Args>
 		bool wait_emplace(const std::chrono::duration<Rep, Period>& timeout, Args &&...args)
 		{
+			assert(memoryBlock);
 			std::unique_lock<std::mutex> lock(dataMutex);
 
 			bool success = notFullCond.wait_for(lock, timeout, [this]
@@ -415,6 +416,7 @@ namespace HSLL
 		template <INSERT_POS POS = TAIL, class T>
 		bool push(T&& element)
 		{
+			assert(memoryBlock);
 			std::unique_lock<std::mutex> lock(dataMutex);
 
 			if (UNLIKELY(size.load(std::memory_order_relaxed) == maxSize))
@@ -430,6 +432,7 @@ namespace HSLL
 		template <INSERT_POS POS = TAIL, class T>
 		bool wait_push(T&& element)
 		{
+			assert(memoryBlock);
 			std::unique_lock<std::mutex> lock(dataMutex);
 
 			notFullCond.wait(lock, [this]
@@ -448,6 +451,7 @@ namespace HSLL
 		template <INSERT_POS POS = TAIL, class T, class Rep, class Period>
 		bool wait_push(T&& element, const std::chrono::duration<Rep, Period>& timeout)
 		{
+			assert(memoryBlock);
 			std::unique_lock<std::mutex> lock(dataMutex);
 
 			bool success = notFullCond.wait_for(lock, timeout, [this]
@@ -466,8 +470,8 @@ namespace HSLL
 		template <BULK_CMETHOD METHOD = COPY, INSERT_POS POS = TAIL>
 		unsigned int pushBulk(TYPE* elements, unsigned int count)
 		{
+			assert(memoryBlock);
 			assert(elements && count);
-
 			std::unique_lock<std::mutex> lock(dataMutex);
 
 			if (UNLIKELY(!(maxSize - size.load(std::memory_order_relaxed))))
@@ -482,8 +486,8 @@ namespace HSLL
 		template <BULK_CMETHOD METHOD = COPY, INSERT_POS POS = TAIL>
 		unsigned int pushBulk(TYPE* part1, unsigned int count1, TYPE* part2, unsigned int count2)
 		{
+			assert(memoryBlock);
 			assert(part1 && part2 && count1);
-
 			std::unique_lock<std::mutex> lock(dataMutex);
 
 			if (UNLIKELY(!(maxSize - size.load(std::memory_order_relaxed))))
@@ -498,8 +502,8 @@ namespace HSLL
 		template <BULK_CMETHOD METHOD = COPY, INSERT_POS POS = TAIL>
 		unsigned int wait_pushBulk(TYPE* elements, unsigned int count)
 		{
+			assert(memoryBlock);
 			assert(elements && count);
-
 			std::unique_lock<std::mutex> lock(dataMutex);
 
 			notFullCond.wait(lock, [this]
@@ -517,8 +521,8 @@ namespace HSLL
 		template <BULK_CMETHOD METHOD = COPY, INSERT_POS POS = TAIL, class Rep, class Period>
 		unsigned int wait_pushBulk(TYPE* elements, unsigned int count, const std::chrono::duration<Rep, Period>& timeout)
 		{
+			assert(memoryBlock);
 			assert(elements && count);
-
 			std::unique_lock<std::mutex> lock(dataMutex);
 
 			bool success = notFullCond.wait_for(lock, timeout, [this]
@@ -535,6 +539,7 @@ namespace HSLL
 		 */
 		bool pop(TYPE& element)
 		{
+			assert(memoryBlock);
 			std::unique_lock<std::mutex> lock(dataMutex);
 
 			if (UNLIKELY(!size.load(std::memory_order_relaxed)))
@@ -549,6 +554,7 @@ namespace HSLL
 		 */
 		bool wait_pop(TYPE& element)
 		{
+			assert(memoryBlock);
 			std::unique_lock<std::mutex> lock(dataMutex);
 
 			notEmptyCond.wait(lock, [this]
@@ -567,6 +573,7 @@ namespace HSLL
 		template <class Rep, class Period>
 		bool wait_pop(TYPE& element, const std::chrono::duration<Rep, Period>& timeout)
 		{
+			assert(memoryBlock);
 			std::unique_lock<std::mutex> lock(dataMutex);
 
 			bool success = notEmptyCond.wait_for(lock, timeout, [this]
@@ -584,8 +591,8 @@ namespace HSLL
 		 */
 		unsigned int popBulk(TYPE* elements, unsigned int count)
 		{
+			assert(memoryBlock);
 			assert(elements && count);
-
 			std::unique_lock<std::mutex> lock(dataMutex);
 
 			if (UNLIKELY(!size.load(std::memory_order_relaxed)))
@@ -599,8 +606,8 @@ namespace HSLL
 		 */
 		unsigned int wait_popBulk(TYPE* elements, unsigned int count)
 		{
+			assert(memoryBlock);
 			assert(elements && count);
-
 			std::unique_lock<std::mutex> lock(dataMutex);
 
 			notEmptyCond.wait(lock, [this]
@@ -618,9 +625,10 @@ namespace HSLL
 		template <class Rep, class Period>
 		unsigned int wait_popBulk(TYPE* elements, unsigned int count, const std::chrono::duration<Rep, Period>& timeout)
 		{
+			assert(memoryBlock);
 			assert(elements && count);
-
 			std::unique_lock<std::mutex> lock(dataMutex);
+
 			bool success = notEmptyCond.wait_for(lock, timeout, [this]
 				{ return LIKELY(size.load(std::memory_order_relaxed)) || UNLIKELY(isStopped); });
 
@@ -632,21 +640,25 @@ namespace HSLL
 
 		unsigned int get_size()
 		{
+			assert(memoryBlock);
 			return size.load(std::memory_order_relaxed);
 		}
 
 		unsigned int get_exact_size()
 		{
+			assert(memoryBlock);
 			return size.load(std::memory_order_acquire);
 		}
 
 		unsigned int is_Stopped()
 		{
+			assert(memoryBlock);
 			return isStopped;
 		}
 
 		unsigned long long get_bsize()
 		{
+			assert(memoryBlock);
 			return (unsigned long long)border - (unsigned long long)memoryBlock;
 		}
 
@@ -655,6 +667,8 @@ namespace HSLL
 		 */
 		void stopWait()
 		{
+			assert(memoryBlock);
+
 			{
 				std::lock_guard<std::mutex> lock(dataMutex);
 				isStopped = 1;
@@ -669,26 +683,30 @@ namespace HSLL
 		 */
 		void release()
 		{
-			if (memoryBlock)
+			assert(memoryBlock);
+			TYPE* current = dataListHead;
+			for (unsigned int i = 0; i < size; ++i)
 			{
-				TYPE* current = dataListHead;
-				for (unsigned int i = 0; i < size; ++i)
-				{
-					current->~TYPE();
-					current = (TYPE*)((char*)current + sizeof(TYPE));
-					if ((uintptr_t)(current) == border)
-						current = (TYPE*)(memoryBlock);
-				}
-
-				ALIGNED_FREE(memoryBlock);
-
-				size = 0;
-				maxSize = 0;
-				isStopped = 0;
-				memoryBlock = nullptr;
-				dataListHead = nullptr;
-				dataListTail = nullptr;
+				current->~TYPE();
+				current = (TYPE*)((char*)current + sizeof(TYPE));
+				if ((uintptr_t)(current) == border)
+					current = (TYPE*)(memoryBlock);
 			}
+
+			ALIGNED_FREE(memoryBlock);
+
+			size = 0;
+			maxSize = 0;
+			isStopped = 0;
+			memoryBlock = nullptr;
+			dataListHead = nullptr;
+			dataListTail = nullptr;
+		}
+
+		~TPBlockQueue()
+		{
+			if (memoryBlock)
+				release();
 		}
 
 		// Disable copying
