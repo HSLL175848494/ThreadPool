@@ -21,11 +21,11 @@ void testC() {
 
 #define WORKER 8
 #define PRODUCER 1
-#define SUBMIT_BATCH 1
+#define SUBMIT_BATCH 32
 #define PROCESS_BATCH 32
-#define PEER 10000000
+#define PEER 10000
 #define TSIZE 24
-#define QUEUELEN 8192
+#define QUEUELEN 2
 #define FUNC testC
 
 using namespace HSLL;
@@ -61,8 +61,10 @@ void single_submit_worker()
 
 	while (remaining > 0)
 	{
-		pool.wait_emplace(FUNC);
-		remaining--;
+		if (pool.emplace(FUNC))
+			remaining--;
+		else
+			std::this_thread::yield();
 	}
 }
 
@@ -125,10 +127,12 @@ int main()
 	printf("%-20s: %d\n", "Tasks per Producer", PEER);
 	printf("%-20s: %lld\n", "Total Tasks", total_tasks);
 
+
 	// Single task submission test
 	double single_time = test_single_submit();
 	double single_throughput = total_tasks / (single_time / 1000.0) / 1000000.0;		 // M/s
 	double single_time_per_million = (single_time / 1000.0) / (total_tasks / 1000000.0); // s/M
+
 
 	// Batch submission test
 	double bulk_time = test_bulk_submit();
