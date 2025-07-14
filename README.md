@@ -165,5 +165,5 @@ graph LR
 
 ## 其它
 
-尽管我尝试使用无锁队列替换原版本中的队列，但在单生产者性能测试中并未观察到明显的性能提升。  
-**无锁队列替换版本**：[LFThreadPool](https://github.com/HSLL175848494/LFThreadPool)
+> 我尝试用无锁队列替换当前线程池中的队列，实现了 **[LFThreadPool](https://github.com/HSLL175848494/LFThreadPool)**。
+在不同批处理规模及生产者/消费者线程数量下，新方案与原版线程池各有优劣。
