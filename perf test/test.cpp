@@ -19,13 +19,13 @@ void testC() {
 
 }
 
-#define WORKER 8
-#define PRODUCER 1
-#define SUBMIT_BATCH 32
+#define WORKER 2
+#define PRODUCER 8
+#define SUBMIT_BATCH 1
 #define PROCESS_BATCH 32
-#define PEER 10000
+#define PEER 10000000/PRODUCER
 #define TSIZE 24
-#define QUEUELEN 2
+#define QUEUELEN 8192
 #define FUNC testC
 
 using namespace HSLL;
