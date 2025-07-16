@@ -1441,11 +1441,11 @@ namespace HSLL
 	};
 }
 
-#define HSLL_THREADPOOL_TIMEOUT 5
+#define HSLL_THREADPOOL_TIMEOUT_MILLISECONDS 5
 #define HSLL_THREADPOOL_SHRINK_FACTOR 0.25
 #define HSLL_THREADPOOL_EXPAND_FACTOR 0.75
 
-static_assert(HSLL_THREADPOOL_TIMEOUT > 0, "Invalid timeout value.");
+static_assert(HSLL_THREADPOOL_TIMEOUT_MILLISECONDS > 0, "Invalid timeout value.");
 static_assert(HSLL_THREADPOOL_SHRINK_FACTOR < HSLL_THREADPOOL_EXPAND_FACTOR&& HSLL_THREADPOOL_EXPAND_FACTOR < 1.0
 	&& HSLL_THREADPOOL_SHRINK_FACTOR>0.0, "Invalid factors.");
 
@@ -1525,7 +1525,7 @@ namespace HSLL
 			this->batchSize = batchSize;
 			this->queueLength = queueLength;
 			this->threadNum = threadNum;
-			this->threshold = std::min(2 * batchSize, queueLength);
+			this->threshold = std::min(2 * batchSize, queueLength / 2);
 			this->rwLock = rwLock;
 			this->queues = queues;
 			this->ignore = ignore;
@@ -2068,7 +2068,7 @@ namespace HSLL
 						task->~T();
 					}
 
-					if (queue->wait_pop(*task, std::chrono::milliseconds(HSLL_THREADPOOL_TIMEOUT)))
+					if (queue->wait_pop(*task, std::chrono::milliseconds(HSLL_THREADPOOL_TIMEOUT_MILLISECONDS)))
 					{
 						task->execute();
 						task->~T();
@@ -2116,7 +2116,7 @@ namespace HSLL
 					}
 					else
 					{
-						if (queue->wait_pop(*task, std::chrono::milliseconds(HSLL_THREADPOOL_TIMEOUT)))
+						if (queue->wait_pop(*task, std::chrono::milliseconds(HSLL_THREADPOOL_TIMEOUT_MILLISECONDS)))
 						{
 							task->execute();
 							task->~T();
@@ -2174,7 +2174,7 @@ namespace HSLL
 							break;
 					}
 
-					count = queue->wait_popBulk(tasks, size_threshold, std::chrono::milliseconds(HSLL_THREADPOOL_TIMEOUT));
+					count = queue->wait_popBulk(tasks, size_threshold, std::chrono::milliseconds(HSLL_THREADPOOL_TIMEOUT_MILLISECONDS));
 
 					if (count)
 						execute_tasks(tasks, count);
@@ -2235,7 +2235,7 @@ namespace HSLL
 					}
 					else
 					{
-						count = queue->wait_popBulk(tasks, size_threshold, std::chrono::milliseconds(HSLL_THREADPOOL_TIMEOUT));
+						count = queue->wait_popBulk(tasks, size_threshold, std::chrono::milliseconds(HSLL_THREADPOOL_TIMEOUT_MILLISECONDS));
 
 						if (count)
 							execute_tasks(tasks, count);
