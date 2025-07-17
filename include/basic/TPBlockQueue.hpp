@@ -127,7 +127,6 @@ namespace HSLL
 		std::condition_variable notEmptyCond; ///< Signaled when data becomes available
 		std::condition_variable notFullCond;  ///< Signaled when space becomes available
 
-		// Helper functions for pointer movement
 		void move_tail_next()
 		{
 			dataListTail = (TYPE*)((char*)dataListTail + sizeof(TYPE));
@@ -166,21 +165,21 @@ namespace HSLL
 		}
 
 		template <class T>
-		void push_impl(InsertAtTailTag, T&& element)
+		void enqueue_impl(InsertAtTailTag, T&& element)
 		{
 			new (dataListTail) TYPE(std::forward<T>(element));
 			move_tail_next();
 		}
 
 		template <class T>
-		void push_impl(InsertAtHeadTag, T&& element)
+		void enqueue_impl(InsertAtHeadTag, T&& element)
 		{
 			move_head_prev();
 			new (dataListHead) TYPE(std::forward<T>(element));
 		}
 
 		template <BULK_CMETHOD METHOD>
-		void bulk_push_impl(InsertAtTailTag, TYPE* elements, unsigned int toPush)
+		void enqueue_bulk_impl(InsertAtTailTag, TYPE* elements, unsigned int toPush)
 		{
 			for (unsigned int i = 0; i < toPush; ++i)
 			{
@@ -190,7 +189,7 @@ namespace HSLL
 		}
 
 		template <BULK_CMETHOD METHOD>
-		void bulk_push_impl(InsertAtHeadTag, TYPE* elements, unsigned int toPush)
+		void enqueue_bulk_impl(InsertAtHeadTag, TYPE* elements, unsigned int toPush)
 		{
 			for (unsigned int i = 0; i < toPush; ++i)
 			{
@@ -200,7 +199,7 @@ namespace HSLL
 		}
 
 		template <BULK_CMETHOD METHOD>
-		void bulk_push_impl(InsertAtTailTag, TYPE* part1, unsigned int count1, TYPE* part2, unsigned int count2)
+		void enqueue_bulk_impl(InsertAtTailTag, TYPE* part1, unsigned int count1, TYPE* part2, unsigned int count2)
 		{
 			for (unsigned int i = 0; i < count1; ++i)
 			{
@@ -216,7 +215,7 @@ namespace HSLL
 		}
 
 		template <BULK_CMETHOD METHOD>
-		void bulk_push_impl(InsertAtHeadTag, TYPE* part1, unsigned int count1, TYPE* part2, unsigned int count2)
+		void enqueue_bulk_impl(InsertAtHeadTag, TYPE* part1, unsigned int count1, TYPE* part2, unsigned int count2)
 		{
 			for (unsigned int i = 0; i < count1; ++i)
 			{
@@ -242,22 +241,22 @@ namespace HSLL
 		}
 
 		template <INSERT_POS POS, class T>
-		void push_helper(std::unique_lock<std::mutex>& lock, T&& element)
+		void enqueue_helper(std::unique_lock<std::mutex>& lock, T&& element)
 		{
 			size.fetch_add(1, std::memory_order_release);
 			using InsertTag = typename std::conditional<POS == HEAD, InsertAtHeadTag, InsertAtTailTag>::type;
-			push_impl(InsertTag(), std::forward<T>(element));
+			enqueue_impl(InsertTag(), std::forward<T>(element));
 			lock.unlock();
 			notEmptyCond.notify_one();
 		}
 
 		template <BULK_CMETHOD METHOD, INSERT_POS POS>
-		unsigned int pushBulk_helper(std::unique_lock<std::mutex>& lock, TYPE* elements, unsigned int count)
+		unsigned int enqueue_bulk_helper(std::unique_lock<std::mutex>& lock, TYPE* elements, unsigned int count)
 		{
 			unsigned int toPush = std::min(count, maxSize - size.load(std::memory_order_relaxed));
 			size.fetch_add(toPush, std::memory_order_release);
 			using InsertTag = typename std::conditional<POS == HEAD, InsertAtHeadTag, InsertAtTailTag>::type;
-			bulk_push_impl<METHOD>(InsertTag(), elements, toPush);
+			enqueue_bulk_impl<METHOD>(InsertTag(), elements, toPush);
 			lock.unlock();
 
 			if (UNLIKELY(toPush == 1))
@@ -268,7 +267,7 @@ namespace HSLL
 		}
 
 		template <BULK_CMETHOD METHOD, INSERT_POS POS>
-		unsigned int pushBulk_helper(std::unique_lock<std::mutex>& lock,
+		unsigned int enqueue_bulk_helper(std::unique_lock<std::mutex>& lock,
 			TYPE* part1, unsigned int count1, TYPE* part2, unsigned int count2)
 		{
 			unsigned int toPush = std::min(count1 + count2, maxSize - size.load(std::memory_order_relaxed));
@@ -276,9 +275,9 @@ namespace HSLL
 			using InsertTag = typename std::conditional<POS == HEAD, InsertAtHeadTag, InsertAtTailTag>::type;
 
 			if (toPush > count1)
-				bulk_push_impl<METHOD>(InsertTag(), part1, count1, part2, toPush - count1);
+				enqueue_bulk_impl<METHOD>(InsertTag(), part1, count1, part2, toPush - count1);
 			else
-				bulk_push_impl<METHOD>(InsertTag(), part1, toPush);
+				enqueue_bulk_impl<METHOD>(InsertTag(), part1, toPush);
 
 			lock.unlock();
 
@@ -289,22 +288,22 @@ namespace HSLL
 			return toPush;
 		}
 
-		void pop_helper(std::unique_lock<std::mutex>& lock, TYPE& element)
+		void dequeue_helper(std::unique_lock<std::mutex>& lock, TYPE& element)
 		{
 			size.fetch_sub(1, std::memory_order_release);
-			move_element_pop(element, *dataListHead);
+			move_element_dequeue(element, *dataListHead);
 			move_head_next();
 			lock.unlock();
 			notFullCond.notify_one();
 		}
 
-		unsigned int popbulk_helper(std::unique_lock<std::mutex>& lock, TYPE* elements, unsigned int count)
+		unsigned int dequeue_bulk_helper(std::unique_lock<std::mutex>& lock, TYPE* elements, unsigned int count)
 		{
 			unsigned int toPop = std::min(count, size.load(std::memory_order_relaxed));
 			size.fetch_sub(toPop, std::memory_order_release);
 			for (unsigned int i = 0; i < toPop; ++i)
 			{
-				move_element_pop(elements[i], *dataListHead);
+				move_element_dequeue(elements[i], *dataListHead);
 				move_head_next();
 			}
 			lock.unlock();
@@ -316,13 +315,13 @@ namespace HSLL
 			return toPop;
 		}
 
-		void move_element_push(TYPE& dst, TYPE& src)
+		void move_element_enqueue(TYPE& dst, TYPE& src)
 		{
 			new (&dst) TYPE(std::move(src));
 			src.~TYPE();
 		}
 
-		void move_element_pop(TYPE& dst, TYPE& src)
+		void move_element_dequeue(TYPE& dst, TYPE& src)
 		{
 			new (&dst) TYPE(std::move(src));
 			src.~TYPE();
@@ -332,9 +331,6 @@ namespace HSLL
 
 		TPBlockQueue() : memoryBlock(nullptr), isStopped(0) {}
 
-		/**
-		 * @brief Initializes queue with fixed capacity
-		 */
 		bool init(unsigned int capacity)
 		{
 			if (memoryBlock || !capacity)
@@ -355,9 +351,6 @@ namespace HSLL
 			return true;
 		}
 
-		/**
-		 * @brief Non-blocking element emplacement with perfect forwarding
-		 */
 		template <INSERT_POS POS = TAIL, typename... Args>
 		bool emplace(Args &&...args)
 		{
@@ -371,9 +364,6 @@ namespace HSLL
 			return true;
 		}
 
-		/**
-		 * @brief Blocking element emplacement with indefinite wait
-		 */
 		template <INSERT_POS POS = TAIL, typename... Args>
 		typename std::enable_if<!is_generic_dr<typename std::tuple_element<0, std::tuple<Args...>>::type>::value, bool>::type
 			wait_emplace(Args &&...args)
@@ -391,9 +381,6 @@ namespace HSLL
 			return true;
 		}
 
-		/**
-		 * @brief Blocking element emplacement with timeout
-		 */
 		template <INSERT_POS POS = TAIL, class Rep, class Period, typename... Args>
 		bool wait_emplace(const std::chrono::duration<Rep, Period>& timeout, Args &&...args)
 		{
@@ -410,11 +397,8 @@ namespace HSLL
 			return true;
 		}
 
-		/**
-		 * @brief Non-blocking element push
-		 */
 		template <INSERT_POS POS = TAIL, class T>
-		bool push(T&& element)
+		bool enqueue(T&& element)
 		{
 			assert(memoryBlock);
 			std::unique_lock<std::mutex> lock(dataMutex);
@@ -422,15 +406,12 @@ namespace HSLL
 			if (UNLIKELY(size.load(std::memory_order_relaxed) == maxSize))
 				return false;
 
-			push_helper<POS>(lock, std::forward<T>(element));
+			enqueue_helper<POS>(lock, std::forward<T>(element));
 			return true;
 		}
 
-		/**
-		 * @brief Blocking element push with indefinite wait
-		 */
 		template <INSERT_POS POS = TAIL, class T>
-		bool wait_push(T&& element)
+		bool wait_enqueue(T&& element)
 		{
 			assert(memoryBlock);
 			std::unique_lock<std::mutex> lock(dataMutex);
@@ -441,15 +422,12 @@ namespace HSLL
 			if (UNLIKELY(isStopped))
 				return false;
 
-			push_helper<POS>(lock, std::forward<T>(element));
+			enqueue_helper<POS>(lock, std::forward<T>(element));
 			return true;
 		}
 
-		/**
-		 * @brief Blocking element push with timeout
-		 */
 		template <INSERT_POS POS = TAIL, class T, class Rep, class Period>
-		bool wait_push(T&& element, const std::chrono::duration<Rep, Period>& timeout)
+		bool wait_enqueue(T&& element, const std::chrono::duration<Rep, Period>& timeout)
 		{
 			assert(memoryBlock);
 			std::unique_lock<std::mutex> lock(dataMutex);
@@ -460,15 +438,12 @@ namespace HSLL
 			if (UNLIKELY(!success || isStopped))
 				return false;
 
-			push_helper<POS>(lock, std::forward<T>(element));
+			enqueue_helper<POS>(lock, std::forward<T>(element));
 			return true;
 		}
 
-		/**
-		 * @brief Bulk push for multiple elements
-		 */
 		template <BULK_CMETHOD METHOD = COPY, INSERT_POS POS = TAIL>
-		unsigned int pushBulk(TYPE* elements, unsigned int count)
+		unsigned int enqueue_bulk(TYPE* elements, unsigned int count)
 		{
 			assert(memoryBlock);
 			assert(elements && count);
@@ -477,34 +452,28 @@ namespace HSLL
 			if (UNLIKELY(!(maxSize - size.load(std::memory_order_relaxed))))
 				return 0;
 
-			return pushBulk_helper<METHOD, POS>(lock, elements, count);
+			return enqueue_bulk_helper<METHOD, POS>(lock, elements, count);
 		}
 
-		/**
-		 * @brief Bulk push for multiple elements
-		 */
 		template <BULK_CMETHOD METHOD = COPY, INSERT_POS POS = TAIL>
-		unsigned int pushBulk(TYPE* part1, unsigned int count1, TYPE* part2, unsigned int count2)
+		unsigned int enqueue_bulk(TYPE* part1, unsigned int count1, TYPE* part2, unsigned int count2)
 		{
 			assert(memoryBlock);
 			assert(part1 && count1);
 
 			if (!part2 || !count2)
-				return pushBulk<METHOD, POS>(part1, count1);
+				return enqueue_bulk<METHOD, POS>(part1, count1);
 
 			std::unique_lock<std::mutex> lock(dataMutex);
 
 			if (UNLIKELY(!(maxSize - size.load(std::memory_order_relaxed))))
 				return 0;
 
-			return pushBulk_helper<METHOD, POS>(lock, part1, count1, part2, count2);
+			return enqueue_bulk_helper<METHOD, POS>(lock, part1, count1, part2, count2);
 		}
 
-		/**
-		 * @brief Blocking bulk push with indefinite wait
-		 */
 		template <BULK_CMETHOD METHOD = COPY, INSERT_POS POS = TAIL>
-		unsigned int wait_pushBulk(TYPE* elements, unsigned int count)
+		unsigned int wait_enqueue_bulk(TYPE* elements, unsigned int count)
 		{
 			assert(memoryBlock);
 			assert(elements && count);
@@ -516,14 +485,11 @@ namespace HSLL
 			if (UNLIKELY(isStopped))
 				return 0;
 
-			return pushBulk_helper<METHOD, POS>(lock, elements, count);
+			return enqueue_bulk_helper<METHOD, POS>(lock, elements, count);
 		}
 
-		/**
-		 * @brief Blocking bulk push with timeout
-		 */
 		template <BULK_CMETHOD METHOD = COPY, INSERT_POS POS = TAIL, class Rep, class Period>
-		unsigned int wait_pushBulk(TYPE* elements, unsigned int count, const std::chrono::duration<Rep, Period>& timeout)
+		unsigned int wait_enqueue_bulk(TYPE* elements, unsigned int count, const std::chrono::duration<Rep, Period>& timeout)
 		{
 			assert(memoryBlock);
 			assert(elements && count);
@@ -535,13 +501,10 @@ namespace HSLL
 			if (UNLIKELY(!success || isStopped))
 				return 0;
 
-			return pushBulk_helper<METHOD, POS>(lock, elements, count);
+			return enqueue_bulk_helper<METHOD, POS>(lock, elements, count);
 		}
 
-		/**
-		 * @brief Non-blocking element removal
-		 */
-		bool pop(TYPE& element)
+		bool dequeue(TYPE& element)
 		{
 			assert(memoryBlock);
 			std::unique_lock<std::mutex> lock(dataMutex);
@@ -549,14 +512,11 @@ namespace HSLL
 			if (UNLIKELY(!size.load(std::memory_order_relaxed)))
 				return false;
 
-			pop_helper(lock, element);
+			dequeue_helper(lock, element);
 			return true;
 		}
 
-		/**
-		 * @brief Blocking element removal with indefinite wait
-		 */
-		bool wait_pop(TYPE& element)
+		bool wait_dequeue(TYPE& element)
 		{
 			assert(memoryBlock);
 			std::unique_lock<std::mutex> lock(dataMutex);
@@ -567,15 +527,12 @@ namespace HSLL
 			if (UNLIKELY(isStopped))
 				return false;
 
-			pop_helper(lock, element);
+			dequeue_helper(lock, element);
 			return true;
 		}
 
-		/**
-		 * @brief Blocking element removal with timeout
-		 */
 		template <class Rep, class Period>
-		bool wait_pop(TYPE& element, const std::chrono::duration<Rep, Period>& timeout)
+		bool wait_dequeue(TYPE& element, const std::chrono::duration<Rep, Period>& timeout)
 		{
 			assert(memoryBlock);
 			std::unique_lock<std::mutex> lock(dataMutex);
@@ -586,14 +543,11 @@ namespace HSLL
 			if (UNLIKELY(!success || isStopped))
 				return false;
 
-			pop_helper(lock, element);
+			dequeue_helper(lock, element);
 			return true;
 		}
 
-		/**
-		 * @brief Bulk element retrieval
-		 */
-		unsigned int popBulk(TYPE* elements, unsigned int count)
+		unsigned int dequeue_bulk(TYPE* elements, unsigned int count)
 		{
 			assert(memoryBlock);
 			assert(elements && count);
@@ -602,13 +556,10 @@ namespace HSLL
 			if (UNLIKELY(!size.load(std::memory_order_relaxed)))
 				return 0;
 
-			return popbulk_helper(lock, elements, count);
+			return dequeue_bulk_helper(lock, elements, count);
 		}
 
-		/**
-		 * @brief Blocking bulk retrieval with indefinite wait
-		 */
-		unsigned int wait_popBulk(TYPE* elements, unsigned int count)
+		unsigned int wait_dequeue_bulk(TYPE* elements, unsigned int count)
 		{
 			assert(memoryBlock);
 			assert(elements && count);
@@ -620,14 +571,11 @@ namespace HSLL
 			if (UNLIKELY(isStopped))
 				return 0;
 
-			return popbulk_helper(lock, elements, count);
+			return dequeue_bulk_helper(lock, elements, count);
 		}
 
-		/**
-		 * @brief Blocking bulk retrieval with timeout
-		 */
 		template <class Rep, class Period>
-		unsigned int wait_popBulk(TYPE* elements, unsigned int count, const std::chrono::duration<Rep, Period>& timeout)
+		unsigned int wait_dequeue_bulk(TYPE* elements, unsigned int count, const std::chrono::duration<Rep, Period>& timeout)
 		{
 			assert(memoryBlock);
 			assert(elements && count);
@@ -639,7 +587,7 @@ namespace HSLL
 			if (UNLIKELY(!success || isStopped))
 				return 0;
 
-			return popbulk_helper(lock, elements, count);
+			return dequeue_bulk_helper(lock, elements, count);
 		}
 
 		unsigned int get_size()
@@ -666,9 +614,6 @@ namespace HSLL
 			return (unsigned long long)border - (unsigned long long)memoryBlock;
 		}
 
-		/**
-		 * @brief Signals all waiting threads to stop blocking
-		 */
 		void stopWait()
 		{
 			assert(memoryBlock);
@@ -682,9 +627,6 @@ namespace HSLL
 			notFullCond.notify_all();
 		}
 
-		/**
-		 * @brief Releases all resources and resets queue state
-		 */
 		void release()
 		{
 			assert(memoryBlock);
