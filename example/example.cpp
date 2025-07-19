@@ -1,123 +1,226 @@
-#include"ThreadPool.hpp"
-#include<string>
-#include<future>
+#include "ThreadPool.hpp"
+#include <iostream>
+#include <chrono>
+#include <thread>
+#include <atomic>
 
 using namespace HSLL;
-using Type = TaskStack<64, 8>;
-ThreadPool<Type> pool;
+using TaskType = TaskStack<128, 8>;  // 使用128字节的任务存储
+ThreadPool<TaskType> globalPool;
 
-void TestFunc(std::string& s)
+// 基本函数示例
+void simpleTask(const std::string& msg)
 {
-	printf("%s\n", s.c_str());
+	std::cout << "Simple task: " << msg << std::endl;
 }
 
-void TestBigFunc(double a, double b, double c, double d, double e, double f, double g)
+// 带返回值的函数
+int calculateSum(int a, int b)
 {
-	printf("%s %f\n", "big task:", a);
+	return a + b;
 }
 
-void example_enqueue()
+// 大型函数（参数多）
+void bigTask(int a, double b, const std::string& c, char d, float e)
 {
-	Type task(TestFunc, std::string("example_enqueue"));
-	pool.enqueue(std::move(task));//需要任务每个参数（包括可调用对象）的拷贝或移动可用
-	//pool.enqueue(task);//需要任务每个参数（包括可调用对象）的拷贝可用
+	std::cout << "Big task: " << a << ", " << b << ", " << c << ", " << d << ", " << e << std::endl;
 }
 
-void example_emplace()
+// 任务存储在堆上示例
+void heapExample()
 {
-	pool.emplace(TestFunc, std::string("example_emplace"));
-}
-
-void example_bulk()
-{
-	BatchSubmitter<Type, 4> submitter(&pool);
-
-	for (int i = 0; i < 4; i++)
-	submitter.emplace(TestFunc, std::string("example_bulk") + std::to_string(i));
-
-	//主动提交任务
-	submitter.submit();
-}
-
-void example_async()
-{
-	std::promise<int> promise;
-	auto future = promise.get_future();
-
-	pool.emplace([&promise] {
-
-		int sum = 0;
-
-		for (int i = 1; i <= 100; i++)
-			sum += i;
-
-		promise.set_value(sum);
-
+	//创建堆上任务,返回Callable
+	auto callable = make_callable([]() {
+		std::cout << "Heap task1 completed." << std::endl;
 		});
 
-	int total = future.get();
+	//Callable隐式转化为TaskStack
+	globalPool.enqueue(std::move(callable));
 
-	printf("%s %d\n", "async task:", total);
+	//创建堆上任务,返回TaskStack
+	auto task =TaskType::make_heap([]() {
+		std::cout << "Heap task2 completed." << std::endl;
+		});
+
+	//直接提交TaskStack
+	globalPool.enqueue(std::move(task));
 }
 
-void example_pos_insert()
+// 异步任务示例
+void asyncExample()
 {
-	pool.emplace<INSERT_POS::TAIL>(&TestFunc, std::string("example_insert_tail"));
-	pool.emplace<INSERT_POS::HEAD>(&TestFunc, std::string("example_insert_head"));
+	auto task = make_callable_async<int>(calculateSum, 10, 20);
+	auto future = task.get_future();
+
+	//task隐式转化为TaskType类型(构造函数)
+	globalPool.enqueue(std::move(task));
+
+	try {
+		auto result = future.get();
+		std::cout << "Async result: " << result << std::endl;
+	}
+	catch (const std::exception& e) {
+		std::cerr << "Async error: " << e.what() << std::endl;
+	}
 }
 
-void example_bigtask_callable()
+// 异步任务示例2
+void asyncExample2()
 {
-	double param = 1;
-
-	//超出可容纳范围,静态断言失败
-	//Type task(TestBigFunc,param, param, param, param, param, param, param);
-
-	//创建堆上任务,两步创建
-	auto callable = make_callable(TestBigFunc, param, param, param, param, param, param, param);
-	Type task(callable);
-
-	//一次性创建Type
-	//Type task= Type::make_heap(TestBigFunc, param, param, param, param, param, param, param);
-
-	pool.enqueue(task);
-
+	std::promise<int> promise;
+	globalPool.enqueue([&]() {
+		promise.set_value(666);
+		});
+	std::future<int> future = promise.get_future();
+	std::cout << "Async result2: " << future.get() << std::endl;
 }
 
-void example_bigtask_auto()
+// 可取消任务示例
+void cancelableExample()
 {
-	//当任务无法储存时自动选择创建堆上任务
-	double param = 2;
-	Type task = Type::make_auto(TestBigFunc, param, param, param, param, param, param, param);
-	pool.enqueue(task);
+	auto task = make_callable_cancelable<void>([]() {
+		std::cout << "Cancelable task completed." << std::endl;
+		return;
+		});
+
+	auto controller = task.get_controller();
+	auto future = task.get_future();
+
+	globalPool.enqueue(std::move(task));
+	std::this_thread::sleep_for(std::chrono::nanoseconds(150));
+
+	if (controller.cancel())
+	{
+		std::cout << "Task canceled successfully." << std::endl;
+	}
+	else
+	{
+		std::cout << "Task already started." << std::endl;
+
+		try
+		{
+			future.get();
+			std::cout << "Task finished normally." << std::endl;
+		}
+		catch (const std::exception& e) {
+			std::cerr << "Task canceled: " << e.what() << std::endl;
+		}
+	}
 }
 
-void example_static()
+// 批量任务提交示例
+void batchExample()
 {
-	Type task(TestFunc, std::string("example_static"));
+	BatchSubmitter<TaskType, 10> batch(&globalPool);
 
-	//判断任务是否可拷贝(不含有is_moveable()函数,因为其始终可移动)
-	printf("TestFunc is_copyable: %d\n", task.is_copyable());
+	//BatchSubmitter会在容量已满时自动提交,即第10次
+	for (int i = 0; i < 10; ++i) {
+		batch.emplace([i] {
+			std::cout << "Batch task " << i << std::endl;
+			});
+	}
 
-	//判断是否为有效任务（可储存的任务）
-	printf("TestFunc is_invalid: %d\n", Type::task_invalid<decltype(TestFunc), std::string&>::value);
+	std::cout << "Batch tasks submitted" << std::endl;
+}
 
-	//获取任务实际需要存储空间大小
-	printf("TestFunc size: %d\n", task_stack<decltype(TestFunc), std::string&>::size);
+// 任务插入位置控制
+void positionControlExample()
+{
+	// 尾部插入（低优先级,默认）
+	globalPool.enqueue<INSERT_POS::TAIL>([] {
+		std::cout << "Low priority task (tail)" << std::endl;
+		});
+
+	// 头部插入（高优先级）
+	globalPool.enqueue<INSERT_POS::HEAD>([] {
+		std::cout << "High priority task (head)" << std::endl;
+		});
+}
+
+// 自动选择存储策略
+void storageStrategyExample()
+{
+	// 小任务 - 栈存储
+	TaskType smallTask = TaskType::make_auto([] {
+		std::cout << "Small task (stack storage)" << std::endl;
+		});
+
+	// 大任务 - 堆存储
+	auto lambda = [](const std::string& a, const std::string& b,
+		const std::string& c, const std::string& d) {
+			std::cout << "Big task (heap storage): "
+				<< a << b << c << d << std::endl;
+	};
+
+	globalPool.enqueue(std::move(smallTask));
+
+	//TaskType::task_invalid并不需要需要每个参数都对应原值类型,即使是退化类型如
+	//(const std::string& ->std::string)也是可以的
+	if (!TaskType::task_invalid<decltype(lambda), std::string, std::string, std::string, std::string>::value)
+	{
+		TaskType bigTask = TaskType::make_auto(lambda, "Large", " parameters", " require", " heap allocation");
+		globalPool.enqueue(std::move(bigTask));
+	}
 }
 
 
-int main()
+// 任务属性检查
+void taskPropertiesExample()
 {
-	pool.init(10000, 1, 1, 1);
-	example_enqueue();
-	example_emplace();
-	example_bulk();
-	example_async();
-	example_pos_insert();
-	example_bigtask_callable();
-	example_bigtask_auto();
-	pool.exit(true);
-	example_static();
+	auto lambda = [](int x) { return x * x; };
+
+	// 创建任务
+	TaskType task(lambda, 5);
+
+	// 检查属性
+	std::cout << "Task properties:\n"
+		<< "Storage size: " << sizeof(task) << " bytes\n"
+		<< "Actual size:" << task_stack<decltype(lambda), int>::size << "\n"
+		<< "Copyable: " << (task.is_copyable() ? "Yes" : "No") << "\n"
+		<< "Moveable: " << (task.is_moveable() ? "Yes" : "No") << "\n"
+		<< "Valid for storage: " << (TaskType::task_invalid<decltype(lambda), int>::value ? "Yes" : "No") << "\n";
+}
+
+int main() {
+	// 初始化线程池：10000任务容量,最小/大线程数1,无批处理
+	globalPool.init(10000, 1, 1, 1);
+
+	std::cout << "==== Simple Task Example ====" << std::endl;
+	TaskType task(simpleTask, "Hello, World.");
+	globalPool.enqueue(std::move(task));
+	std::this_thread::sleep_for(std::chrono::milliseconds(10));
+
+	std::cout << "\n==== Heap Task Example ====" << std::endl;
+	heapExample();
+	std::this_thread::sleep_for(std::chrono::milliseconds(10));
+
+	std::cout << "\n==== Async Result Example ====" << std::endl;
+	asyncExample();
+	std::this_thread::sleep_for(std::chrono::milliseconds(10));
+
+	std::cout << "\n==== Async Result Example2 ====" << std::endl;
+	asyncExample2();
+	std::this_thread::sleep_for(std::chrono::milliseconds(10));
+
+	std::cout << "\n==== Cancelable Task Example ====" << std::endl;
+	cancelableExample();
+	std::this_thread::sleep_for(std::chrono::milliseconds(10));
+
+	std::cout << "\n==== Batch Processing Example ====" << std::endl;
+	batchExample();
+	std::this_thread::sleep_for(std::chrono::milliseconds(10));
+
+	std::cout << "\n==== Position Control Example ====" << std::endl;
+	positionControlExample();
+	std::this_thread::sleep_for(std::chrono::milliseconds(10));
+
+	std::cout << "\n==== Storage Strategy Example ====" << std::endl;
+	storageStrategyExample();
+	std::this_thread::sleep_for(std::chrono::milliseconds(10));
+
+	std::cout << "\n==== Task Properties Example ====" << std::endl;
+	taskPropertiesExample();
+
+	globalPool.exit(true);
 	return 0;
 }
