@@ -4,8 +4,8 @@
 #include <vector>
 #include <atomic>
 #include <thread>
+#include <future>
 #include <assert.h>
-#include <condition_variable>
 
 #if defined(__GNUC__) || defined(__clang__)
 #define LIKELY(x) __builtin_expect(!!(x), 1)
@@ -37,6 +37,54 @@
 
 namespace HSLL
 {
+	//extern
+	template <unsigned int TSIZE, unsigned int ALIGN>
+	class TaskStack;
+
+	template <class F, class... Args>
+	struct TaskImpl;
+
+	template <class F, class... Args>
+	struct HeapCallable;
+
+	template <class R, class F, class... Args>
+	struct HeapCallable_Async;
+
+	template <class R, class F, class... Args>
+	struct HeapCallable_Cancelable;
+
+	//helper1_sfinae
+	template <typename T>
+	struct is_generic_ti : std::false_type {};
+
+	template <class T, class... Args>
+	struct is_generic_ti<TaskImpl<T, Args...>> : std::true_type {};
+
+	template <typename T>
+	struct is_generic_ts : std::false_type {};
+
+	template <unsigned int S, unsigned int A>
+	struct is_generic_ts<TaskStack<S, A>> : std::true_type {};
+
+	template <typename T>
+	struct is_generic_hc : std::false_type {};
+
+	template <class F, class... Args>
+	struct is_generic_hc<HeapCallable<F, Args...>> : std::true_type {};
+
+	template <typename T>
+	struct is_generic_hc_async : std::false_type {};
+
+	template <class R, class F, class... Args>
+	struct is_generic_hc_async<HeapCallable_Async<R, F, Args...>> : std::true_type {};
+
+	template <typename T>
+	struct is_generic_hc_cancel : std::false_type {};
+
+	template <class R, class F, class... Args>
+	struct is_generic_hc_cancel<HeapCallable_Cancelable<R, F, Args...>> : std::true_type {};
+
+	//helper2_is_moveable_copyable
 	template <typename T>
 	struct is_move_constructible
 	{
@@ -65,54 +113,12 @@ namespace HSLL
 		static constexpr bool value = decltype(test_copy<T>(true))::value;
 	};
 
-	template <unsigned int TSIZE, unsigned int ALIGN>
-	class TaskStack;
-
-	template <class F, class... Args>
-	class HeapCallable;
-
-	template <class F, class... Args>
-	struct TaskImpl;
-
-	template <typename T>
-	struct is_generic_hc : std::false_type
-	{
-	};
-
-	template <class T, class... Args>
-	struct is_generic_hc<HeapCallable<T, Args...>> : std::true_type
-	{
-	};
-
-	template <typename T>
-	struct is_generic_ti : std::false_type
-	{
-	};
-
-	template <class T, class... Args>
-	struct is_generic_ti<TaskImpl<T, Args...>> : std::true_type
-	{
-	};
-
-	template <typename T>
-	struct is_generic_ts : std::false_type
-	{
-	};
-
-	template <unsigned int S, unsigned int A>
-	struct is_generic_ts<TaskStack<S, A>> : std::true_type
-	{
-	};
-
+	//helper3_index_sequence
 	template <size_t... Is>
-	struct index_sequence
-	{
-	};
+	struct index_sequence {};
 
 	template <size_t N, size_t... Is>
-	struct make_index_sequence_impl : make_index_sequence_impl<N - 1, N - 1, Is...>
-	{
-	};
+	struct make_index_sequence_impl : make_index_sequence_impl<N - 1, N - 1, Is...> {};
 
 	template <size_t... Is>
 	struct make_index_sequence_impl<0, Is...>
@@ -126,6 +132,7 @@ namespace HSLL
 		using type = typename make_index_sequence_impl<N>::type;
 	};
 
+	//helper4
 	template <bool...>
 	struct bool_pack;
 
@@ -135,61 +142,336 @@ namespace HSLL
 	template <typename... Ts>
 	using are_all_copy_constructible = all_true<is_copy_constructible<Ts>::value...>;
 
-	template <typename Callable, typename... Ts>
-	void tinvoke(Callable& callable, Ts &...args)
+	//helper5_invoke
+	enum TASK_TUPLE_TYPE
 	{
-		callable(args...);
-	}
+		normal,
+		async,
+		cancelable
+	};
 
-	template <typename Tuple, size_t... Is>
+	template<TASK_TUPLE_TYPE TYPE>
+	struct Invoker {};
+
+	template<>
+	struct Invoker<normal>
+	{
+		template <class R, typename std::enable_if<std::is_void<R>::value>::type = true,
+			typename Callable, typename... Ts>
+		static void invoke(Callable& callable, Ts &...args)
+		{
+			callable(args...);
+		}
+
+		template <class R, typename Callable, typename... Ts>
+		static R invoke(Callable& callable, Ts &...args)
+		{
+			return callable(args...);
+		}
+	};
+
+	template<>
+	struct Invoker<async>
+	{
+		template <class R, typename std::enable_if<std::is_void<R>::value>::type = true,
+			typename Promise, typename Callable, typename... Ts>
+		static void invoke(Promise& promise, Callable& callable, Ts &...args)
+		{
+			callable(args...);
+		}
+
+		template <class R, typename Promise, typename Callable, typename... Ts>
+		static R invoke(Promise& promise, Callable& callable, Ts &...args)
+		{
+			return callable(args...);
+		}
+	};
+
+	template<>
+	struct Invoker<cancelable>
+	{
+		template <class R, typename std::enable_if<std::is_void<R>::value>::type = true,
+			typename Promise, typename Callable, typename... Ts>
+		static void invoke(Promise& promise, std::atomic<bool>& flag, Callable& callable, Ts &...args)
+		{
+			callable(args...);
+		}
+
+		template <class R, typename Promise, typename Callable, typename... Ts>
+		static R invoke(Promise& promise, std::atomic<bool>& flag, Callable& callable, Ts &...args)
+		{
+			return callable(args...);
+		}
+	};
+
+	//helper6_apply
+	template <TASK_TUPLE_TYPE TYPE, class R, typename std::enable_if<std::is_void<R>::value>::type = true,
+		typename Tuple, size_t... Is>
 	void apply_impl(Tuple& tup, index_sequence<Is...>)
 	{
-		tinvoke(std::get<Is>(tup)...);
+		Invoker<TYPE>::template invoke<R>(std::get<Is>(tup)...);
 	}
 
-	template <typename Tuple>
+	template <TASK_TUPLE_TYPE TYPE, class R, typename Tuple, size_t... Is>
+	R apply_impl(Tuple& tup, index_sequence<Is...>)
+	{
+		return Invoker<TYPE>::template invoke<R>(std::get<Is>(tup)...);
+	}
+
+	template <TASK_TUPLE_TYPE TYPE = normal, class R = void, typename std::enable_if<std::is_void<R>::value>::type = true,
+		typename Tuple>
 	void tuple_apply(Tuple& tup)
 	{
-		apply_impl(tup, typename make_index_sequence<std::tuple_size<Tuple>::value>::type{});
+		apply_impl<TYPE, R>(tup, typename make_index_sequence<std::tuple_size<Tuple>::value>::type{});
 	}
 
+	template <TASK_TUPLE_TYPE TYPE = normal, class R = void, typename Tuple>
+	R tuple_apply(Tuple& tup)
+	{
+		return apply_impl<TYPE, R>(tup, typename make_index_sequence<std::tuple_size<Tuple>::value>::type{});
+	}
+
+	//helper7_make_unique
+	template <typename T, typename... Args>
+	typename std::enable_if<!std::is_array<T>::value, std::unique_ptr<T>>::type
+		make_unique(Args&&... args) {
+		return std::unique_ptr<T>(new T(std::forward<Args>(args)...));
+	}
+
+	template <typename T>
+	typename std::enable_if<std::is_array<T>::value&& std::extent<T>::value == 0, std::unique_ptr<T>>::type
+		make_unique(std::size_t size) {
+		using U = typename std::remove_extent<T>::type;
+		return std::unique_ptr<T>(new U[size]());
+	}
+
+	template <typename T, typename... Args>
+	typename std::enable_if<std::extent<T>::value != 0, void>::type
+		make_unique(Args&&...) = delete;
+
 	/**
-	 * @brief Heap-allocated type-erased callable wrapper with shared ownership
-	 * @tparam F Type of callable object
-	 * @tparam Args Types of bound arguments
-	 * @details
-	 * - Stores decayed copies of function and arguments in a shared tuple
-	 * - Supports copy/move operations through shared reference counting
-	 * - Invocation always passes arguments as lvalues (same as TaskStack)
-	 * - Safe for cross-thread usage through shared_ptr semantics
+	 * @class HeapCallable
+	 * @brief Encapsulates a callable object and its arguments, storing them on the heap.
+	 *        This class is move-only and non-assignable
+	 * @tparam F Type of the callable object
+	 * @tparam Args Types of the arguments bound to the callable
 	 */
 	template <class F, class... Args>
 	class HeapCallable
 	{
 	private:
 		using Package = std::tuple<typename std::decay<F>::type, typename std::decay<Args>::type...>;
-		std::shared_ptr<Package> storage;
+		std::unique_ptr<Package> storage;
 
 	public:
+		/**
+		 * @brief Constructs a HeapCallable by moving the callable and arguments
+		 * @param func Callable object to store
+		 * @param args Arguments to bind to the callable
+		 */
+		template<class Func, typename std::enable_if<!is_generic_hc<typename std::decay<Func>::type>::value, int>::type = 0 >
+		HeapCallable(Func&& func, Args &&...args) HSLL_ALLOW_THROW
+			: storage(HSLL::make_unique<Package>(std::forward<Func>(func), std::forward<Args>(args)...)) {}
 
-		void operator()() noexcept
+		/**
+		 * @brief Invokes the stored callable with bound arguments
+		 * @pre Object must be in a valid state (storage != nullptr)
+		 */
+		void operator()()
 		{
-			if (storage)
-				tuple_apply(*storage);
+			assert(storage);
+			tuple_apply(*storage);
+		}
+	};
+
+	/**
+	 * @class HeapCallable_Async
+	 * @brief Asynchronous version of HeapCallable that provides a future for the result.
+	 *        This class is move-only and non-assignable
+	 * @tparam R Return type of the callable
+	 * @tparam F Type of the callable object
+	 * @tparam Args Types of the arguments bound to the callable
+	 */
+	template <class R, class F, class... Args>
+	class HeapCallable_Async
+	{
+		using Package = std::tuple<std::promise<R>,
+			typename std::decay<F>::type, typename std::decay<Args>::type...>;
+
+	private:
+		std::unique_ptr<Package> storage;
+
+		template<class T = R, typename std::enable_if<std::is_void<T>::value>::type = true>
+		void invoke() {
+			auto& promise = std::get<0>(*storage);
+			try {
+				tuple_apply<async, R>(*storage);
+				promise.set_value();
+			}
+			catch (...) {
+				promise.set_exception(std::current_exception());
+			}
+		}
+
+		template<class T = R>
+		void invoke() {
+			auto& promise = std::get<0>(*storage);
+			try {
+				promise.set_value(tuple_apply<async, R>(*storage));
+			}
+			catch (...) {
+				promise.set_exception(std::current_exception());
+			}
+		}
+
+	public:
+		/**
+		 * @brief Constructs an async callable object
+		 * @param func Callable object to store
+		 * @param args Arguments to bind to the callable
+		 */
+		template<class Func, typename std::enable_if<!is_generic_hc_async<typename std::decay<Func>::type>::value, int>::type = 0 >
+		HeapCallable_Async(Func&& func, Args &&...args) HSLL_ALLOW_THROW
+			: storage(HSLL::make_unique<Package>(std::promise<R>(), std::forward<Func>(func), std::forward<Args>(args)...)) {}
+
+		/**
+		 * @brief Executes the callable and sets promise value/exception
+		 * @pre Object must be in a valid state (storage != nullptr)
+		 */
+		void operator()()
+		{
+			assert(storage);
+			invoke();
 		}
 
 		/**
-		 * @brief Constructs callable with function and arguments
-		 * @tparam F Forwarding reference to callable type
-		 * @tparam Args Forwarding references to argument types
-		 * @param func Callable target function
-		 * @param args Arguments to bind to function call
-		 * @note Disables overload when F is HeapCallable type (prevents nesting)
-		 * @note Arguments are stored as decayed types (copy/move constructed)
+		 * @brief Retrieves the future associated with the promise
+		 * @return std::future<R> Future object for the call result
+		 * @pre Object must be in a valid state (storage != nullptr)
 		 */
-		template <typename std::enable_if<!is_generic_hc<typename std::decay<F>::type>::value, int>::type = 0>
-		HeapCallable(F&& func, Args &&...args) HSLL_ALLOW_THROW
-			: storage(std::make_shared<Package>(std::forward<F>(func), std::forward<Args>(args)...)) {}
+		std::future<R> get_future()
+		{
+			assert(storage);
+			return std::get<0>(*storage).get_future();
+		}
+	};
+
+	/**
+	 * @class HeapCallable_Cancelable
+	 * @brief Cancelable version of HeapCallable with atomic cancellation flag.
+	 *        This class is move-only and non-assignable
+	 * @tparam R Return type of the callable
+	 * @tparam F Type of the callable object
+	 * @tparam Args Types of the arguments bound to the callable
+	 */
+	template <class R, class F, class... Args>
+	class HeapCallable_Cancelable
+	{
+		using Package = std::tuple<std::promise<R>, std::atomic<bool>,
+			typename std::decay<F>::type, typename std::decay<Args>::type...>;
+
+	private:
+		std::shared_ptr<Package> storage;
+
+		template<class T = R, typename std::enable_if<std::is_void<T>::value>::type = true>
+		void invoke() {
+			auto& promise = std::get<0>(*storage);
+			try {
+				tuple_apply<cancelable, T>(*storage);
+				promise.set_value(1);
+			}
+			catch (...) {
+				promise.set_exception(std::current_exception());
+			}
+		}
+
+		template<class T = R>
+		void invoke() {
+			auto& promise = std::get<0>(*storage);
+			try {
+				promise.set_value(tuple_apply<cancelable, T>(*storage));
+			}
+			catch (...) {
+				promise.set_exception(std::current_exception());
+			}
+		}
+
+	public:
+
+		struct Controller
+		{
+		private:
+			std::shared_ptr<Package> storage;
+
+		public:
+
+			Controller(std::shared_ptr<Package> storage) :storage(storage) {};
+
+			/**
+			 * @brief Attempts to cancel the callable execution
+			 * @return true if successfully canceled, false if already executed
+			 * @pre Object must be in a valid state (storage != nullptr)
+			 */
+			bool cancel()
+			{
+				assert(storage);
+				bool expected = false;
+				auto& flag = std::get<1>(*storage);
+
+				if (flag.compare_exchange_strong(expected, true))
+				{
+					auto& promise = std::get<0>(*storage);
+					promise.set_exception(std::make_exception_ptr(std::runtime_error("Task canceled")));
+					return true;
+				}
+				return false;
+			}
+		};
+
+		/**
+		 * @brief Constructs a cancelable callable object
+		 * @param func Callable object to store
+		 * @param args Arguments to bind to the callable
+		 */
+		template<class Func, typename std::enable_if<!is_generic_hc_cancel<typename std::decay<Func>::type>::value, int>::type = 0 >
+		HeapCallable_Cancelable(Func&& func, Args &&...args) HSLL_ALLOW_THROW
+			: storage(std::make_shared<Package>(std::promise<R>(), false, std::forward<Func>(func), std::forward<Args>(args)...)) {}
+
+		/**
+		 * @brief Executes the callable if not canceled
+		 * @pre Object must be in a valid state (storage != nullptr)
+		 */
+		void operator()()
+		{
+			assert(storage);
+			bool expected = false;
+			auto& flag = std::get<1>(*storage);
+
+			if (flag.compare_exchange_strong(expected, true))
+				invoke();
+		}
+
+		Controller get_controller()
+		{
+			assert(storage);
+			return Controller(storage);
+		}
+
+		/**
+		 * @brief Retrieves the future associated with the promise
+		 * @return std::future<R> Future object for the call result
+		 * @pre Object must be in a valid state (storage != nullptr)
+		 */
+		std::future<R> get_future()
+		{
+			assert(storage);
+			return std::get<0>(*storage).get_future();
+		}
+
+		HeapCallable_Cancelable(const HeapCallable_Cancelable& other) = delete;
+		HeapCallable_Cancelable& operator=(const HeapCallable_Cancelable& other) = delete;
+		HeapCallable_Cancelable(HeapCallable_Cancelable&& other) noexcept = default;
+		HeapCallable_Cancelable& operator=(HeapCallable_Cancelable&& other) noexcept = default;
 	};
 
 	/**
@@ -198,14 +480,44 @@ namespace HSLL
 	 * @tparam Args Types of arguments to bind
 	 * @param func Callable target function
 	 * @param args Arguments to bind to function call
-	 * @return HeapCallable instance managing shared ownership of the callable
+	 * @return HeapCallable instance
 	 */
-	template <typename F,
-		typename std::enable_if<!is_generic_hc<typename std::decay<F>::type>::value, int>::type = 0,
-		typename... Args>
+	template <typename F, typename... Args>
 	HeapCallable<F, Args...> make_callable(F&& func, Args &&...args) HSLL_ALLOW_THROW
 	{
 		return HeapCallable<F, Args...>(std::forward<F>(func), std::forward<Args>(args)...);
+	}
+
+	/**
+	 * @brief Factory function to create HeapCallable_Async objects
+	 * @tparam ResultType Type of return value
+	 * @tparam F Type of callable object
+	 * @tparam Args Types of arguments to bind
+	 * @param func Callable target function
+	 * @param args Arguments to bind to function call
+	 * @return HeapCallable_Async instance
+	 */
+	template <typename ResultType, typename F, typename... Args>
+	HeapCallable_Async<ResultType, F, Args...> make_callable_async(F&& func, Args &&...args) HSLL_ALLOW_THROW
+	{
+		return HeapCallable_Async<ResultType, F, Args...>
+			(std::forward<F>(func), std::forward<Args>(args)...);
+	}
+
+	/**
+	 * @brief Factory function to create HeapCallable_Cancelable objects
+	 * @tparam ResultType Type of return value
+	 * @tparam F Type of callable object
+	 * @tparam Args Types of arguments to bind
+	 * @param func Callable target function
+	 * @param args Arguments to bind to function call
+	 * @return HeapCallable_Async instance
+	 */
+	template <typename ResultType, typename F, typename... Args>
+	HeapCallable_Cancelable<ResultType, F, Args...> make_callable_cancelable(F&& func, Args &&...args) HSLL_ALLOW_THROW
+	{
+		return HeapCallable_Cancelable<ResultType, F, Args...>
+			(std::forward<F>(func), std::forward<Args>(args)...);
 	}
 
 	/**
@@ -433,10 +745,8 @@ namespace HSLL
 		 * @return TaskStack with either:
 		 *         - Directly stored task if it fits in stack buffer
 		 *         - Heap-allocated fallback via HeapCallable otherwise
-		 * @note Uses SFINAE to prevent nesting of HeapCallable objects
 		 */
-		template <class F, class... Args,
-			typename std::enable_if<!is_generic_hc<typename std::decay<F>::type>::value, int>::type = 0>
+		template <class F, class... Args>
 		static TaskStack make_auto(F&& func, Args &&...args) HSLL_ALLOW_THROW
 		{
 			return Maker<task_invalid<F, Args...>::value, F, Args...>::make(
@@ -445,21 +755,17 @@ namespace HSLL
 		}
 
 		/**
-		 * @brief Factory method that forces heap-backed storage
+		 * @brief Factory function to create a heap-allocated callable task
 		 * @tparam F Type of callable object
 		 * @tparam Args Types of bound arguments
-		 * @param func Callable to store
+		 * @param func Callable object to store
 		 * @param args Arguments to bind
-		 * @return TaskStack using HeapCallable storage
-		 * @note Always uses heap allocation regardless of size
+		 * @return TaskStack containing heap-stored callable (move-only)
 		 */
-		template <class F, class... Args,
-			typename std::enable_if<!is_generic_hc<typename std::decay<F>::type>::value, int>::type = 0>
+		template <class F, class... Args>
 		static TaskStack make_heap(F&& func, Args &&...args) HSLL_ALLOW_THROW
 		{
-			return Maker<false, F, Args...>::make(
-				std::forward<F>(func),
-				std::forward<Args>(args)...);
+			return TaskStack(HeapCallable<F, Args...>(std::forward<F>(func), std::forward<Args>(args)...));
 		}
 
 		void execute() noexcept
@@ -470,6 +776,11 @@ namespace HSLL
 		bool is_copyable() const noexcept
 		{
 			return getBase()->is_copyable();
+		}
+
+		bool is_moveable() const noexcept
+		{
+			return true;
 		}
 
 		TaskStack(const TaskStack& other) noexcept
