@@ -113,6 +113,7 @@ namespace HSLL
 		unsigned int isStopped; ///< Flag for stopping all operations
 
 		// Queue state tracking
+		unsigned int maxSpin;
 		unsigned int maxSize;	///< Capacity of the queue
 		unsigned int totalsize; ///< Total allocated memory size
 		std::atomic<unsigned int> size;		///< Current number of elements in queue
@@ -327,11 +328,29 @@ namespace HSLL
 			src.~TYPE();
 		}
 
+		void spin()
+		{
+			for (unsigned int i = 0; i < maxSpin; ++i)
+			{
+				if ((i & 127) != 127)
+				{
+					if (get_size())
+						return;
+				}
+				else
+				{
+					if (get_exact_size())
+						return;
+				}
+			}
+			return;
+		}
+
 	public:
 
 		TPBlockQueue() : memoryBlock(nullptr), isStopped(0) {}
 
-		bool init(unsigned int capacity)
+		bool init(unsigned int capacity, unsigned int spin = 2000)
 		{
 			if (memoryBlock || !capacity)
 				return false;
@@ -344,10 +363,10 @@ namespace HSLL
 
 			size = 0;
 			maxSize = capacity;
+			maxSpin = spin;
 			dataListHead = (TYPE*)memoryBlock;
 			dataListTail = (TYPE*)memoryBlock;
 			border = (uintptr_t)memoryBlock + totalsize;
-
 			return true;
 		}
 
@@ -355,6 +374,7 @@ namespace HSLL
 		bool emplace(Args &&...args)
 		{
 			assert(memoryBlock);
+
 			std::unique_lock<std::mutex> lock(dataMutex);
 
 			if (UNLIKELY(size.load(std::memory_order_relaxed) == maxSize))
@@ -369,6 +389,7 @@ namespace HSLL
 			wait_emplace(Args &&...args)
 		{
 			assert(memoryBlock);
+			spin();
 			std::unique_lock<std::mutex> lock(dataMutex);
 
 			notFullCond.wait(lock, [this]
@@ -385,6 +406,7 @@ namespace HSLL
 		bool wait_emplace(const std::chrono::duration<Rep, Period>& timeout, Args &&...args)
 		{
 			assert(memoryBlock);
+			spin();
 			std::unique_lock<std::mutex> lock(dataMutex);
 
 			bool success = notFullCond.wait_for(lock, timeout, [this]
@@ -414,6 +436,7 @@ namespace HSLL
 		bool wait_enqueue(T&& element)
 		{
 			assert(memoryBlock);
+			spin();
 			std::unique_lock<std::mutex> lock(dataMutex);
 
 			notFullCond.wait(lock, [this]
@@ -430,6 +453,7 @@ namespace HSLL
 		bool wait_enqueue(T&& element, const std::chrono::duration<Rep, Period>& timeout)
 		{
 			assert(memoryBlock);
+			spin();
 			std::unique_lock<std::mutex> lock(dataMutex);
 
 			bool success = notFullCond.wait_for(lock, timeout, [this]
@@ -477,6 +501,7 @@ namespace HSLL
 		{
 			assert(memoryBlock);
 			assert(elements && count);
+			spin();
 			std::unique_lock<std::mutex> lock(dataMutex);
 
 			notFullCond.wait(lock, [this]
@@ -493,6 +518,7 @@ namespace HSLL
 		{
 			assert(memoryBlock);
 			assert(elements && count);
+			spin();
 			std::unique_lock<std::mutex> lock(dataMutex);
 
 			bool success = notFullCond.wait_for(lock, timeout, [this]
@@ -519,6 +545,7 @@ namespace HSLL
 		bool wait_dequeue(TYPE& element)
 		{
 			assert(memoryBlock);
+			spin();
 			std::unique_lock<std::mutex> lock(dataMutex);
 
 			notEmptyCond.wait(lock, [this]
@@ -535,6 +562,7 @@ namespace HSLL
 		bool wait_dequeue(TYPE& element, const std::chrono::duration<Rep, Period>& timeout)
 		{
 			assert(memoryBlock);
+			spin();
 			std::unique_lock<std::mutex> lock(dataMutex);
 
 			bool success = notEmptyCond.wait_for(lock, timeout, [this]
@@ -563,6 +591,7 @@ namespace HSLL
 		{
 			assert(memoryBlock);
 			assert(elements && count);
+			spin();
 			std::unique_lock<std::mutex> lock(dataMutex);
 
 			notEmptyCond.wait(lock, [this]
@@ -579,6 +608,7 @@ namespace HSLL
 		{
 			assert(memoryBlock);
 			assert(elements && count);
+			spin();
 			std::unique_lock<std::mutex> lock(dataMutex);
 
 			bool success = notEmptyCond.wait_for(lock, timeout, [this]
