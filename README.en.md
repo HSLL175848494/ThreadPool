@@ -139,8 +139,7 @@ graph LR
 
 ## Important Notes
 1. **Type Matching**: Submitted task types must exactly match queue task type
-2. **Alignment Requirements**: Task alignment must be ≤ container's alignment
-3. **Exception Safety**:
+2. **Exception Safety**:
    - Queue operations must not throw exceptions
    - `emplace()` requires noexcept parameter/copy/move construction
    - `execute()` must handle all exceptions internally (no exception propagation)
