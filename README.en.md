@@ -96,7 +96,8 @@ int main()
     return 0;
 }
 ```
-**See `example` folder for advanced usage**
+**Other Usages**: Refer to the examples in the examples section, including:  
+asynchronous task example / cancellable task example / batch tasks example / smart storage task example / retrieve task attributes example  
 
 ## Task Lifecycle
 ```mermaid
