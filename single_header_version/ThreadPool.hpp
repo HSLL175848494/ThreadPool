@@ -156,14 +156,15 @@ namespace HSLL
 	template<>
 	struct Invoker<normal>
 	{
-		template <class R, typename std::enable_if<std::is_void<R>::value>::type = true,
+		template <class R, typename std::enable_if<std::is_void<R>::value, bool>::type = true,
 			typename Callable, typename... Ts>
 		static void invoke(Callable& callable, Ts &...args)
 		{
 			callable(args...);
 		}
 
-		template <class R, typename Callable, typename... Ts>
+		template <class R, typename std::enable_if<!std::is_void<R>::value, bool>::type = true,
+			typename Callable, typename... Ts>
 		static R invoke(Callable& callable, Ts &...args)
 		{
 			return callable(args...);
@@ -173,14 +174,15 @@ namespace HSLL
 	template<>
 	struct Invoker<async>
 	{
-		template <class R, typename std::enable_if<std::is_void<R>::value>::type = true,
+		template <class R, typename std::enable_if<std::is_void<R>::value, bool>::type = true,
 			typename Promise, typename Callable, typename... Ts>
 		static void invoke(Promise& promise, Callable& callable, Ts &...args)
 		{
 			callable(args...);
 		}
 
-		template <class R, typename Promise, typename Callable, typename... Ts>
+		template <class R, typename std::enable_if<!std::is_void<R>::value, bool>::type = true,
+			typename Promise, typename Callable, typename... Ts>
 		static R invoke(Promise& promise, Callable& callable, Ts &...args)
 		{
 			return callable(args...);
@@ -190,14 +192,15 @@ namespace HSLL
 	template<>
 	struct Invoker<cancelable>
 	{
-		template <class R, typename std::enable_if<std::is_void<R>::value>::type = true,
+		template <class R, typename std::enable_if<std::is_void<R>::value, bool>::type = true,
 			typename Promise, typename Callable, typename... Ts>
 		static void invoke(Promise& promise, std::atomic<bool>& flag, Callable& callable, Ts &...args)
 		{
 			callable(args...);
 		}
 
-		template <class R, typename Promise, typename Callable, typename... Ts>
+		template <class R, typename std::enable_if<!std::is_void<R>::value, bool>::type = true,
+			typename Promise, typename Callable, typename... Ts>
 		static R invoke(Promise& promise, std::atomic<bool>& flag, Callable& callable, Ts &...args)
 		{
 			return callable(args...);
@@ -205,27 +208,29 @@ namespace HSLL
 	};
 
 	//helper6_apply
-	template <TASK_TUPLE_TYPE TYPE, class R, typename std::enable_if<std::is_void<R>::value>::type = true,
+	template <TASK_TUPLE_TYPE TYPE, class R, typename std::enable_if<std::is_void<R>::value, bool>::type = true,
 		typename Tuple, size_t... Is>
 	void apply_impl(Tuple& tup, index_sequence<Is...>)
 	{
 		Invoker<TYPE>::template invoke<R>(std::get<Is>(tup)...);
 	}
 
-	template <TASK_TUPLE_TYPE TYPE, class R, typename Tuple, size_t... Is>
+	template <TASK_TUPLE_TYPE TYPE, class R, typename std::enable_if<!std::is_void<R>::value, bool>::type = true,
+		typename Tuple, size_t... Is>
 	R apply_impl(Tuple& tup, index_sequence<Is...>)
 	{
 		return Invoker<TYPE>::template invoke<R>(std::get<Is>(tup)...);
 	}
 
-	template <TASK_TUPLE_TYPE TYPE = normal, class R = void, typename std::enable_if<std::is_void<R>::value>::type = true,
+	template <TASK_TUPLE_TYPE TYPE = normal, class R = void, typename std::enable_if<std::is_void<R>::value, bool>::type = true,
 		typename Tuple>
 	void tuple_apply(Tuple& tup)
 	{
 		apply_impl<TYPE, R>(tup, typename make_index_sequence<std::tuple_size<Tuple>::value>::type{});
 	}
 
-	template <TASK_TUPLE_TYPE TYPE = normal, class R = void, typename Tuple>
+	template <TASK_TUPLE_TYPE TYPE = normal, class R = void, typename std::enable_if<!std::is_void<R>::value, bool>::type = true,
+		typename Tuple>
 	R tuple_apply(Tuple& tup)
 	{
 		return apply_impl<TYPE, R>(tup, typename make_index_sequence<std::tuple_size<Tuple>::value>::type{});
@@ -301,7 +306,7 @@ namespace HSLL
 	private:
 		std::unique_ptr<Package> storage;
 
-		template<class T = R, typename std::enable_if<std::is_void<T>::value>::type = true>
+		template<class T = R, typename std::enable_if<std::is_void<T>::value, bool>::type = true>
 		void invoke() {
 			auto& promise = std::get<0>(*storage);
 			try {
@@ -313,7 +318,7 @@ namespace HSLL
 			}
 		}
 
-		template<class T = R>
+		template<class T = R, typename std::enable_if<!std::is_void<T>::value, bool>::type = true>
 		void invoke() {
 			auto& promise = std::get<0>(*storage);
 			try {
@@ -373,23 +378,23 @@ namespace HSLL
 	private:
 		std::shared_ptr<Package> storage;
 
-		template<class T = R, typename std::enable_if<std::is_void<T>::value>::type = true>
+		template<class T = R, typename std::enable_if<std::is_void<T>::value, bool>::type = true>
 		void invoke() {
 			auto& promise = std::get<0>(*storage);
 			try {
-				tuple_apply<cancelable, T>(*storage);
-				promise.set_value(1);
+				tuple_apply<cancelable, R>(*storage);
+				promise.set_value();
 			}
 			catch (...) {
 				promise.set_exception(std::current_exception());
 			}
 		}
 
-		template<class T = R>
+		template<class T = R, typename std::enable_if<!std::is_void<T>::value, bool>::type = true>
 		void invoke() {
 			auto& promise = std::get<0>(*storage);
 			try {
-				promise.set_value(tuple_apply<cancelable, T>(*storage));
+				promise.set_value(tuple_apply<cancelable, R>(*storage));
 			}
 			catch (...) {
 				promise.set_exception(std::current_exception());
@@ -648,11 +653,6 @@ namespace HSLL
 		static constexpr unsigned int size = sizeof(type);
 	};
 
-#if __cplusplus >= 201402L
-	template <class F, class... Args>
-	static constexpr unsigned int task_stack_size = sizeof(task_stack<F, Args...>::size);
-#endif
-
 	/**
 	 * @brief Stack-allocated task container with fixed-size storage
 	 * @tparam TSIZE Size of internal storage buffer (default = 64)
@@ -666,118 +666,91 @@ namespace HSLL
 		static_assert(TSIZE% ALIGN == 0, "TSIZE must be a multiple of ALIGN");
 		alignas(ALIGN) char storage[TSIZE];
 
-		/**
-		 * @brief Helper template to conditionally create stack-allocated or heap-backed TaskStack
-		 */
-		template <bool Condition, typename F, typename... Args>
-		struct Maker;
-
-		template <typename F, typename... Args>
-		struct Maker<true, F, Args...>
+		template <bool Condition, typename Func, typename... Params>
+		typename std::enable_if<Condition, void>::type construct(Func&& func, Params &&...params)
 		{
-			static TaskStack make(F&& func, Args &&...args)
-			{
-				return TaskStack(std::forward<F>(func), std::forward<Args>(args)...);
-			}
-		};
+			typedef typename task_stack<Func, Params...>::type ImplType;
+			new (storage) ImplType(std::forward<Func>(func), std::forward<Params>(params)...);
+		}
 
-		template <typename F, typename... Args>
-		struct Maker<false, F, Args...>
+		template <bool Condition, typename Func, typename... Params>
+		typename std::enable_if<!Condition, void>::type construct(Func&& func, Params &&...params)
 		{
-			static TaskStack make(F&& func, Args &&...args)
-			{
-				return TaskStack(HeapCallable<F, Args...>(std::forward<F>(func), std::forward<Args>(args)...));
-			}
-		};
+			typedef typename task_stack<HeapCallable<Func, Params...>>::type ImplType;
+			static_assert(alignof(HeapCallable<Func, Params...>) <= ALIGN);
+			new (storage) ImplType(HeapCallable<Func, Params...>(std::forward<Func>(func), std::forward<Params>(params)...));
+		}
 
 	public:
+
 		/**
-		 * @brief Metafunction to validate task compatibility with storage
-		 * @tparam F Type of callable object
-		 * @tparam Args Types of bound arguments
-		 * @value true if task fits in storage and meets alignment requirements
+		 * @brief Compile-time type trait to check if a task is stored on the stack
+		 * This type trait determines whether a task constructed with the given callable and arguments
+		 * will be stored within the internal stack buffer (fixed-size storage) of the TaskStack container.
+		 * The static boolean member `value` is:
+		 *   - `true`: Task fits in internal buffer
+		 *   - `false`: Task requires heap storage
+		 * @tparam F Type of the callable object
+		 * @tparam Args... Types of the bound arguments
 		 */
 		template <class F, class... Args>
-		struct task_invalid
+		struct is_stored_on_stack
 		{
-			static constexpr bool value = sizeof(typename task_stack<F, Args...>::type) <= sizeof(TaskStack) &&
-				alignof(typename task_stack<F, Args...>::type) <= ALIGN;
+			typedef typename task_stack<F, Args...>::type ImplType;
+			static constexpr bool value = (sizeof(ImplType) <= TSIZE && alignof(ImplType) <= ALIGN);
 		};
-
-#if __cplusplus >= 201402L
-		template <class F, class... Args>
-		static constexpr bool task_invalid_v = sizeof(typename task_stack<F, Args...>::type) <= TSIZE &&
-			alignof(typename task_stack<F, Args...>::type) <= ALIGN;
-#endif
 
 		/**
 		 * @brief Constructs task in internal storage
+		 * Constructs a task by storing the callable and bound arguments in the internal buffer if possible.
+		 *
+		 * The storage location is determined by:
+		 *   - If the task's total size <= TSIZE AND alignment <= ALIGN:
+		 *        Directly constructs the task in the internal stack buffer
+		 *   - Else:
+		 *        Allocates the task on the heap and stores a pointer in the internal buffer
+		 *        (using HeapCallable wrapper)
+
+		 * For task properties after construction:
+		 *   - Copyability can be checked with is_copyable()
+		 *        (depends on whether the underlying callable is copyable)
+		 *   - Movability is always supported (is_moveable() always returns true)
+		 *
 		 * @tparam F Type of callable object
 		 * @tparam Args Types of bound arguments
 		 * @param func Callable target function
 		 * @param args Arguments to bind to function call
-		 * @note Disables overload when F is a TaskStack (prevents nesting)
-		 * @note Static assertion ensures storage size is sufficient
-		 *
-		 * Important usage note:
-		 * - Argument value category (lvalue/rvalue) affects ONLY how
-		 *   arguments are stored internally (copy vs move construction)
-		 * - During execute(), arguments are ALWAYS passed as lvalues
-		 * - Functions with rvalue reference parameters are NOT supported
-		 *   Example: void bad_func(std::string&&) // Not allowed
 		 */
 		template <class F, class... Args,
 			typename std::enable_if<!is_generic_ts<typename std::decay<F>::type>::value, int>::type = 0>
 		TaskStack(F&& func, Args &&...args) HSLL_ALLOW_THROW
 		{
 			typedef typename task_stack<F, Args...>::type ImplType;
-			static_assert(sizeof(ImplType) <= TSIZE, "TaskImpl size exceeds storage");
-			static_assert(alignof(ImplType) <= ALIGN, "TaskImpl alignment exceeds storage alignment");
-			new (storage) ImplType(std::forward<F>(func), std::forward<Args>(args)...);
+			construct<(sizeof(ImplType) <= TSIZE && alignof(ImplType) <= ALIGN), F, Args...>(
+				std::forward<F>(func), std::forward<Args>(args)...
+			);
 		}
 
 		/**
-		 * @brief Factory method that automatically selects storage strategy
-		 * @tparam F Type of callable object
-		 * @tparam Args Types of bound arguments
-		 * @param func Callable to store
-		 * @param args Arguments to bind
-		 * @return TaskStack with either:
-		 *         - Directly stored task if it fits in stack buffer
-		 *         - Heap-allocated fallback via HeapCallable otherwise
+		 * @brief Executes the stored task
 		 */
-		template <class F, class... Args>
-		static TaskStack make_auto(F&& func, Args &&...args) HSLL_ALLOW_THROW
-		{
-			return Maker<task_invalid<F, Args...>::value, F, Args...>::make(
-				std::forward<F>(func),
-				std::forward<Args>(args)...);
-		}
-
-		/**
-		 * @brief Factory function to create a heap-allocated callable task
-		 * @tparam F Type of callable object
-		 * @tparam Args Types of bound arguments
-		 * @param func Callable object to store
-		 * @param args Arguments to bind
-		 * @return TaskStack containing heap-stored callable (move-only)
-		 */
-		template <class F, class... Args>
-		static TaskStack make_heap(F&& func, Args &&...args) HSLL_ALLOW_THROW
-		{
-			return TaskStack(HeapCallable<F, Args...>(std::forward<F>(func), std::forward<Args>(args)...));
-		}
-
 		void execute() noexcept
 		{
 			getBase()->execute();
 		}
 
+		/*
+		 * @brief Checks if the stored task is copyable
+		*/
 		bool is_copyable() const noexcept
 		{
 			return getBase()->is_copyable();
 		}
 
+		/*
+		 * @brief Checks if the stored task is moveable
+		 * @return Always returns true
+		*/
 		bool is_moveable() const noexcept
 		{
 			return true;
