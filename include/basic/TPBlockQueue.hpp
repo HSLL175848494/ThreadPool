@@ -57,15 +57,6 @@ namespace HSLL
 	template <class TYPE>
 	class alignas(64) TPBlockQueue
 	{
-		// Insert position tags for zero-overhead dispatch
-		struct InsertAtHeadTag
-		{
-		};
-
-		struct InsertAtTailTag
-		{
-		};
-
 		template <typename T>
 		struct is_generic_dr : std::false_type
 		{
@@ -75,7 +66,6 @@ namespace HSLL
 		struct is_generic_dr<std::chrono::duration<Rep, Period>> : std::true_type
 		{
 		};
-
 
 		/**
 		 * @brief Helper template for bulk construction (copy/move)
@@ -151,36 +141,36 @@ namespace HSLL
 		}
 
 		// Insert position implementations
-		template <typename... Args>
-		void emplace_impl(InsertAtTailTag, Args &&...args)
+		template <INSERT_POS POS, typename... Args>
+		typename std::enable_if<POS == TAIL>::type emplace_impl(Args &&...args)
 		{
 			new (dataListTail) TYPE(std::forward<Args>(args)...);
 			move_tail_next();
 		}
 
-		template <typename... Args>
-		void emplace_impl(InsertAtHeadTag, Args &&...args)
+		template <INSERT_POS POS, typename... Args>
+		typename std::enable_if<POS == HEAD>::type emplace_impl(Args &&...args)
 		{
 			move_head_prev();
 			new (dataListHead) TYPE(std::forward<Args>(args)...);
 		}
 
-		template <class T>
-		void enqueue_impl(InsertAtTailTag, T&& element)
+		template <INSERT_POS POS, class T>
+		typename std::enable_if<POS == TAIL>::type enqueue_impl(T&& element)
 		{
 			new (dataListTail) TYPE(std::forward<T>(element));
 			move_tail_next();
 		}
 
-		template <class T>
-		void enqueue_impl(InsertAtHeadTag, T&& element)
+		template <INSERT_POS POS, class T>
+		typename std::enable_if<POS == HEAD>::type enqueue_impl(T&& element)
 		{
 			move_head_prev();
 			new (dataListHead) TYPE(std::forward<T>(element));
 		}
 
-		template <BULK_CMETHOD METHOD>
-		void enqueue_bulk_impl(InsertAtTailTag, TYPE* elements, unsigned int toPush)
+		template <INSERT_POS POS, BULK_CMETHOD METHOD>
+		typename std::enable_if<POS == TAIL>::type enqueue_bulk_impl(TYPE* elements, unsigned int toPush)
 		{
 			for (unsigned int i = 0; i < toPush; ++i)
 			{
@@ -189,8 +179,8 @@ namespace HSLL
 			}
 		}
 
-		template <BULK_CMETHOD METHOD>
-		void enqueue_bulk_impl(InsertAtHeadTag, TYPE* elements, unsigned int toPush)
+		template <INSERT_POS POS, BULK_CMETHOD METHOD>
+		typename std::enable_if<POS == HEAD>::type enqueue_bulk_impl(TYPE* elements, unsigned int toPush)
 		{
 			for (unsigned int i = 0; i < toPush; ++i)
 			{
@@ -199,8 +189,8 @@ namespace HSLL
 			}
 		}
 
-		template <BULK_CMETHOD METHOD>
-		void enqueue_bulk_impl(InsertAtTailTag, TYPE* part1, unsigned int count1, TYPE* part2, unsigned int count2)
+		template <INSERT_POS POS, BULK_CMETHOD METHOD>
+		typename std::enable_if<POS == TAIL>::type enqueue_bulk_impl(TYPE* part1, unsigned int count1, TYPE* part2, unsigned int count2)
 		{
 			for (unsigned int i = 0; i < count1; ++i)
 			{
@@ -215,8 +205,8 @@ namespace HSLL
 			}
 		}
 
-		template <BULK_CMETHOD METHOD>
-		void enqueue_bulk_impl(InsertAtHeadTag, TYPE* part1, unsigned int count1, TYPE* part2, unsigned int count2)
+		template <INSERT_POS POS, BULK_CMETHOD METHOD>
+		typename std::enable_if<POS == HEAD>::type enqueue_bulk_impl(TYPE* part1, unsigned int count1, TYPE* part2, unsigned int count2)
 		{
 			for (unsigned int i = 0; i < count1; ++i)
 			{
@@ -235,8 +225,7 @@ namespace HSLL
 		void emplace_helper(std::unique_lock<std::mutex>& lock, Args &&...args)
 		{
 			size.fetch_add(1, std::memory_order_release);
-			using InsertTag = typename std::conditional<POS == HEAD, InsertAtHeadTag, InsertAtTailTag>::type;
-			emplace_impl(InsertTag(), std::forward<Args>(args)...);
+			emplace_impl<POS>(std::forward<Args>(args)...);
 			lock.unlock();
 			notEmptyCond.notify_one();
 		}
@@ -245,8 +234,7 @@ namespace HSLL
 		void enqueue_helper(std::unique_lock<std::mutex>& lock, T&& element)
 		{
 			size.fetch_add(1, std::memory_order_release);
-			using InsertTag = typename std::conditional<POS == HEAD, InsertAtHeadTag, InsertAtTailTag>::type;
-			enqueue_impl(InsertTag(), std::forward<T>(element));
+			enqueue_impl<POS>(std::forward<T>(element));
 			lock.unlock();
 			notEmptyCond.notify_one();
 		}
@@ -256,8 +244,7 @@ namespace HSLL
 		{
 			unsigned int toPush = std::min(count, maxSize - size.load(std::memory_order_relaxed));
 			size.fetch_add(toPush, std::memory_order_release);
-			using InsertTag = typename std::conditional<POS == HEAD, InsertAtHeadTag, InsertAtTailTag>::type;
-			enqueue_bulk_impl<METHOD>(InsertTag(), elements, toPush);
+			enqueue_bulk_impl<POS, METHOD>(elements, toPush);
 			lock.unlock();
 
 			if (UNLIKELY(toPush == 1))
@@ -273,12 +260,11 @@ namespace HSLL
 		{
 			unsigned int toPush = std::min(count1 + count2, maxSize - size.load(std::memory_order_relaxed));
 			size.fetch_add(toPush, std::memory_order_release);
-			using InsertTag = typename std::conditional<POS == HEAD, InsertAtHeadTag, InsertAtTailTag>::type;
 
 			if (toPush > count1)
-				enqueue_bulk_impl<METHOD>(InsertTag(), part1, count1, part2, toPush - count1);
+				enqueue_bulk_impl<POS, METHOD>(part1, count1, part2, toPush - count1);
 			else
-				enqueue_bulk_impl<METHOD>(InsertTag(), part1, toPush);
+				enqueue_bulk_impl<POS, METHOD>(part1, toPush);
 
 			lock.unlock();
 
