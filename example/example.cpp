@@ -1,8 +1,5 @@
 #include "ThreadPool.hpp"
 #include <iostream>
-#include <chrono>
-#include <thread>
-#include <atomic>
 
 using namespace HSLL;
 using TaskType = TaskStack<128, 8>;  // 使用128字节的任务存储
@@ -20,7 +17,7 @@ int calculateSum(int a, int b)
 	return a + b;
 }
 
-// 大型函数（参数多）
+// 大型函数（较多参数）
 void bigTask(int a, double b, const std::string& c, char d, float e)
 {
 	std::cout << "Big task: " << a << ", " << b << ", " << c << ", " << d << ", " << e << std::endl;
@@ -36,14 +33,6 @@ void heapExample()
 
 	//Callable隐式转化为TaskStack
 	globalPool.enqueue(std::move(callable));
-
-	//创建堆上任务,返回TaskStack
-	auto task =TaskType::make_heap([]() {
-		std::cout << "Heap task2 completed." << std::endl;
-		});
-
-	//直接提交TaskStack
-	globalPool.enqueue(std::move(task));
 }
 
 // 异步任务示例
@@ -141,35 +130,31 @@ void positionControlExample()
 void storageStrategyExample()
 {
 	// 小任务 - 栈存储
-	TaskType smallTask = TaskType::make_auto([] {
+	auto lambda_small = [] {
 		std::cout << "Small task (stack storage)" << std::endl;
-		});
+	};
 
 	// 大任务 - 堆存储
-	auto lambda = [](const std::string& a, const std::string& b,
+	auto lambda_big = [](const std::string& a, const std::string& b,
 		const std::string& c, const std::string& d) {
 			std::cout << "Big task (heap storage): "
 				<< a << b << c << d << std::endl;
 	};
 
+	TaskType smallTask(lambda_small);
+	TaskType bigTask(lambda_big, "Large", " parameters", " require", " heap allocation");
+
+	//if (TaskType::is_stored_on_stack<decltype(lambda_small)>::value)
 	globalPool.enqueue(std::move(smallTask));
 
-	//TaskType::task_invalid并不需要需要每个参数都对应原值类型,即使是退化类型如
-	//(const std::string& ->std::string)也是可以的
-	if (!TaskType::task_invalid<decltype(lambda), std::string, std::string, std::string, std::string>::value)
-	{
-		TaskType bigTask = TaskType::make_auto(lambda, "Large", " parameters", " require", " heap allocation");
-		globalPool.enqueue(std::move(bigTask));
-	}
+	//if (!TaskType::is_stored_on_stack<decltype(lambda_big), std::string, std::string, std::string, std::string>::value)
+	globalPool.enqueue(std::move(bigTask));
 }
-
 
 // 任务属性检查
 void taskPropertiesExample()
 {
 	auto lambda = [](int x) { return x * x; };
-
-	// 创建任务
 	TaskType task(lambda, 5);
 
 	// 检查属性
@@ -178,10 +163,11 @@ void taskPropertiesExample()
 		<< "Actual size:" << task_stack<decltype(lambda), int>::size << "\n"
 		<< "Copyable: " << (task.is_copyable() ? "Yes" : "No") << "\n"
 		<< "Moveable: " << (task.is_moveable() ? "Yes" : "No") << "\n"
-		<< "Valid for storage: " << (TaskType::task_invalid<decltype(lambda), int>::value ? "Yes" : "No") << "\n";
+		<< "Is stored on stack: " << (TaskType::is_stored_on_stack<decltype(lambda), int>::value ? "Yes" : "No") << "\n";
 }
 
-int main() {
+int main() 
+{
 	// 初始化线程池：10000任务容量,最小/大线程数1,无批处理
 	globalPool.init(10000, 1, 1, 1);
 
