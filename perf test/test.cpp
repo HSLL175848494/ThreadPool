@@ -20,7 +20,7 @@ void testC() {
 }
 
 #define WORKER 8
-#define PRODUCER 1
+#define PRODUCER 8
 #define SUBMIT_BATCH 32
 #define PROCESS_BATCH 32
 #define PEER 10000000/PRODUCER
@@ -111,7 +111,6 @@ double test_single_submit()
 int main()
 {
 	pool.init(QUEUELEN, WORKER, WORKER, PROCESS_BATCH);
-
 	const long long total_tasks = static_cast<long long>(PEER) * PRODUCER;
 	printf("\n=== Configuration Parameters ===\n");
 	printf("%-20s: %d\n", "Submit Batch Size", SUBMIT_BATCH);
@@ -124,7 +123,6 @@ int main()
 	printf("%-20s: %llu\n", "Max memory Usage", pool.get_max_usage());
 	printf("%-20s: %d\n", "Tasks per Producer", PEER);
 	printf("%-20s: %lld\n", "Total Tasks", total_tasks);
-
 
 	// Single task submission test
 	double single_time = test_single_submit();
@@ -149,7 +147,7 @@ int main()
 		"Time/Million", single_time_per_million);
 
 	printf("%-20s: %10.5f\n", "Ratio (Bulk/Single)", single_time / bulk_time);
+
 	pool.exit(true);
-	std::this_thread::sleep_for(std::chrono::seconds(1));
 	return 0;
 }

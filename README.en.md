@@ -1,20 +1,20 @@
 # HSLL::ThreadPool
 
-## Overview  
+## Overview
 
-This is a lightweight C++11 thread pool implementation that **requires no third-party dependencies and can be used with just a header file**.  
+This is a lightweight C++11 thread pool implementation, **requiring no third-party dependencies—just include the header file to use**.
 
-Its core strengths lie in **efficiency and flexibility**:  
-*   **Avoids dynamic memory allocation:** Utilizes a stack-based pre-allocated task container to store tasks and their parameters directly on the stack.  
-*   **Multiple submission methods:** Supports submitting single or batch tasks either blocking or non-blocking, catering to diverse scenarios.  
-*   **Flexible task management:** Allows inserting tasks at either the head or tail of the task queue (dual-end insertion).  
-*   **Intelligent load balancing:** Combines Round-Robin scheduling, secondary queue selection, and task stealing mechanisms to effectively distribute workload.  
-*   **Resource optimization:** Dynamically adjusts the number of active threads based on current load, minimizing unnecessary memory footprint.  
-*   **Graceful shutdown:** Offers both immediate shutdown and shutdown-after-all-tasks-complete modes.
+Its core strengths lie in **efficiency and flexibility**:
+*   **Avoids dynamic memory allocation:** Preallocated task containers based on stack storage directly hold tasks and their parameters on the stack.
+*   **Multiple submission methods:** Supports blocking or non-blocking submission of single tasks or batches to suit various scenarios.
+*   **Flexible task management:** Allows inserting tasks at either the head or tail of the queue (double-ended operation).
+*   **Intelligent load balancing:** Combines Round-Robin scheduling, secondary queue selection, and work-stealing to distribute workload efficiently.
+*   **Resource optimization:** Dynamically adjusts active thread count based on current load, reducing unnecessary memory usage.
+*   **Graceful shutdown:** Offers immediate termination or waits for all pending tasks to complete before shutting down.
 
 ## Inclusion
 ```cpp
-// Ensure the basic folder is in the same directory
+// Ensure the `basic` folder is in the same directory
 #include "ThreadPool.hpp"
 ```
 
@@ -25,126 +25,144 @@ Its core strengths lie in **efficiency and flexibility**:
 template <class TYPE = TaskStack<>>
 class ThreadPool
 ```
-- `TYPE`: Stack-based preallocated task container (see TaskStack.md)
+- `TYPE`: Preallocated stack-based task container (see TaskStack.md documentation).
 
+### Initialization (Fixed Threads)
+```cpp
+bool init(unsigned int queueLength, unsigned int threadNum, unsigned int batchSize) noexcept
+```
+- **Parameters**:
+  - `queueLength`: Capacity of each worker queue (must be ≥ 2).
+  - `threadNum`: Fixed number of worker threads (must be ≠ 0).
+  - `batchSize`: Number of tasks processed per batch (must be ≠ 0).
+- **Return Value**: Returns `true` on successful initialization, `false` on failure.
 
-### Initialization Method
+### Initialization (Dynamic Threads)
 ```cpp
 bool init(unsigned int queueLength, unsigned int minThreadNum,
-            unsigned int maxThreadNum, unsigned int batchSize = 1,
-            std::chrono::milliseconds adjustInterval = std::chrono::milliseconds(3000))
+          unsigned int maxThreadNum, unsigned int batchSize,
+          unsigned int adjustInterval = 2500) noexcept
 ```
-- **Parameters**:  
-  - `queueLength`: Capacity of each work queue  
-  - `minThreadNum`: Minimum number of worker threads  
-  - `maxThreadNum`: Maximum number of worker threads  
-  - `batchSize`: Number of tasks processed per batch (default: `1`)  
-  - `adjustInterval`: Interval for dynamically adjusting active thread count (default: `3000 milliseconds`)  
-- **Return Value**: Returns `true` if initialization succeeds  
-- **Functionality**: Allocates resources and starts worker threads (initialized to `maxThreadNum` value)  
+- **Parameters**:
+  - `queueLength`: Capacity of each worker queue (must be ≥ 2).
+  - `minThreadNum`: Minimum number of worker threads (must be ≠ 0 and ≤ maxThreadNum).
+  - `maxThreadNum`: Maximum number of worker threads (must be ≥ minThreadNum).
+  - `batchSize`: Number of tasks processed per batch (must be ≠ 0).
+  - `adjustInterval`: Dynamic thread adjustment interval in milliseconds (must be ≠ 0, default 2500).
+- **Return Value**: Returns `true` on successful initialization, `false` on failure.
+
+### Drain Method
+```cpp
+void drain() noexcept
+```
+- **Functionality**: Waits for all submitted tasks to complete execution.
+- **Important Notes**:
+  1. Adding new tasks is prohibited during this call.
+  2. Not thread-safe.
+  3. Does not release resources; queues remain usable after draining.
 
 ### Shutdown Method
 ```cpp
 void exit(bool shutdownPolicy = true)
 ```
 - `shutdownPolicy`: 
-  - `true`: Graceful shutdown (complete remaining tasks)
-  - `false`: Immediate shutdown
+  - `true`: Graceful shutdown (completes remaining tasks in queues).
+  - `false`: Immediate shutdown (discards pending tasks).
 
 ## Task Submission Interfaces
 
-| Method Type      | Non-Blocking | Blocking Wait | Timeout Wait  |
-|------------------|--------------|---------------|---------------|
-| Single Task      | emplace      | wait_emplace  | wait_emplace  |
-| Prebuilt Task    | enqueue      | wait_enqueue  | wait_enqueue  |
-| Bulk Tasks       | enqueue_bulk | wait_enqueue_bulk | wait_enqueue_bulk |
+| Method Type  | Non-Blocking | Blocking Wait | Timeout Wait  |
+|--------------|--------------|---------------|---------------|
+| Single Task  | emplace      | wait_emplace  | wait_emplace  |
+| Prebuilt Task| enqueue      | wait_enqueue  | wait_enqueue  |
+| Bulk Tasks   | enqueue_bulk | wait_enqueue_bulk | wait_enqueue_bulk |
 
 ## Basic Usage
 ```cpp
 #include "ThreadPool.hpp"
 
 using namespace HSLL;
-using Type = TaskStack<64,8>; // Task container: 64-byte capacity, 8-byte alignment
+using Type = TaskStack<64,8>; // Task container: max size 64 bytes, max alignment 8
 
 void Func(int a, double b) { /*...*/ }
 
 int main()
 {
-    // Create thread pool instance with Type container
+    // Create thread pool instance with task container Type
     ThreadPool<Type> pool;
 
-    // Initialize: queue capacity=1000, min threads=1, max threads=4, batch size=1 (default)
+    // Initialize: Queue capacity 1000, min threads 1, max threads 4, batch size 1 (default)
     pool.init(1000, 1, 4); 
 
-    // Submit task - basic example
+    // Add task - Basic example
     Type task(Func, 42, 3.14);
     pool.enqueue(task);
 
-    // Submit task - in-place construction
-    pool.emplace(Func, 42, 3.14); // Avoids temporary object construction
+    // Add task - In-place construction (avoids temporary object)
+    pool.emplace(Func, 42, 3.14);
 
-    // Submit task - std::function
-    std::function<void(int, double)> func = Func;
+    // Add task - std::function
+    std::function<void(int, int)> func(Func);
     pool.emplace(func, 42, 3.14);
 
-    // Submit task - lambda
-    pool.enqueue([](int a, double b){ /*...*/ });
+    // Add task - Lambda
+    pool.enqueue([](int a, int b) { /* ... */ });
 
-    // Recommended to manually control shutdown behavior
-    pool.exit(true); // Graceful shutdown. Can reinitialize with init() later
+    // Recommended: Manual graceful shutdown. Pool destructor calls exit(false)
+    pool.exit(true); // Graceful shutdown. Can reinitialize via init() later
 
     return 0;
 }
 ```
-**Other Usages**: Refer to the examples in the examples section, including:  
-asynchronous task example / cancellable task example / batch tasks example / smart storage task example / retrieve task attributes example  
+**See `examples` for more**: Asynchronous tasks / Cancellable tasks / Bulk submission / Smart storage / Static attribute checks.
 
 ## Task Lifecycle
 ```mermaid
 graph TD
     A[Task Submission] --> B{Submission Method}
     B -->|emplace| C[Construct task directly in queue]
-    B -->|enqueue/enqueue_bulk| D[Copy/Move prebuilt task to queue]
+    B -->|enqueue/enqueue_bulk| D[Copy/Move pre-constructed task into queue]
     
-    C --> E[Move task for execution]
+    C --> E[Task moved out during execution]
     D --> E
     
     E --> F[Execute task]
-    F --> G[Explicit destructor call]
-    G --> H[Cleanup execution memory]
+    F --> G[Explicitly call destructor]
+    G --> H[Clean up execution memory]
 ```
 
-## Parameter Passing
+## Parameter Passing Process
 ```mermaid
 graph LR
     A[Task Construction] --> B[Parameter Passing]
-    B --> C{Lvalue Parameters}
-    B --> D{Rvalue Parameters}
-    C --> E[Copied to task container]
-    D --> F[Moved to task container]
+    B --> C{Lvalue Parameter}
+    B --> D{Rvalue Parameter}
+    C --> E[Copy into task container]
+    D --> F[Move into task container]
     
     H[Task Execution] --> I[Parameters passed as lvalue references]
     E --> H
     F --> H
     
-    I --> J[Function Invocation]
-    J --> K{Parameter Types}
+    I --> J[Function Call]
+    J --> K{Parameter Type}
     K --> L[By Value T]
-    K --> M[Lvalue Reference T&]
-    K --> N[Const Reference const T&]
+    K --> M[By Lvalue Reference T&]
+    K --> N[By Const Reference const T&]
     K --> O[Unsupported: Rvalue Reference T&& ]:::unsupported
     
     classDef unsupported fill:#f10,stroke:#333
 ```
 
 ## Important Notes
-1. **Type Matching**: Submitted task types must exactly match queue task type
+1. **Type Matching**: Submitted task types must strictly match the queue's task type.
 2. **Exception Safety**:
-   - Queue operations must not throw exceptions
-   - `emplace()` requires noexcept parameter/copy/move construction
-   - `execute()` must handle all exceptions internally (no exception propagation)
-   
-**Unlike heap-allocated tasks, stack task copying can throw exceptions. Strict exception guarantees are necessary compromises for stack-based storage since asynchronous tasks cannot propagate exceptions to callers.**
+   - **Queue operations MUST NOT throw exceptions**.
+   - For `emplace`: Task construction (parameters/copy/move) MUST NOT throw.
+   - For `enqueue`/`enqueue_bulk`: Task copy/move construction MUST NOT throw.
+   - `execute()` MUST NOT throw. Handle all potential exceptions within the task itself.
+
+**Unlike heap-allocated tasks, copying stack-based tasks can fail. Asynchronous execution prevents propagating exceptions to the caller. Strict exception guarantees are a necessary compromise for stack-stored tasks.**
 
 ## Platform Support
 - Linux (aligned_alloc)
@@ -153,15 +171,10 @@ graph LR
 
 ## Project Structure
 
-- 📂 document--------------------Component Documentation
+- 📂 document--------------------Documentation
 - 📂 example---------------------Usage Examples
 - 📂 include---------------------Include Directory
 - 📂 perf_test-------------------Performance Tests
 - 📂 single_header_version-------Single-Header Version
-- 📄 README.md-------------------Project Documentation (Chinese)
+- 📄 README.md-------------------Project Documentation (中文)
 - 📄 README.en.md----------------Project Documentation (English)
-
-## Others  
-
-> I attempted to replace the queue in the current thread pool with a lock-free queue and implemented **[LFThreadPool](https://github.com/HSLL175848494/LFThreadPool)**.  
-Under different batch sizes and varying numbers of producer/consumer threads, the new approach and the original thread pool each have their own advantages.  
