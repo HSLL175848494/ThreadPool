@@ -643,6 +643,13 @@ namespace HSLL
 			notFullCond.notify_all();
 		}
 
+		void enableWait()
+		{
+			assert(memoryBlock);
+			std::lock_guard<std::mutex> lock(dataMutex);
+			isStopped = 0;
+		}
+
 		void release()
 		{
 			assert(memoryBlock);

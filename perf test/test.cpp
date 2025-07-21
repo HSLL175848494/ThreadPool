@@ -19,9 +19,9 @@ void testC() {
 
 }
 
-#define WORKER 2
-#define PRODUCER 8
-#define SUBMIT_BATCH 1
+#define WORKER 8
+#define PRODUCER 1
+#define SUBMIT_BATCH 32
 #define PROCESS_BATCH 32
 #define PEER 10000000/PRODUCER
 #define TSIZE 24
@@ -82,7 +82,6 @@ double test_bulk_submit()
 	for (auto& t : producers)
 		t.join();
 
-	pool.join(std::chrono::milliseconds(1));
 	auto end = std::chrono::high_resolution_clock::now();
 	std::chrono::duration<double, std::milli> duration = end - start;
 
@@ -103,7 +102,6 @@ double test_single_submit()
 	for (auto& t : producers)
 		t.join();
 
-	pool.join(std::chrono::milliseconds(1));
 	auto end = std::chrono::high_resolution_clock::now();
 	std::chrono::duration<double, std::milli> duration = end - start;
 	return duration.count();
@@ -151,7 +149,6 @@ int main()
 		"Time/Million", single_time_per_million);
 
 	printf("%-20s: %10.5f\n", "Ratio (Bulk/Single)", single_time / bulk_time);
-
 	pool.exit(true);
 	std::this_thread::sleep_for(std::chrono::seconds(1));
 	return 0;

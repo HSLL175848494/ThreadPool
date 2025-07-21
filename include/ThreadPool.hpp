@@ -18,7 +18,6 @@ static_assert(HSLL_THREADPOOL_SHRINK_FACTOR < HSLL_THREADPOOL_EXPAND_FACTOR&& HS
 
 namespace HSLL
 {
-
 	template <class T>
 	class SingleStealer
 	{
@@ -123,7 +122,6 @@ namespace HSLL
 
 	/**
 	 * @brief Thread pool implementation with multiple queues for task distribution
-	 * @tparam T Type of task objects to be processed, must implement execute() method
 	 */
 	template <class T = TaskStack<>>
 	class ThreadPool
@@ -132,31 +130,30 @@ namespace HSLL
 
 	private:
 
-		unsigned int threadNum;			  ///< Number of worker threads/queues
+		unsigned int threadNum;			
 		unsigned int minThreadNum;
 		unsigned int maxThreadNum;
 		unsigned int batchSize;
-		unsigned int queueLength;		  ///< Capacity of each internal queue
+		unsigned int queueLength;		
 		std::chrono::milliseconds adjustInterval;
 
+		Semaphore monitorSem;
+		std::atomic<bool> monitorFlag;
+
 		T* containers;
-		Semaphore exitSem;
-		Semaphore* stopSem;
-		Semaphore* startSem;
+		Semaphore* stoppedSem;
+		Semaphore* restartSem;
 		ReadWriteLock rwLock;
 		std::atomic<bool> exitFlag;
-		std::atomic<bool> shutdownPolicy;			  ///< Thread pool shutdown policy: true for graceful shutdown	
+		std::atomic<bool> shutdownPolicy;		
 
 		std::thread monitor;
-		TPBlockQueue<T>* queues;		  ///< Per-worker task queues
-		std::vector<std::thread> workers; ///< Worker thread collection
-		std::atomic<unsigned int> index;  ///< Atomic counter for round-robin task distribution to worker queues
+		TPBlockQueue<T>* queues;		
+		std::vector<std::thread> workers; 
+		std::atomic<unsigned int> index; 
 
 	public:
 
-		/**
-		 * @brief Constructs an uninitialized thread pool
-		 */
 		ThreadPool() : queues(nullptr) {}
 
 		/**
@@ -182,6 +179,7 @@ namespace HSLL
 
 			this->index = 0;
 			this->exitFlag = false;
+			this->monitorFlag = false;
 			this->shutdownPolicy = true;
 			this->minThreadNum = minThreadNum;
 			this->maxThreadNum = maxThreadNum;
@@ -416,74 +414,50 @@ namespace HSLL
 		}
 
 		/**
-		 * @brief Waits until all task queues are empty (all tasks have been taken from queues)
-		 * @note This does NOT guarantee all tasks have completed execution - it only ensures:
-		 *       1. All tasks have been dequeued by worker threads
-		 *       2. May return while some tasks are still being processed by workers
-		 * @details Continuously checks all active queues until they're empty.
-		 *          Uses yield() between checks to avoid busy waiting.
+		 * @brief Waits for all tasks to complete.
+		 * @note
+		 *  1. During the join operation, adding any new tasks is prohibited.
+		 *  2. This function is not thread-safe.
+		 *	3. This function does not clean up resources. After the call, the queue can be used normally.
 		 */
 		void join()
 		{
 			assert(queues);
 
-			while (true)
+			if (maxThreadNum > 1)
 			{
-				bool flag = true;
+				monitorSem.release();
 
-				for (int i = 0; i < maxThreadNum; ++i)
-				{
-					if (queues[i].get_exact_size())
-					{
-						flag = false;
-						break;
-					}
-				}
-
-				if (flag)
-					return;
-				else
+				while (!monitorFlag)
 					std::this_thread::yield();
 			}
-		}
 
-		/**
-		 * @brief Waits until all task queues are empty (all tasks dequeued) or sleeps for specified intervals between checks.
-		 * @note This does NOT guarantee all tasks have completed execution - it only ensures:
-		 *       1. All tasks have been dequeued by worker threads
-		 *       2. May return while some tasks are still being processed by workers
-		 * @tparam Rep Arithmetic type representing tick count
-		 * @tparam Period Type representing tick period
-		 * @param interval Sleep duration between queue checks. Smaller values increase responsiveness
-		 *                 but may use more CPU, larger values reduce CPU load but delay detection.
-		 */
-		template <class Rep, class Period>
-		void join(const std::chrono::duration<Rep, Period>& interval)
-		{
-			assert(queues);
+			ReadLockGuard lock(rwLock);
 
-			while (true)
+			for (int i = 0; i < threadNum; ++i)
 			{
-				bool flag = true;
-				for (int i = 0; i < maxThreadNum; ++i)
-				{
-					if (queues[i].get_exact_size())
-					{
-						flag = false;
-						break;
-					}
-				}
+				restartSem[i].release();
+				queues[i].stopWait();
+			}
 
-				if (flag)
-					return;
-				else
-					std::this_thread::sleep_for(interval);
+			for (int i = 0; i < threadNum; ++i)
+			{
+				stoppedSem[i].acquire();
+				queues[i].enableWait();
+			}
+
+			if (maxThreadNum > 1)
+			{
+				monitorFlag = false;
+				monitorSem.release();
 			}
 		}
 
 		/**
-		 * @brief Stops all workers and releases resources
-		 * @param shutdownPolicy true for graceful shutdown (waiting for tasks to complete), false for immediate shutdown
+		 * @brief Stops all workers and releases resources.
+		 * @param shutdownPolicy If true, performs a graceful shutdown (waits for tasks to complete);
+		 *                       if false, forces an immediate shutdown.
+		 * @note This function is not thread-safe.
 		 */
 		void exit(bool shutdownPolicy = true) noexcept
 		{
@@ -491,7 +465,8 @@ namespace HSLL
 
 			if (maxThreadNum > 1)
 			{
-				exitSem.release();
+				monitorFlag = true;
+				monitorSem.release();
 				monitor.join();
 			}
 
@@ -499,7 +474,7 @@ namespace HSLL
 			this->shutdownPolicy = shutdownPolicy;
 
 			for (unsigned i = 0; i < workers.size(); ++i)
-				startSem[i].release();
+				restartSem[i].release();
 
 			for (unsigned i = 0; i < workers.size(); ++i)
 				queues[i].stopWait();
@@ -554,8 +529,18 @@ namespace HSLL
 		{
 			while (true)
 			{
-				if (exitSem.try_acquire_for(adjustInterval))
-					return;
+				if (monitorSem.try_acquire_for(adjustInterval))
+				{
+					if (monitorFlag)
+					{
+						return;
+					}
+					else
+					{
+						monitorFlag = true;
+						monitorSem.acquire();
+					}
+				}
 
 				unsigned int allSize = queueLength * threadNum;
 				unsigned int totalSize = 0;
@@ -569,7 +554,7 @@ namespace HSLL
 					threadNum--;
 					rwLock.unlock_write();
 					queues[threadNum].stopWait();
-					stopSem[threadNum].acquire();
+					stoppedSem[threadNum].acquire();
 					queues[threadNum].release();
 				}
 				else if (totalSize > allSize * HSLL_THREADPOOL_EXPAND_FACTOR && threadNum < maxThreadNum)
@@ -581,7 +566,7 @@ namespace HSLL
 						if (!queues[i].init(queueLength))
 							break;
 
-						startSem[i].release();
+						restartSem[i].release();
 						succeed++;
 					}
 
@@ -654,8 +639,8 @@ namespace HSLL
 					task->~T();
 				}
 
-				stopSem[index].release();
-				startSem[index].acquire();
+				stoppedSem[index].release();
+				restartSem[index].acquire();
 
 				if (exitFlag)
 					break;
@@ -703,8 +688,8 @@ namespace HSLL
 					task->~T();
 				}
 
-				stopSem[index].release();
-				startSem[index].acquire();
+				stoppedSem[index].release();
+				restartSem[index].acquire();
 
 				if (exitFlag)
 					break;
@@ -756,8 +741,8 @@ namespace HSLL
 				while (shutdownPolicy && (count = queue->dequeue_bulk(tasks, size_threshold)))
 					execute_tasks(tasks, count);
 
-				stopSem[index].release();
-				startSem[index].acquire();
+				stoppedSem[index].release();
+				restartSem[index].acquire();
 
 				if (exitFlag)
 					break;
@@ -818,8 +803,8 @@ namespace HSLL
 				while (shutdownPolicy && (count = queue->dequeue_bulk(tasks, size_threshold)))
 					execute_tasks(tasks, count);
 
-				stopSem[index].release();
-				startSem[index].acquire();
+				stoppedSem[index].release();
+				restartSem[index].acquire();
 
 				if (exitFlag)
 					break;
@@ -830,10 +815,10 @@ namespace HSLL
 		{
 			unsigned int succeed = 0;
 
-			if (!(startSem = new(std::nothrow) Semaphore[2 * maxThreadNum]))
+			if (!(restartSem = new(std::nothrow) Semaphore[2 * maxThreadNum]))
 				goto clean_1;
 
-			stopSem = startSem + maxThreadNum;
+			stoppedSem = restartSem + maxThreadNum;
 
 			if (!(containers = (T*)ALIGNED_MALLOC(sizeof(T) * batchSize * maxThreadNum, alignof(T))))
 				goto clean_2;
@@ -869,7 +854,7 @@ namespace HSLL
 
 		clean_1:
 
-			delete[] startSem;
+			delete[] restartSem;
 
 			return false;
 		}
@@ -881,7 +866,7 @@ namespace HSLL
 
 			ALIGNED_FREE(queues);
 			ALIGNED_FREE(containers);
-			delete[] startSem;
+			delete[] restartSem;
 			queues = nullptr;
 			workers.clear();
 			workers.shrink_to_fit();
