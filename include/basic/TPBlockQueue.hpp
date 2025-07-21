@@ -632,8 +632,6 @@ namespace HSLL
 
 		void stopWait()
 		{
-			assert(memoryBlock);
-
 			{
 				std::lock_guard<std::mutex> lock(dataMutex);
 				isStopped = 1;
@@ -645,7 +643,6 @@ namespace HSLL
 
 		void enableWait()
 		{
-			assert(memoryBlock);
 			std::lock_guard<std::mutex> lock(dataMutex);
 			isStopped = 0;
 		}

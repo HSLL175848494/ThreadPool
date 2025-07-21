@@ -27,20 +27,40 @@ class ThreadPool
 ```
 - `TYPE`: 基于栈的预分配任务容器（详见TaskStack.md文档）
 
-### 初始化方法
+
+### 初始化方法（固定线程）
 ```cpp
-bool init(unsigned int queueLength, unsigned int minThreadNum,
-            unsigned int maxThreadNum, unsigned int batchSize = 1,
-            std::chrono::milliseconds adjustInterval = std::chrono::milliseconds(3000))
+bool init(unsigned int queueLength, unsigned int threadNum, unsigned int batchSize) noexcept
 ```
 - **参数**：
-  - `queueLength`: 每个工作队列的容量
-  - `minThreadNum`: 工作线程最小数量
-  - `maxThreadNum`:工作线程最大数量
-  - `batchSize`: 单次处理任务数
-  - `adjustInterval`：活跃线程数动态调整间隔
-- **返回值**：初始化成功返回true
-- **功能**：分配资源并启动工作线程(初始值为最大数量)
+  - `queueLength`：每个工作队列的容量（必须 ≥ 2）
+  - `threadNum`：固定的工作线程数量（必须 ≠ 0）
+  - `batchSize`：单次处理任务数（必须 ≠ 0）
+- **返回值**：初始化成功返回 `true`，失败返回 `false`
+
+### 初始化方法（动态线程）
+```cpp
+bool init(unsigned int queueLength, unsigned int minThreadNum,
+          unsigned int maxThreadNum, unsigned int batchSize,
+          unsigned int adjustInterval = 2500) noexcept
+```
+- **参数**：
+  - `queueLength`：每个工作队列的容量（必须 ≥ 2）
+  - `minThreadNum`：工作线程最小数量（必须 ≠ 0 且 ≤ maxThreadNum）
+  - `maxThreadNum`：工作线程最大数量（必须 ≥ minThreadNum）
+  - `batchSize`：单次处理任务数（必须 ≠ 0）
+  - `adjustInterval`：线程数动态调整间隔（毫秒，必须 ≠ 0，默认 2500）
+- **返回值**：初始化成功返回 `true`，失败返回 `false`
+
+### 排空方法
+```cpp
+void drain() noexcept
+```
+- **功能**：等待所有任务执行完成
+- **注意事项**：
+  1. 调用期间禁止添加新任务
+  2. 非线程安全方法
+  3. 调用后不释放资源，队列可继续使用
 
 ### 关闭方法
 ```cpp
@@ -86,7 +106,7 @@ int main()
 
     //添加任务_std::function
     std::function<void(int,int)> func(Func);
-    pool.emplace(f,42,3.14);
+    pool.emplace(func,42,3.14);
 
     //添加任务_lambda
     pool.enqueue([](int a,int b){});
@@ -97,7 +117,7 @@ int main()
     return 0;
 }
 ```
-**更多用法请参考example**：异步任务示例/可取消任务示例/批量任务示例/智能存储任务示例/任务属性静态检查
+**更多用法请参考example**：异步任务/可取消任务/批量任务/智能存储/属性静态检查
 
 ## 任务生命周期
 ```mermaid
@@ -161,8 +181,3 @@ graph LR
 - 📂 single_header_version-------单头文件版本
 - 📄 README.md-------------------中文项目说明
 - 📄 README.en.md----------------英文项目说明
-
-## 其它
-
-> 我尝试用无锁队列替换当前线程池中的队列，实现了 **[LFThreadPool](https://github.com/HSLL175848494/LFThreadPool)**。
-在不同批处理规模及生产者/消费者线程数量下，新方案与原版线程池各有优劣。
