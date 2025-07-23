@@ -35,7 +35,7 @@ ThreadPool<Type> pool;
 // Worker thread for batch submission
 void bulk_submit_worker()
 {
-	BatchSubmitter<Type, SUBMIT_BATCH> submitter(&pool);
+	BatchSubmitter<Type, SUBMIT_BATCH> submitter(pool);
 
 	int remaining = PEER;
 
@@ -111,8 +111,9 @@ double test_single_submit()
 int main()
 {
 	pool.init(QUEUELEN, WORKER, WORKER, PROCESS_BATCH);
+
 	const long long total_tasks = static_cast<long long>(PEER) * PRODUCER;
-	printf("\n=== Configuration Parameters ===\n");
+
 	printf("%-20s: %d\n", "Submit Batch Size", SUBMIT_BATCH);
 	printf("%-20s: %d\n", "Process Batch Size", PROCESS_BATCH);
 	printf("%-20s: %d\n", "Task Container Size", TSIZE);
@@ -129,22 +130,22 @@ int main()
 	double single_throughput = total_tasks / (single_time / 1000.0) / 1000000.0;		 // M/s
 	double single_time_per_million = (single_time / 1000.0) / (total_tasks / 1000000.0); // s/M
 
-
 	// Batch submission test
 	double bulk_time = test_bulk_submit();
 	double bulk_throughput = total_tasks / (bulk_time / 1000.0) / 1000000.0;		 // M/s
 	double bulk_time_per_million = (bulk_time / 1000.0) / (total_tasks / 1000000.0); // s/M
 
 	printf("\n=== Test Results ===\n");
-	printf("%-20s: %10.2f ms | %10s: %8.2f M/s | %15s: %.4f s/M\n",
-		"Bulk Submit Time", bulk_time,
-		"Throughput", bulk_throughput,
-		"Time/Million", bulk_time_per_million);
 
 	printf("%-20s: %10.2f ms | %10s: %8.2f M/s | %15s: %.4f s/M\n",
 		"Single Submit Time", single_time,
 		"Throughput", single_throughput,
 		"Time/Million", single_time_per_million);
+
+	printf("%-20s: %10.2f ms | %10s: %8.2f M/s | %15s: %.4f s/M\n",
+		"Bulk Submit Time", bulk_time,
+		"Throughput", bulk_throughput,
+		"Time/Million", bulk_time_per_million);
 
 	printf("%-20s: %10.5f\n", "Ratio (Bulk/Single)", single_time / bulk_time);
 

@@ -116,39 +116,34 @@ namespace HSLL
 	//helper5_invoke
 	enum TASK_TUPLE_TYPE
 	{
-		normal,
-		async,
-		cancelable
+		TASK_TUPLE_TYPE_NORMAL,
+		TASK_TUPLE_TYPE_ASYNC,
+		TASK_TUPLE_TYPE_CANCELABLE
 	};
 
 	template<TASK_TUPLE_TYPE TYPE>
 	struct Invoker {};
 
 	template<>
-	struct Invoker<normal>
+	struct Invoker<TASK_TUPLE_TYPE_NORMAL>
 	{
-		template <class R, typename std::enable_if<std::is_void<R>::value, bool>::type = true,
-			typename Callable, typename... Ts>
+		template <class R, typename Callable, typename... Ts>
 		static void invoke(Callable& callable, Ts &...args)
 		{
 			callable(args...);
 		}
-
-		template <class R, typename std::enable_if<!std::is_void<R>::value, bool>::type = true,
-			typename Callable, typename... Ts>
-		static R invoke(Callable& callable, Ts &...args)
-		{
-			return callable(args...);
-		}
 	};
 
 	template<>
-	struct Invoker<async>
+	struct Invoker<TASK_TUPLE_TYPE_ASYNC>
 	{
 		template <class R, typename std::enable_if<std::is_void<R>::value, bool>::type = true,
 			typename Promise, typename Callable, typename... Ts>
 		static void invoke(Promise& promise, Callable& callable, Ts &...args)
 		{
+			static_assert(std::is_void<decltype(callable(args...))>::value,
+				"Callable must return void, but returns a non-void type");
+
 			callable(args...);
 		}
 
@@ -156,24 +151,31 @@ namespace HSLL
 			typename Promise, typename Callable, typename... Ts>
 		static R invoke(Promise& promise, Callable& callable, Ts &...args)
 		{
+			static_assert(!std::is_void<decltype(callable(args...))>::value,
+				"Callable must return a non-void type, but returns void");
+
 			return callable(args...);
 		}
 	};
 
 	template<>
-	struct Invoker<cancelable>
+	struct Invoker<TASK_TUPLE_TYPE_CANCELABLE>
 	{
 		template <class R, typename std::enable_if<std::is_void<R>::value, bool>::type = true,
-			typename Promise, typename Callable, typename... Ts>
-		static void invoke(Promise& promise, std::atomic<bool>& flag, Callable& callable, Ts &...args)
+			typename Promise, typename Flag, typename Callable, typename... Ts>
+		static void invoke(Promise& promise, Flag& flag, Callable& callable, Ts &...args)
 		{
+			static_assert(std::is_void<decltype(callable(args...))>::value,
+				"Callable must return void, but returns a non-void type");
 			callable(args...);
 		}
 
 		template <class R, typename std::enable_if<!std::is_void<R>::value, bool>::type = true,
-			typename Promise, typename Callable, typename... Ts>
-		static R invoke(Promise& promise, std::atomic<bool>& flag, Callable& callable, Ts &...args)
+			typename Promise, typename Flag, typename Callable, typename... Ts>
+		static R invoke(Promise& promise, Flag& flag, Callable& callable, Ts &...args)
 		{
+			static_assert(!std::is_void<decltype(callable(args...))>::value,
+				"Callable must return a non-void type, but returns void");
 			return callable(args...);
 		}
 	};
@@ -193,15 +195,15 @@ namespace HSLL
 		return Invoker<TYPE>::template invoke<R>(std::get<Is>(tup)...);
 	}
 
-	template <TASK_TUPLE_TYPE TYPE = normal, class R = void, typename std::enable_if<std::is_void<R>::value, bool>::type = true,
-		typename Tuple>
+	template <TASK_TUPLE_TYPE TYPE = TASK_TUPLE_TYPE_NORMAL, class R = void,
+		typename std::enable_if<std::is_void<R>::value, bool>::type = true, typename Tuple>
 	void tuple_apply(Tuple& tup)
 	{
 		apply_impl<TYPE, R>(tup, typename make_index_sequence<std::tuple_size<Tuple>::value>::type{});
 	}
 
-	template <TASK_TUPLE_TYPE TYPE = normal, class R = void, typename std::enable_if<!std::is_void<R>::value, bool>::type = true,
-		typename Tuple>
+	template <TASK_TUPLE_TYPE TYPE = TASK_TUPLE_TYPE_NORMAL, class R = void,
+		typename std::enable_if<!std::is_void<R>::value, bool>::type = true, typename Tuple>
 	R tuple_apply(Tuple& tup)
 	{
 		return apply_impl<TYPE, R>(tup, typename make_index_sequence<std::tuple_size<Tuple>::value>::type{});
@@ -255,7 +257,6 @@ namespace HSLL
 		 */
 		void operator()()
 		{
-			assert(storage);
 			tuple_apply(*storage);
 		}
 	};
@@ -271,31 +272,36 @@ namespace HSLL
 	template <class R, class F, class... Args>
 	class HeapCallable_Async
 	{
-		using Package = std::tuple<std::promise<R>,
-			typename std::decay<F>::type, typename std::decay<Args>::type...>;
+		using Package = std::tuple<std::promise<R>, typename std::decay<F>::type, typename std::decay<Args>::type...>;
 
-	private:
+	protected:
 		std::unique_ptr<Package> storage;
 
 		template<class T = R, typename std::enable_if<std::is_void<T>::value, bool>::type = true>
-		void invoke() {
+		void invoke()
+		{
 			auto& promise = std::get<0>(*storage);
-			try {
-				tuple_apply<async, R>(*storage);
+			try
+			{
+				tuple_apply<TASK_TUPLE_TYPE_ASYNC, R>(*storage);
 				promise.set_value();
 			}
-			catch (...) {
+			catch (...)
+			{
 				promise.set_exception(std::current_exception());
 			}
 		}
 
 		template<class T = R, typename std::enable_if<!std::is_void<T>::value, bool>::type = true>
-		void invoke() {
+		void invoke()
+		{
 			auto& promise = std::get<0>(*storage);
-			try {
-				promise.set_value(tuple_apply<async, R>(*storage));
+			try
+			{
+				promise.set_value(tuple_apply<TASK_TUPLE_TYPE_ASYNC, R>(*storage));
 			}
-			catch (...) {
+			catch (...)
+			{
 				promise.set_exception(std::current_exception());
 			}
 		}
@@ -316,7 +322,6 @@ namespace HSLL
 		 */
 		void operator()()
 		{
-			assert(storage);
 			invoke();
 		}
 
@@ -327,8 +332,184 @@ namespace HSLL
 		 */
 		std::future<R> get_future()
 		{
-			assert(storage);
 			return std::get<0>(*storage).get_future();
+		}
+	};
+
+	class Cancelable_Flag
+	{
+		std::atomic<bool> flag;
+
+	public:
+
+		Cancelable_Flag(bool ignore = false) : flag(false) {};
+
+		bool cancel()
+		{
+			bool expected = false;
+
+			if (flag.compare_exchange_strong(expected, true))
+				return true;
+
+			return false;
+		}
+
+		/**
+		 * @brief Enters a critical section making the task non-cancelable
+		 * @return true Successfully entered critical section
+		 * @return false Entry failed (task was already canceled, or critical section was already entered successfully)
+		 */
+		bool enter()
+		{
+			bool expected = false;
+
+			if (flag.compare_exchange_strong(expected, true))
+				return true;
+
+			return false;
+		}
+
+		Cancelable_Flag& operator=(Cancelable_Flag&& other)
+		{
+			if (this != &other)
+				flag = other.flag.load();
+
+			return *this;
+		}
+
+		Cancelable_Flag(Cancelable_Flag&& other) :flag(other.flag.load()) {}
+	};
+
+	/**
+	 * @class Cancelable
+	 * @brief Manages cancellation state and result propagation for asynchronous tasks.
+	 * @tparam R Return type of the associated asynchronous task
+	 */
+	template<class R>
+	class Cancelable
+	{
+	private:
+
+		Cancelable_Flag flag;
+		std::promise<R> promise;
+		std::future<R> future;
+
+	public:
+
+		Cancelable() :future(promise.get_future()) {}
+
+		/**
+		 * @brief Requests cancellation of the associated task
+		 * @return true if cancellation succeeded (state was active), false if already canceled/completed
+		 * @note On success:
+		 * - Sets promise exception with "Task canceled" error
+		 * - Transitions state to canceled
+		 */
+		bool cancel()
+		{
+			bool result;
+
+			if (result = flag.cancel())
+				promise.set_exception(std::make_exception_ptr(std::runtime_error("Task canceled")));
+
+			return result;
+		}
+
+		/**
+		 * @brief Retrieves task result (blocking)
+		 * @return Result value for non-void specializations
+		 * @throws Propagates any exception stored in the promise
+		 * @throws std::runtime_error("Task canceled") if canceled
+		 */
+		template <typename U = R>
+		typename std::enable_if<!std::is_void<U>::value, U>::type get()
+		{
+			return future.get();
+		}
+
+		/**
+		 * @brief Synchronizes with task completion (void specialization)
+		 * @throws Propagates any exception stored in the promise
+		 * @throws std::runtime_error("Task canceled") if canceled
+		 */
+		template <typename U = R>
+		typename std::enable_if<std::is_void<U>::value>::type get()
+		{
+			future.get();
+		}
+
+		/**
+		 * @brief Blocks until result becomes available
+		 */
+		void wait() const
+		{
+			future.wait();
+		}
+
+		/**
+		 * @brief Blocks with timeout duration
+		 * @return Status of future after waiting
+		 */
+		template <class Rep, class Period>
+		std::future_status wait_for(const std::chrono::duration<Rep, Period>& timeout_duration) const
+		{
+			return future.wait_for(timeout_duration);
+		}
+
+		/**
+		 * @brief Blocks until specified time point
+		 * @return Status of future after waiting
+		 */
+		template <class Clock, class Duration>
+		std::future_status wait_until(const std::chrono::time_point<Clock, Duration>& timeout_time) const
+		{
+			return future.wait_until(timeout_time);
+		}
+
+		/**
+		 * @brief Enters a critical section making the task non-cancelable
+		 * @return true Successfully entered critical section
+		 * @return false Entry failed (task was already canceled, or critical section was already entered successfully)
+		 */
+		bool enter()
+		{
+			return flag.enter();
+		}
+
+		// Result setters (critical section only) -----------------------------------
+
+		/**
+		 * @brief Sets void result value
+		 * @pre Must be in critical section (via successful enter())
+		 * @throws std::future_error if result already set or not in critical section
+		 */
+		template <class T = R, typename std::enable_if<std::is_void<T>::value, bool>::type = true>
+		void set_value()
+		{
+			promise.set_value();
+		}
+
+		/**
+		 * @brief Sets non-void result value
+		 * @param value Result to store in promise
+		 * @pre Must be in critical section (via successful enter())
+		 * @throws std::future_error if result already set or not in critical section
+		 */
+		template <class U, class T = R, typename std::enable_if<!std::is_void<T>::value, bool>::type = true>
+		void set_value(U&& value)
+		{
+			promise.set_value(std::forward<T>(value));
+		}
+
+		/**
+		 * @brief Stores exception in promise
+		 * @param e Exception pointer to store
+		 * @pre Must be in critical section (via successful enter())
+		 * @throws std::future_error if exception already set or not in critical section
+		 */
+		void set_exception(std::exception_ptr e)
+		{
+			promise.set_exception(e);
 		}
 	};
 
@@ -343,31 +524,37 @@ namespace HSLL
 	template <class R, class F, class... Args>
 	class HeapCallable_Cancelable
 	{
-		using Package = std::tuple<std::promise<R>, std::atomic<bool>,
+		using Package = std::tuple<std::promise<R>, Cancelable_Flag,
 			typename std::decay<F>::type, typename std::decay<Args>::type...>;
 
 	private:
 		std::shared_ptr<Package> storage;
 
 		template<class T = R, typename std::enable_if<std::is_void<T>::value, bool>::type = true>
-		void invoke() {
+		void invoke()
+		{
 			auto& promise = std::get<0>(*storage);
-			try {
-				tuple_apply<cancelable, R>(*storage);
+			try
+			{
+				tuple_apply<TASK_TUPLE_TYPE_CANCELABLE, R>(*storage);
 				promise.set_value();
 			}
-			catch (...) {
+			catch (...)
+			{
 				promise.set_exception(std::current_exception());
 			}
 		}
 
 		template<class T = R, typename std::enable_if<!std::is_void<T>::value, bool>::type = true>
-		void invoke() {
+		void invoke()
+		{
 			auto& promise = std::get<0>(*storage);
-			try {
-				promise.set_value(tuple_apply<cancelable, R>(*storage));
+			try
+			{
+				promise.set_value(tuple_apply<TASK_TUPLE_TYPE_CANCELABLE, R>(*storage));
 			}
-			catch (...) {
+			catch (...)
+			{
 				promise.set_exception(std::current_exception());
 			}
 		}
@@ -377,30 +564,71 @@ namespace HSLL
 		struct Controller
 		{
 		private:
+
+			std::future<R> future;
 			std::shared_ptr<Package> storage;
 
 		public:
 
-			Controller(std::shared_ptr<Package> storage) :storage(storage) {};
+			Controller(std::shared_ptr<Package> storage)
+				:storage(storage), future(std::get<0>(*storage).get_future()) {};
 
 			/**
-			 * @brief Attempts to cancel the callable execution
-			 * @return true if successfully canceled, false if already executed
-			 * @pre Object must be in a valid state (storage != nullptr)
+			 * @brief Requests cancellation of the associated task
+			 * @return true if cancellation succeeded (state was active), false if already canceled/completed
+			 * @note On success:
+			 * - Sets promise exception with "Task canceled" error
+			 * - Transitions state to canceled
 			 */
 			bool cancel()
 			{
-				assert(storage);
-				bool expected = false;
-				auto& flag = std::get<1>(*storage);
+				bool result;
 
-				if (flag.compare_exchange_strong(expected, true))
-				{
-					auto& promise = std::get<0>(*storage);
-					promise.set_exception(std::make_exception_ptr(std::runtime_error("Task canceled")));
-					return true;
-				}
-				return false;
+				if (result = std::get<1>(*storage).cancel())
+					std::get<0>(*storage).set_exception(std::make_exception_ptr(std::runtime_error("Task canceled")));
+
+				return result;
+			}
+
+			/**
+			 * @brief Retrieves task result (blocking)
+			 * @return Result value for non-void specializations
+			 * @throws Propagates any exception stored in the promise
+			 * @throws std::runtime_error("Task canceled") if canceled
+			 */
+			template <typename U = R>
+			typename std::enable_if<!std::is_void<U>::value, U>::type get()
+			{
+				return future.get();
+			}
+
+			/**
+			 * @brief Synchronizes with task completion (void specialization)
+			 * @throws Propagates any exception stored in the promise
+			 * @throws std::runtime_error("Task canceled") if canceled
+			 */
+			template <typename U = R>
+			typename std::enable_if<std::is_void<U>::value>::type get()
+			{
+				future.get();
+			}
+
+			/**
+			 * @brief Blocks until result becomes available
+			 */
+			void wait() const
+			{
+				future.wait();
+			}
+
+			/**
+			 * @brief Blocks with timeout duration
+			 * @return Status of future after waiting
+			 */
+			template <class Rep, class Period>
+			std::future_status wait_for(const std::chrono::duration<Rep, Period>& timeout_duration) const
+			{
+				return future.wait_for(timeout_duration);
 			}
 		};
 
@@ -419,11 +647,9 @@ namespace HSLL
 		 */
 		void operator()()
 		{
-			assert(storage);
-			bool expected = false;
 			auto& flag = std::get<1>(*storage);
 
-			if (flag.compare_exchange_strong(expected, true))
+			if (flag.enter())
 				invoke();
 		}
 
@@ -431,17 +657,6 @@ namespace HSLL
 		{
 			assert(storage);
 			return Controller(storage);
-		}
-
-		/**
-		 * @brief Retrieves the future associated with the promise
-		 * @return std::future<R> Future object for the call result
-		 * @pre Object must be in a valid state (storage != nullptr)
-		 */
-		std::future<R> get_future()
-		{
-			assert(storage);
-			return std::get<0>(*storage).get_future();
 		}
 
 		HeapCallable_Cancelable(const HeapCallable_Cancelable& other) = delete;

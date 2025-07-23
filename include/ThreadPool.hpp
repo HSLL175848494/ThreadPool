@@ -952,7 +952,7 @@ namespace HSLL
 		T* elements;
 		unsigned int size;
 		unsigned int index;
-		ThreadPool<T>* pool;
+		ThreadPool<T>& pool;
 
 		bool check_and_submit()
 		{
@@ -967,8 +967,7 @@ namespace HSLL
 		* @brief Constructs a batch submitter associated with a thread pool
 		* @param pool Pointer to the thread pool for batch task submission
 		*/
-		BatchSubmitter(ThreadPool<T>* pool) : size(0), index(0), elements((T*)buf), pool(pool) {
-			assert(pool);
+		BatchSubmitter(ThreadPool<T>& pool) : size(0), index(0), elements((T*)buf), pool(pool) {
 		}
 
 		/**
@@ -1056,13 +1055,13 @@ namespace HSLL
 			if (!len2)
 			{
 				if (len1 == 1)
-					submitted = pool->template enqueue<POS>(std::move(*(elements + start))) ? 1 : 0;
+					submitted = pool.template enqueue<POS>(std::move(*(elements + start))) ? 1 : 0;
 				else
-					submitted = pool->template enqueue_bulk<MOVE, POS>(elements + start, len1);
+					submitted = pool.template enqueue_bulk<MOVE, POS>(elements + start, len1);
 			}
 			else
 			{
-				submitted = pool->template enqueue_bulk<MOVE, POS>(
+				submitted = pool.template enqueue_bulk<MOVE, POS>(
 					elements + start, len1,
 					elements, len2
 				);
