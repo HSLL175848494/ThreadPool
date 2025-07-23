@@ -398,9 +398,15 @@ namespace HSLL
 			return false;
 		}
 
-		Cancelable_Flag(Cancelable_Flag&& other) :flag(other.flag.load()) {}
+		Cancelable_Flag& operator=(Cancelable_Flag&& other)
+		{
+			if (this != &other)
+				flag = other.flag.load();
 
-		Cancelable_Flag& operator=(Cancelable_Flag&& other) { if (this != &other) flag = other.flag.load(); }
+			return *this;
+		}
+
+		Cancelable_Flag(Cancelable_Flag&& other) :flag(other.flag.load()) {}
 	};
 
 	/**
