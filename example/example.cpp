@@ -53,19 +53,21 @@ void asyncExample()
 	}
 }
 
-// 异步任务示例2
+// 异步任务示例2(效率远高于堆上任务)
 void asyncExample2()
 {
-	std::promise<int> promise;
+	std::promise<int> promise;//需要确保任务返回前引用有效
+
 	globalPool.enqueue([&]() {
 		promise.set_value(666);
 		});
+
 	std::future<int> future = promise.get_future();
-	std::cout << "Async result2: " << future.get() << std::endl;
+	std::cout << "Async result: " << future.get() << std::endl;
 }
 
 // 可取消任务示例
-void cancelableExample()
+void cancelableExample1()
 {
 	auto task = make_callable_cancelable<void>([]() {
 		std::cout << "Cancelable task completed." << std::endl;
@@ -73,7 +75,6 @@ void cancelableExample()
 		});
 
 	auto controller = task.get_controller();
-	auto future = task.get_future();
 
 	globalPool.enqueue(std::move(task));
 	std::this_thread::sleep_for(std::chrono::nanoseconds(150));
@@ -81,6 +82,15 @@ void cancelableExample()
 	if (controller.cancel())
 	{
 		std::cout << "Task canceled successfully." << std::endl;
+
+		try
+		{
+			controller.get();
+			std::cout << "Task finished normally." << std::endl;
+		}
+		catch (const std::exception& e) {
+			std::cerr << "Task exception: " << e.what() << std::endl;
+		}
 	}
 	else
 	{
@@ -88,11 +98,63 @@ void cancelableExample()
 
 		try
 		{
-			future.get();
+			controller.get();
 			std::cout << "Task finished normally." << std::endl;
 		}
 		catch (const std::exception& e) {
-			std::cerr << "Task canceled: " << e.what() << std::endl;
+			std::cerr << "Task exception: " << e.what() << std::endl;
+		}
+	}
+}
+
+// 可取消任务示例2(效率远高于堆上任务)
+void cancelableExample2()
+{
+	Cancelable<void> cancelable;//需要确保任务返回前引用有效
+	
+	globalPool.enqueue([&]() {
+
+		if (cancelable.enter())//尝试进入临界区
+		{
+			try
+			{
+				std::cout << "Cancelable task completed." << std::endl;
+				cancelable.set_value();
+			}
+			catch (const std::exception&)
+			{
+				cancelable.set_exception(std::make_exception_ptr(std::current_exception()));
+			}
+		}
+		return;
+		});
+
+	std::this_thread::sleep_for(std::chrono::nanoseconds(150));
+
+	if (cancelable.cancel())
+	{
+		std::cout << "Task canceled successfully." << std::endl;
+
+		try
+		{
+			cancelable.get();
+			std::cout << "Task finished normally." << std::endl;
+		}
+		catch (const std::exception& e) {
+			std::cerr << "Task exception: " << e.what() << std::endl;
+		}
+	}
+	else
+	{
+		std::cout << "Task already started." << std::endl;
+
+		try
+		{
+			cancelable.get();
+			std::cout << "Task finished normally." << std::endl;
+		}
+		catch (const std::exception& e) {
+			std::cerr << "Task exception: " << e.what() << std::endl;
 		}
 	}
 }
@@ -100,7 +162,7 @@ void cancelableExample()
 // 批量任务提交示例
 void batchExample()
 {
-	BatchSubmitter<TaskType, 10> batch(&globalPool);
+	BatchSubmitter<TaskType, 10> batch(globalPool);
 
 	//BatchSubmitter会在容量已满时自动提交,即第10次
 	for (int i = 0; i < 10; ++i) {
@@ -166,7 +228,7 @@ void taskPropertiesExample()
 		<< "Is stored on stack: " << (TaskType::is_stored_on_stack<decltype(lambda), int>::value ? "Yes" : "No") << "\n";
 }
 
-int main() 
+int main()
 {
 	// 初始化线程池：10000任务容量,最小/大线程数1,无批处理
 	globalPool.init(10000, 1, 1, 1);
@@ -189,7 +251,11 @@ int main()
 	std::this_thread::sleep_for(std::chrono::milliseconds(10));
 
 	std::cout << "\n==== Cancelable Task Example ====" << std::endl;
-	cancelableExample();
+	cancelableExample1();
+	std::this_thread::sleep_for(std::chrono::milliseconds(10));
+
+	std::cout << "\n==== Cancelable Task Example2 ====" << std::endl;
+	cancelableExample2();
 	std::this_thread::sleep_for(std::chrono::milliseconds(10));
 
 	std::cout << "\n==== Batch Processing Example ====" << std::endl;
