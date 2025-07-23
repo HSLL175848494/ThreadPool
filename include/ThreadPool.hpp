@@ -31,11 +31,11 @@ namespace HSLL
 		unsigned int* threadNum;
 		unsigned int threshold;
 
-		ReadWriteLock* rwLock;
+		SpinReadWriteLock* rwLock;
 		TPBlockQueue<T>* queues;
 		TPBlockQueue<T>* ignore;
 
-		SingleStealer(ReadWriteLock* rwLock, TPBlockQueue<T>* queues, TPBlockQueue<T>* ignore,
+		SingleStealer(SpinReadWriteLock* rwLock, TPBlockQueue<T>* queues, TPBlockQueue<T>* ignore,
 			unsigned int queueLength, unsigned int* threadNum, bool monitor)
 		{
 			this->index = 0;
@@ -96,11 +96,11 @@ namespace HSLL
 		unsigned int* threadNum;
 		unsigned int threshold;
 
-		ReadWriteLock* rwLock;
+		SpinReadWriteLock* rwLock;
 		TPBlockQueue<T>* queues;
 		TPBlockQueue<T>* ignore;
 
-		BulkStealer(ReadWriteLock* rwLock, TPBlockQueue<T>* queues, TPBlockQueue<T>* ignore, unsigned int queueLength,
+		BulkStealer(SpinReadWriteLock* rwLock, TPBlockQueue<T>* queues, TPBlockQueue<T>* ignore, unsigned int queueLength,
 			unsigned int* threadNum, unsigned int batchSize, bool monitor)
 		{
 			this->index = 0;
@@ -172,7 +172,7 @@ namespace HSLL
 		T* containers;
 		Semaphore* stoppedSem;
 		Semaphore* restartSem;
-		ReadWriteLock rwLock;
+		SpinReadWriteLock rwLock;
 		std::atomic<bool> exitFlag;
 		std::atomic<bool> shutdownPolicy;
 
@@ -541,6 +541,14 @@ namespace HSLL
 		ThreadPool& operator=(ThreadPool&&) = delete;
 
 	private:
+
+		unsigned int caculate_threshold()
+		{
+			if (queueLength <= 40)
+				return 1;
+			else
+				return queueLength * 0.05;
+		}
 
 		unsigned int next_index() noexcept
 		{

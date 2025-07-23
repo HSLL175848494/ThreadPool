@@ -787,43 +787,126 @@ namespace HSLL
 	};
 }
 
+
+namespace HSLL
+{
+	constexpr long long HSLL_SPINREADWRITELOCK_MAXREADER = (1LL << 62);
+
+	class SpinReadWriteLock
+	{
+	private:
+		std::atomic<long long> count;
+
+	public:
+
+		SpinReadWriteLock() :count(0) {}
+
+		void lock_read()
+		{
+			long long old = count.load(std::memory_order_relaxed);
+
+			while (true)
+			{
+				if (old < 0)
+				{
+					std::this_thread::yield();
+					old = count.load(std::memory_order_relaxed);
+				}
+				else if (count.compare_exchange_weak(old, old + 1, std::memory_order_acquire, std::memory_order_relaxed))
+				{
+					break;
+				}
+			}
+		}
+
+		void unlock_read()
+		{
+			count.fetch_sub(1, std::memory_order_relaxed);
+		}
+
+		void lock_write()
+		{
+			long long old = count.load(std::memory_order_relaxed);
+
+			while (true)
+			{
+				if (old < 0)
+				{
+					std::this_thread::yield();
+					old = count.load(std::memory_order_relaxed);
+				}
+				else if (count.compare_exchange_weak(old, old - HSLL_SPINREADWRITELOCK_MAXREADER, std::memory_order_acquire, std::memory_order_relaxed))
+				{
+					break;
+				}
+			}
+
+			while (count.load(std::memory_order_relaxed) != -HSLL_SPINREADWRITELOCK_MAXREADER);
+
+			std::atomic_thread_fence(std::memory_order_acquire);
+		}
+
+		void unlock_write()
+		{
+			count.fetch_add(HSLL_SPINREADWRITELOCK_MAXREADER, std::memory_order_release);
+		}
+
+		SpinReadWriteLock(const SpinReadWriteLock&) = delete;
+		SpinReadWriteLock& operator=(const SpinReadWriteLock&) = delete;
+	};
+
+	class ReadLockGuard
+	{
+	private:
+
+		SpinReadWriteLock& lock;
+
+	public:
+
+		explicit ReadLockGuard(SpinReadWriteLock& lock) : lock(lock)
+		{
+			lock.lock_read();
+		}
+
+		~ReadLockGuard()
+		{
+			lock.unlock_read();
+		}
+
+		ReadLockGuard(const ReadLockGuard&) = delete;
+		ReadLockGuard& operator=(const ReadLockGuard&) = delete;
+	};
+
+	class WriteLockGuard
+	{
+	private:
+
+		SpinReadWriteLock& lock;
+
+	public:
+
+		explicit WriteLockGuard(SpinReadWriteLock& lock) : lock(lock)
+		{
+			lock.lock_write();
+		}
+
+		~WriteLockGuard()
+		{
+			lock.unlock_write();
+		}
+
+		WriteLockGuard(const WriteLockGuard&) = delete;
+		WriteLockGuard& operator=(const WriteLockGuard&) = delete;
+	};
+}
+
+
 #if defined(_WIN32)
 #define NOMINMAX
 #include <windows.h>
 
 namespace HSLL
 {
-	class ReadWriteLock {
-	public:
-		ReadWriteLock() {
-			InitializeSRWLock(&srwlock_);
-		}
-
-		~ReadWriteLock() = default;
-
-		void lock_read() {
-			AcquireSRWLockShared(&srwlock_);
-		}
-
-		void unlock_read() {
-			ReleaseSRWLockShared(&srwlock_);
-		}
-
-		void lock_write() {
-			AcquireSRWLockExclusive(&srwlock_);
-		}
-
-		void unlock_write() {
-			ReleaseSRWLockExclusive(&srwlock_);
-		}
-
-		ReadWriteLock(const ReadWriteLock&) = delete;
-		ReadWriteLock& operator=(const ReadWriteLock&) = delete;
-
-	private:
-		SRWLOCK srwlock_;
-	};
-
 	class Semaphore
 	{
 	public:
@@ -890,43 +973,9 @@ namespace HSLL
       defined(__OpenBSD__) || defined(__NetBSD__)
 
 #include <semaphore.h>
-#include <pthread.h>
 
 namespace HSLL
 {
-	class ReadWriteLock {
-	public:
-		ReadWriteLock() {
-			pthread_rwlock_init(&rwlock_, nullptr);
-		}
-
-		~ReadWriteLock() {
-			pthread_rwlock_destroy(&rwlock_);
-		}
-
-		void lock_read() {
-			pthread_rwlock_rdlock(&rwlock_);
-		}
-
-		void unlock_read() {
-			pthread_rwlock_unlock(&rwlock_);
-		}
-
-		void lock_write() {
-			pthread_rwlock_wrlock(&rwlock_);
-		}
-
-		void unlock_write() {
-			pthread_rwlock_unlock(&rwlock_);
-		}
-
-		ReadWriteLock(const ReadWriteLock&) = delete;
-		ReadWriteLock& operator=(const ReadWriteLock&) = delete;
-
-	private:
-		pthread_rwlock_t rwlock_;
-	};
-
 	class Semaphore
 	{
 	public:
@@ -995,47 +1044,9 @@ namespace HSLL
 	};
 }
 
-
 #else
-#error "Unsupported platform"
+#error "Unsupported platform: no Semaphore implementation available"
 #endif
-
-namespace HSLL
-{
-	class ReadLockGuard {
-	public:
-		explicit ReadLockGuard(ReadWriteLock& lock) : lock_(lock) {
-			lock_.lock_read();
-		}
-
-		~ReadLockGuard() {
-			lock_.unlock_read();
-		}
-
-		ReadLockGuard(const ReadLockGuard&) = delete;
-		ReadLockGuard& operator=(const ReadLockGuard&) = delete;
-
-	private:
-		ReadWriteLock& lock_;
-	};
-
-	class WriteLockGuard {
-	public:
-		explicit WriteLockGuard(ReadWriteLock& lock) : lock_(lock) {
-			lock_.lock_write();
-		}
-
-		~WriteLockGuard() {
-			lock_.unlock_write();
-		}
-
-		WriteLockGuard(const WriteLockGuard&) = delete;
-		WriteLockGuard& operator=(const WriteLockGuard&) = delete;
-
-	private:
-		ReadWriteLock& lock_;
-	};
-}
 
 namespace HSLL
 {
@@ -1710,11 +1721,11 @@ namespace HSLL
 		unsigned int* threadNum;
 		unsigned int threshold;
 
-		ReadWriteLock* rwLock;
+		SpinReadWriteLock* rwLock;
 		TPBlockQueue<T>* queues;
 		TPBlockQueue<T>* ignore;
 
-		SingleStealer(ReadWriteLock* rwLock, TPBlockQueue<T>* queues, TPBlockQueue<T>* ignore,
+		SingleStealer(SpinReadWriteLock* rwLock, TPBlockQueue<T>* queues, TPBlockQueue<T>* ignore,
 			unsigned int queueLength, unsigned int* threadNum, bool monitor)
 		{
 			this->index = 0;
@@ -1775,11 +1786,11 @@ namespace HSLL
 		unsigned int* threadNum;
 		unsigned int threshold;
 
-		ReadWriteLock* rwLock;
+		SpinReadWriteLock* rwLock;
 		TPBlockQueue<T>* queues;
 		TPBlockQueue<T>* ignore;
 
-		BulkStealer(ReadWriteLock* rwLock, TPBlockQueue<T>* queues, TPBlockQueue<T>* ignore, unsigned int queueLength,
+		BulkStealer(SpinReadWriteLock* rwLock, TPBlockQueue<T>* queues, TPBlockQueue<T>* ignore, unsigned int queueLength,
 			unsigned int* threadNum, unsigned int batchSize, bool monitor)
 		{
 			this->index = 0;
@@ -1851,7 +1862,7 @@ namespace HSLL
 		T* containers;
 		Semaphore* stoppedSem;
 		Semaphore* restartSem;
-		ReadWriteLock rwLock;
+		SpinReadWriteLock rwLock;
 		std::atomic<bool> exitFlag;
 		std::atomic<bool> shutdownPolicy;
 
@@ -2220,6 +2231,14 @@ namespace HSLL
 		ThreadPool& operator=(ThreadPool&&) = delete;
 
 	private:
+
+		unsigned int caculate_threshold()
+		{
+			if (queueLength <= 40)
+				return 1;
+			else
+				return queueLength * 0.05;
+		}
 
 		unsigned int next_index() noexcept
 		{
