@@ -1,125 +1,115 @@
 #ifndef TPRWLOCK
 #define TPRWLOCK
 
-#if defined(_WIN32)
-#define NOMINMAX
-#include <windows.h>
-
 namespace HSLL
 {
-	class ReadWriteLock {
-	public:
-		ReadWriteLock() {
-			InitializeSRWLock(&srwlock_);
-		}
+	constexpr long long HSLL_SPINREADWRITELOCK_MAXREADER = (1LL << 62);
 
-		~ReadWriteLock() = default;
-
-		void lock_read() {
-			AcquireSRWLockShared(&srwlock_);
-		}
-
-		void unlock_read() {
-			ReleaseSRWLockShared(&srwlock_);
-		}
-
-		void lock_write() {
-			AcquireSRWLockExclusive(&srwlock_);
-		}
-
-		void unlock_write() {
-			ReleaseSRWLockExclusive(&srwlock_);
-		}
-
-		ReadWriteLock(const ReadWriteLock&) = delete;
-		ReadWriteLock& operator=(const ReadWriteLock&) = delete;
-
+	class SpinReadWriteLock
+	{
 	private:
-		SRWLOCK srwlock_;
-	};
-}
+		std::atomic<long long> count;
 
-#elif defined(__linux__) || defined(__unix__) || \
-      defined(__APPLE__) || defined(__FreeBSD__) || \
-      defined(__OpenBSD__) || defined(__NetBSD__)
-
-#include <pthread.h>
-
-namespace HSLL
-{
-	class ReadWriteLock {
 	public:
-		ReadWriteLock() {
-			pthread_rwlock_init(&rwlock_, nullptr);
+
+		SpinReadWriteLock() :count(0) {}
+
+		void lock_read()
+		{
+			long long old = count.load(std::memory_order_relaxed);
+
+			while (true)
+			{
+				if (old < 0)
+				{
+					std::this_thread::yield();
+					old = count.load(std::memory_order_relaxed);
+				}
+				else if (count.compare_exchange_weak(old, old + 1, std::memory_order_acquire, std::memory_order_relaxed))
+				{
+					break;
+				}
+			}
 		}
 
-		~ReadWriteLock() {
-			pthread_rwlock_destroy(&rwlock_);
+		void unlock_read()
+		{
+			count.fetch_sub(1, std::memory_order_relaxed);
 		}
 
-		void lock_read() {
-			pthread_rwlock_rdlock(&rwlock_);
+		void lock_write()
+		{
+			long long old = count.load(std::memory_order_relaxed);
+
+			while (true)
+			{
+				if (old < 0)
+				{
+					std::this_thread::yield();
+					old = count.load(std::memory_order_relaxed);
+				}
+				else if (count.compare_exchange_weak(old, old - HSLL_SPINREADWRITELOCK_MAXREADER, std::memory_order_acquire, std::memory_order_relaxed))
+				{
+					break;
+				}
+			}
+
+			while (count.load(std::memory_order_relaxed) != -HSLL_SPINREADWRITELOCK_MAXREADER);
+
+			std::atomic_thread_fence(std::memory_order_acquire);
 		}
 
-		void unlock_read() {
-			pthread_rwlock_unlock(&rwlock_);
+		void unlock_write()
+		{
+			count.fetch_add(HSLL_SPINREADWRITELOCK_MAXREADER, std::memory_order_release);
 		}
 
-		void lock_write() {
-			pthread_rwlock_wrlock(&rwlock_);
-		}
+		SpinReadWriteLock(const SpinReadWriteLock&) = delete;
+		SpinReadWriteLock& operator=(const SpinReadWriteLock&) = delete;
+	};
 
-		void unlock_write() {
-			pthread_rwlock_unlock(&rwlock_);
-		}
-
-		ReadWriteLock(const ReadWriteLock&) = delete;
-		ReadWriteLock& operator=(const ReadWriteLock&) = delete;
-
+	class ReadLockGuard
+	{
 	private:
-		pthread_rwlock_t rwlock_;
-	};
-}
 
+		SpinReadWriteLock& lock;
 
-#else
-#error "Unsupported platform: no ReadWriteLock implementation available"
-#endif
-
-namespace HSLL
-{
-	class ReadLockGuard {
 	public:
-		explicit ReadLockGuard(ReadWriteLock& lock) : lock_(lock) {
-			lock_.lock_read();
+
+		explicit ReadLockGuard(SpinReadWriteLock& lock) : lock(lock)
+		{
+			lock.lock_read();
 		}
 
-		~ReadLockGuard() {
-			lock_.unlock_read();
+		~ReadLockGuard()
+		{
+			lock.unlock_read();
 		}
 
 		ReadLockGuard(const ReadLockGuard&) = delete;
 		ReadLockGuard& operator=(const ReadLockGuard&) = delete;
-
-	private:
-		ReadWriteLock& lock_;
 	};
 
-	class WriteLockGuard {
+	class WriteLockGuard
+	{
+	private:
+
+		SpinReadWriteLock& lock;
+
 	public:
-		explicit WriteLockGuard(ReadWriteLock& lock) : lock_(lock) {
-			lock_.lock_write();
+
+		explicit WriteLockGuard(SpinReadWriteLock& lock) : lock(lock)
+		{
+			lock.lock_write();
 		}
 
-		~WriteLockGuard() {
-			lock_.unlock_write();
+		~WriteLockGuard()
+		{
+			lock.unlock_write();
 		}
 
 		WriteLockGuard(const WriteLockGuard&) = delete;
 		WriteLockGuard& operator=(const WriteLockGuard&) = delete;
-
-	private:
-		ReadWriteLock& lock_;
 	};
 }
 
