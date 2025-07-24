@@ -18,10 +18,10 @@ namespace HSLL
 	template <class F, class... Args>
 	struct HeapCallable;
 
-	template <class R, class F, class... Args>
+	template <class F, class... Args>
 	struct HeapCallable_Async;
 
-	template <class R, class F, class... Args>
+	template <class F, class... Args>
 	struct HeapCallable_Cancelable;
 
 	//helper1_sfinae
@@ -46,14 +46,14 @@ namespace HSLL
 	template <typename T>
 	struct is_generic_hc_async : std::false_type {};
 
-	template <class R, class F, class... Args>
-	struct is_generic_hc_async<HeapCallable_Async<R, F, Args...>> : std::true_type {};
+	template <class F, class... Args>
+	struct is_generic_hc_async<HeapCallable_Async<F, Args...>> : std::true_type {};
 
 	template <typename T>
 	struct is_generic_hc_cancel : std::false_type {};
 
-	template <class R, class F, class... Args>
-	struct is_generic_hc_cancel<HeapCallable_Cancelable<R, F, Args...>> : std::true_type {};
+	template <class F, class... Args>
+	struct is_generic_hc_cancel<HeapCallable_Cancelable<F, Args...>> : std::true_type {};
 
 	//helper2_is_moveable_copyable
 	template <typename T>
@@ -127,7 +127,7 @@ namespace HSLL
 	template<>
 	struct Invoker<TASK_TUPLE_TYPE_NORMAL>
 	{
-		template <class R, typename Callable, typename... Ts>
+		template <class ResultType, typename Callable, typename... Ts>
 		static void invoke(Callable& callable, Ts &...args)
 		{
 			callable(args...);
@@ -137,23 +137,17 @@ namespace HSLL
 	template<>
 	struct Invoker<TASK_TUPLE_TYPE_ASYNC>
 	{
-		template <class R, typename std::enable_if<std::is_void<R>::value, bool>::type = true,
+		template <class ResultType, typename std::enable_if<std::is_void<ResultType>::value, bool>::type = true,
 			typename Promise, typename Callable, typename... Ts>
 		static void invoke(Promise& promise, Callable& callable, Ts &...args)
 		{
-			static_assert(std::is_void<decltype(callable(args...))>::value,
-				"Callable must return void, but returns a non-void type");
-
 			callable(args...);
 		}
 
-		template <class R, typename std::enable_if<!std::is_void<R>::value, bool>::type = true,
+		template <class ResultType, typename std::enable_if<!std::is_void<ResultType>::value, bool>::type = true,
 			typename Promise, typename Callable, typename... Ts>
-		static R invoke(Promise& promise, Callable& callable, Ts &...args)
+		static ResultType invoke(Promise& promise, Callable& callable, Ts &...args)
 		{
-			static_assert(!std::is_void<decltype(callable(args...))>::value,
-				"Callable must return a non-void type, but returns void");
-
 			return callable(args...);
 		}
 	};
@@ -161,52 +155,48 @@ namespace HSLL
 	template<>
 	struct Invoker<TASK_TUPLE_TYPE_CANCELABLE>
 	{
-		template <class R, typename std::enable_if<std::is_void<R>::value, bool>::type = true,
+		template <class ResultType, typename std::enable_if<std::is_void<ResultType>::value, bool>::type = true,
 			typename Promise, typename Flag, typename Callable, typename... Ts>
 		static void invoke(Promise& promise, Flag& flag, Callable& callable, Ts &...args)
 		{
-			static_assert(std::is_void<decltype(callable(args...))>::value,
-				"Callable must return void, but returns a non-void type");
 			callable(args...);
 		}
 
-		template <class R, typename std::enable_if<!std::is_void<R>::value, bool>::type = true,
+		template <class ResultType, typename std::enable_if<!std::is_void<ResultType>::value, bool>::type = true,
 			typename Promise, typename Flag, typename Callable, typename... Ts>
-		static R invoke(Promise& promise, Flag& flag, Callable& callable, Ts &...args)
+		static ResultType invoke(Promise& promise, Flag& flag, Callable& callable, Ts &...args)
 		{
-			static_assert(!std::is_void<decltype(callable(args...))>::value,
-				"Callable must return a non-void type, but returns void");
 			return callable(args...);
 		}
 	};
 
 	//helper6_apply
-	template <TASK_TUPLE_TYPE TYPE, class R, typename std::enable_if<std::is_void<R>::value, bool>::type = true,
+	template <TASK_TUPLE_TYPE TYPE, class ResultType, typename std::enable_if<std::is_void<ResultType>::value, bool>::type = true,
 		typename Tuple, size_t... Is>
 	void apply_impl(Tuple& tup, index_sequence<Is...>)
 	{
-		Invoker<TYPE>::template invoke<R>(std::get<Is>(tup)...);
+		Invoker<TYPE>::template invoke<ResultType>(std::get<Is>(tup)...);
 	}
 
-	template <TASK_TUPLE_TYPE TYPE, class R, typename std::enable_if<!std::is_void<R>::value, bool>::type = true,
+	template <TASK_TUPLE_TYPE TYPE, class ResultType, typename std::enable_if<!std::is_void<ResultType>::value, bool>::type = true,
 		typename Tuple, size_t... Is>
-	R apply_impl(Tuple& tup, index_sequence<Is...>)
+	ResultType apply_impl(Tuple& tup, index_sequence<Is...>)
 	{
-		return Invoker<TYPE>::template invoke<R>(std::get<Is>(tup)...);
+		return Invoker<TYPE>::template invoke<ResultType>(std::get<Is>(tup)...);
 	}
 
-	template <TASK_TUPLE_TYPE TYPE = TASK_TUPLE_TYPE_NORMAL, class R = void,
-		typename std::enable_if<std::is_void<R>::value, bool>::type = true, typename Tuple>
+	template <TASK_TUPLE_TYPE TYPE = TASK_TUPLE_TYPE_NORMAL, class ResultType = void,
+		typename std::enable_if<std::is_void<ResultType>::value, bool>::type = true, typename Tuple>
 	void tuple_apply(Tuple& tup)
 	{
-		apply_impl<TYPE, R>(tup, typename make_index_sequence<std::tuple_size<Tuple>::value>::type{});
+		apply_impl<TYPE, ResultType>(tup, typename make_index_sequence<std::tuple_size<Tuple>::value>::type{});
 	}
 
-	template <TASK_TUPLE_TYPE TYPE = TASK_TUPLE_TYPE_NORMAL, class R = void,
-		typename std::enable_if<!std::is_void<R>::value, bool>::type = true, typename Tuple>
-	R tuple_apply(Tuple& tup)
+	template <TASK_TUPLE_TYPE TYPE = TASK_TUPLE_TYPE_NORMAL, class ResultType = void,
+		typename std::enable_if<!std::is_void<ResultType>::value, bool>::type = true, typename Tuple>
+	ResultType tuple_apply(Tuple& tup)
 	{
-		return apply_impl<TYPE, R>(tup, typename make_index_sequence<std::tuple_size<Tuple>::value>::type{});
+		return apply_impl<TYPE, ResultType>(tup, typename make_index_sequence<std::tuple_size<Tuple>::value>::type{});
 	}
 
 	//helper7_make_unique
@@ -226,6 +216,15 @@ namespace HSLL
 	template <typename T, typename... Args>
 	typename std::enable_if<std::extent<T>::value != 0, void>::type
 		make_unique(Args&&...) = delete;
+
+	//helper8_result_infer
+	template <class F, class... Args>
+	struct result_infer
+	{
+		using type = decltype(
+			std::declval<typename std::decay<F>::type>()
+			(std::declval<typename std::decay<Args>::type&>()...));
+	};
 
 	/**
 	 * @class HeapCallable
@@ -253,7 +252,7 @@ namespace HSLL
 
 		/**
 		 * @brief Invokes the stored callable with bound arguments
-		 * @pre Object must be in a valid state (storage != nullptr)
+		 * @pre Object must be in a valid state
 		 */
 		void operator()()
 		{
@@ -265,25 +264,25 @@ namespace HSLL
 	 * @class HeapCallable_Async
 	 * @brief Asynchronous version of HeapCallable that provides a future for the result.
 	 *        This class is move-only and non-assignable
-	 * @tparam R Return type of the callable
 	 * @tparam F Type of the callable object
 	 * @tparam Args Types of the arguments bound to the callable
 	 */
-	template <class R, class F, class... Args>
+	template <class F, class... Args>
 	class HeapCallable_Async
 	{
-		using Package = std::tuple<std::promise<R>, typename std::decay<F>::type, typename std::decay<Args>::type...>;
+		using ResultType = typename result_infer<F, Args...>::type;
+		using Package = std::tuple<std::promise<ResultType>, typename std::decay<F>::type, typename std::decay<Args>::type...>;
 
 	protected:
 		std::unique_ptr<Package> storage;
 
-		template<class T = R, typename std::enable_if<std::is_void<T>::value, bool>::type = true>
+		template<class T = ResultType, typename std::enable_if<std::is_void<T>::value, bool>::type = true>
 		void invoke()
 		{
 			auto& promise = std::get<0>(*storage);
 			try
 			{
-				tuple_apply<TASK_TUPLE_TYPE_ASYNC, R>(*storage);
+				tuple_apply<TASK_TUPLE_TYPE_ASYNC, ResultType>(*storage);
 				promise.set_value();
 			}
 			catch (...)
@@ -292,13 +291,13 @@ namespace HSLL
 			}
 		}
 
-		template<class T = R, typename std::enable_if<!std::is_void<T>::value, bool>::type = true>
+		template<class T = ResultType, typename std::enable_if<!std::is_void<T>::value, bool>::type = true>
 		void invoke()
 		{
 			auto& promise = std::get<0>(*storage);
 			try
 			{
-				promise.set_value(tuple_apply<TASK_TUPLE_TYPE_ASYNC, R>(*storage));
+				promise.set_value(tuple_apply<TASK_TUPLE_TYPE_ASYNC, ResultType>(*storage));
 			}
 			catch (...)
 			{
@@ -314,11 +313,11 @@ namespace HSLL
 		 */
 		template<class Func, typename std::enable_if<!is_generic_hc_async<typename std::decay<Func>::type>::value, int>::type = 0 >
 		HeapCallable_Async(Func&& func, Args &&...args) HSLL_ALLOW_THROW
-			: storage(HSLL::make_unique<Package>(std::promise<R>(), std::forward<Func>(func), std::forward<Args>(args)...)) {}
+			: storage(HSLL::make_unique<Package>(std::promise<ResultType>(), std::forward<Func>(func), std::forward<Args>(args)...)) {}
 
 		/**
 		 * @brief Executes the callable and sets promise value/exception
-		 * @pre Object must be in a valid state (storage != nullptr)
+		 * @pre Object must be in a valid state
 		 */
 		void operator()()
 		{
@@ -327,10 +326,10 @@ namespace HSLL
 
 		/**
 		 * @brief Retrieves the future associated with the promise
-		 * @return std::future<R> Future object for the call result
-		 * @pre Object must be in a valid state (storage != nullptr)
+		 * @return std::future<ResultType> Future object for the call result
+		 * @pre Object must be in a valid state
 		 */
-		std::future<R> get_future()
+		std::future<ResultType> get_future()
 		{
 			return std::get<0>(*storage).get_future();
 		}
@@ -383,16 +382,16 @@ namespace HSLL
 	/**
 	 * @class Cancelable
 	 * @brief Manages cancellation state and result propagation for asynchronous tasks.
-	 * @tparam R Return type of the associated asynchronous task
+	 * @tparam ResultType Return type of the associated asynchronous task
 	 */
-	template<class R>
+	template<class ResultType>
 	class Cancelable
 	{
 	private:
 
 		Cancelable_Flag flag;
-		std::promise<R> promise;
-		std::future<R> future;
+		std::promise<ResultType> promise;
+		std::future<ResultType> future;
 
 	public:
 
@@ -421,7 +420,7 @@ namespace HSLL
 		 * @throws Propagates any exception stored in the promise
 		 * @throws std::runtime_error("Task canceled") if canceled
 		 */
-		template <typename U = R>
+		template <typename U = ResultType>
 		typename std::enable_if<!std::is_void<U>::value, U>::type get()
 		{
 			return future.get();
@@ -432,7 +431,7 @@ namespace HSLL
 		 * @throws Propagates any exception stored in the promise
 		 * @throws std::runtime_error("Task canceled") if canceled
 		 */
-		template <typename U = R>
+		template <typename U = ResultType>
 		typename std::enable_if<std::is_void<U>::value>::type get()
 		{
 			future.get();
@@ -483,7 +482,7 @@ namespace HSLL
 		 * @pre Must be in critical section (via successful enter())
 		 * @throws std::future_error if result already set or not in critical section
 		 */
-		template <class T = R, typename std::enable_if<std::is_void<T>::value, bool>::type = true>
+		template <class T = ResultType, typename std::enable_if<std::is_void<T>::value, bool>::type = true>
 		void set_value()
 		{
 			promise.set_value();
@@ -495,7 +494,7 @@ namespace HSLL
 		 * @pre Must be in critical section (via successful enter())
 		 * @throws std::future_error if result already set or not in critical section
 		 */
-		template <class U, class T = R, typename std::enable_if<!std::is_void<T>::value, bool>::type = true>
+		template <class U, class T = ResultType, typename std::enable_if<!std::is_void<T>::value, bool>::type = true>
 		void set_value(U&& value)
 		{
 			promise.set_value(std::forward<T>(value));
@@ -517,26 +516,26 @@ namespace HSLL
 	 * @class HeapCallable_Cancelable
 	 * @brief Cancelable version of HeapCallable with atomic cancellation flag.
 	 *        This class is move-only and non-assignable
-	 * @tparam R Return type of the callable
 	 * @tparam F Type of the callable object
 	 * @tparam Args Types of the arguments bound to the callable
 	 */
-	template <class R, class F, class... Args>
+	template <class F, class... Args>
 	class HeapCallable_Cancelable
 	{
-		using Package = std::tuple<std::promise<R>, Cancelable_Flag,
+		using ResultType = typename result_infer<F, Args...>::type;
+		using Package = std::tuple<std::promise<ResultType>, Cancelable_Flag,
 			typename std::decay<F>::type, typename std::decay<Args>::type...>;
 
 	private:
 		std::shared_ptr<Package> storage;
 
-		template<class T = R, typename std::enable_if<std::is_void<T>::value, bool>::type = true>
+		template<class T = ResultType, typename std::enable_if<std::is_void<T>::value, bool>::type = true>
 		void invoke()
 		{
 			auto& promise = std::get<0>(*storage);
 			try
 			{
-				tuple_apply<TASK_TUPLE_TYPE_CANCELABLE, R>(*storage);
+				tuple_apply<TASK_TUPLE_TYPE_CANCELABLE, ResultType>(*storage);
 				promise.set_value();
 			}
 			catch (...)
@@ -545,13 +544,13 @@ namespace HSLL
 			}
 		}
 
-		template<class T = R, typename std::enable_if<!std::is_void<T>::value, bool>::type = true>
+		template<class T = ResultType, typename std::enable_if<!std::is_void<T>::value, bool>::type = true>
 		void invoke()
 		{
 			auto& promise = std::get<0>(*storage);
 			try
 			{
-				promise.set_value(tuple_apply<TASK_TUPLE_TYPE_CANCELABLE, R>(*storage));
+				promise.set_value(tuple_apply<TASK_TUPLE_TYPE_CANCELABLE, ResultType>(*storage));
 			}
 			catch (...)
 			{
@@ -565,7 +564,7 @@ namespace HSLL
 		{
 		private:
 
-			std::future<R> future;
+			std::future<ResultType> future;
 			std::shared_ptr<Package> storage;
 
 		public:
@@ -596,7 +595,7 @@ namespace HSLL
 			 * @throws Propagates any exception stored in the promise
 			 * @throws std::runtime_error("Task canceled") if canceled
 			 */
-			template <typename U = R>
+			template <typename U = ResultType>
 			typename std::enable_if<!std::is_void<U>::value, U>::type get()
 			{
 				return future.get();
@@ -607,7 +606,7 @@ namespace HSLL
 			 * @throws Propagates any exception stored in the promise
 			 * @throws std::runtime_error("Task canceled") if canceled
 			 */
-			template <typename U = R>
+			template <typename U = ResultType>
 			typename std::enable_if<std::is_void<U>::value>::type get()
 			{
 				future.get();
@@ -639,11 +638,11 @@ namespace HSLL
 		 */
 		template<class Func, typename std::enable_if<!is_generic_hc_cancel<typename std::decay<Func>::type>::value, int>::type = 0 >
 		HeapCallable_Cancelable(Func&& func, Args &&...args) HSLL_ALLOW_THROW
-			: storage(std::make_shared<Package>(std::promise<R>(), false, std::forward<Func>(func), std::forward<Args>(args)...)) {}
+			: storage(std::make_shared<Package>(std::promise<ResultType>(), false, std::forward<Func>(func), std::forward<Args>(args)...)) {}
 
 		/**
 		 * @brief Executes the callable if not canceled
-		 * @pre Object must be in a valid state (storage != nullptr)
+		 * @pre Object must be in a valid state
 		 */
 		void operator()()
 		{
@@ -681,33 +680,30 @@ namespace HSLL
 
 	/**
 	 * @brief Factory function to create HeapCallable_Async objects
-	 * @tparam ResultType Type of return value
 	 * @tparam F Type of callable object
 	 * @tparam Args Types of arguments to bind
 	 * @param func Callable target function
 	 * @param args Arguments to bind to function call
 	 * @return HeapCallable_Async instance
 	 */
-	template <typename ResultType, typename F, typename... Args>
-	HeapCallable_Async<ResultType, F, Args...> make_callable_async(F&& func, Args &&...args) HSLL_ALLOW_THROW
+	template <typename F, typename... Args>
+	HeapCallable_Async<F, Args...> make_callable_async(F&& func, Args &&...args) HSLL_ALLOW_THROW
 	{
-		return HeapCallable_Async<ResultType, F, Args...>
-			(std::forward<F>(func), std::forward<Args>(args)...);
+		return HeapCallable_Async<F, Args...>(std::forward<F>(func), std::forward<Args>(args)...);
 	}
 
 	/**
 	 * @brief Factory function to create HeapCallable_Cancelable objects
-	 * @tparam ResultType Type of return value
 	 * @tparam F Type of callable object
 	 * @tparam Args Types of arguments to bind
 	 * @param func Callable target function
 	 * @param args Arguments to bind to function call
-	 * @return HeapCallable_Async instance
+	 * @return HeapCallable_Cancelable instance
 	 */
-	template <typename ResultType, typename F, typename... Args>
-	HeapCallable_Cancelable<ResultType, F, Args...> make_callable_cancelable(F&& func, Args &&...args) HSLL_ALLOW_THROW
+	template <typename F, typename... Args>
+	HeapCallable_Cancelable<F, Args...> make_callable_cancelable(F&& func, Args &&...args) HSLL_ALLOW_THROW
 	{
-		return HeapCallable_Cancelable<ResultType, F, Args...>
+		return HeapCallable_Cancelable<F, Args...>
 			(std::forward<F>(func), std::forward<Args>(args)...);
 	}
 
@@ -847,7 +843,7 @@ namespace HSLL
 	template <unsigned int TSIZE = 64, unsigned int ALIGN = 8>
 	class TaskStack
 	{
-		static_assert(TSIZE >= 24, "TSIZE must >= 24");
+		static_assert(TSIZE >= 24, "TSIZE must be at least 24: sizeof(HeapCallable_Cancelable<F, Args...>) in x64 platform");
 		static_assert(ALIGN >= alignof(void*), "Alignment must >= alignof(void*)");
 		static_assert(TSIZE% ALIGN == 0, "TSIZE must be a multiple of ALIGN");
 		alignas(ALIGN) char storage[TSIZE];
