@@ -7,6 +7,7 @@ This is a lightweight C++11 thread pool implementation, **requiring no third-par
 Its core strengths lie in **efficiency and flexibility**:
 *   **Avoids dynamic memory allocation:** Preallocated task containers based on stack storage directly hold tasks and their parameters on the stack.
 *   **Multiple submission methods:** Supports blocking or non-blocking submission of single tasks or batches to suit various scenarios.
+*   **Rich Task Types:** Supports storage on the task stack or heap (regular tasks, async tasks, cancellable tasks).
 *   **Flexible task management:** Allows inserting tasks at either the head or tail of the queue (double-ended operation).
 *   **Intelligent load balancing:** Combines Round-Robin scheduling, secondary queue selection, and work-stealing to distribute workload efficiently.
 *   **Resource optimization:** Dynamically adjusts active thread count based on current load, reducing unnecessary memory usage.

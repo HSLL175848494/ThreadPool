@@ -41,7 +41,7 @@ namespace HSLL
 	template <unsigned int TSIZE, unsigned int ALIGN>
 	class TaskStack;
 
-	template <class F, class... Args>
+	template <class... Args>
 	struct TaskImpl;
 
 	template <class F, class... Args>
@@ -57,8 +57,8 @@ namespace HSLL
 	template <typename T>
 	struct is_generic_ti : std::false_type {};
 
-	template <class T, class... Args>
-	struct is_generic_ti<TaskImpl<T, Args...>> : std::true_type {};
+	template <class... Args>
+	struct is_generic_ti<TaskImpl<Args...>> : std::true_type {};
 
 	template <typename T>
 	struct is_generic_ts : std::false_type {};
@@ -753,7 +753,7 @@ namespace HSLL
 	 * @brief Concrete task implementation storing function and arguments
 	 * @details Stores decayed copies of function and arguments in a tuple
 	 */
-	template <class F, class... Args>
+	template <class... Args>
 	struct TaskImpl : TaskBase
 	{
 		template <typename T, bool Copyable>
@@ -799,7 +799,7 @@ namespace HSLL
 			}
 		};
 
-		using Tuple = std::tuple<typename std::decay<F>::type, typename std::decay<Args>::type...>;
+		using Tuple = std::tuple<typename std::decay<Args>::type...>;
 		Tuple storage;
 
 		void tuple_move(void* dst)
@@ -824,16 +824,28 @@ namespace HSLL
 		TaskImpl(Func&& func, Params &&...args)
 			: storage(std::forward<Func>(func), std::forward<Params>(args)...) {}
 
-		void execute() noexcept override
+
+		template <bool Condition>
+		typename std::enable_if<!Condition, void>::type invoke()
 		{
 			tuple_apply(storage);
+		}
+
+		template <bool Condition>
+		typename std::enable_if<Condition, void>::type invoke()
+		{
+			std::get<0>(storage)();
+		}
+
+		void execute() noexcept override
+		{
+			invoke<sizeof...(Args) == 1>();
 		}
 
 		void copyTo(void* dst) const noexcept override
 		{
 			CopyHelper<TaskImpl,
-				are_all_copy_constructible<typename std::decay<F>::type,
-				typename std::decay<Args>::type...>::value>::copyTo(this, dst);
+				are_all_copy_constructible<typename std::decay<Args>::type...>::value>::copyTo(this, dst);
 		}
 
 		void moveTo(void* dst) noexcept override
@@ -843,9 +855,7 @@ namespace HSLL
 
 		bool is_copyable() const noexcept override
 		{
-			return are_all_copy_constructible<
-				typename std::decay<F>::type,
-				typename std::decay<Args>::type...>::value;
+			return are_all_copy_constructible<typename std::decay<Args>::type...>::value;
 		}
 	};
 
@@ -877,19 +887,21 @@ namespace HSLL
 		static_assert(TSIZE% ALIGN == 0, "TSIZE must be a multiple of ALIGN");
 		alignas(ALIGN) char storage[TSIZE];
 
-		template <bool Condition, typename Func, typename... Params>
-		typename std::enable_if<Condition, void>::type construct(Func&& func, Params &&...params)
+
+		template <bool Condition, typename Any, typename... Params>
+		typename std::enable_if<Condition, void>::type
+			construct(Any&& func, Params &&...params)//normal
 		{
-			typedef typename task_stack<Func, Params...>::type ImplType;
-			new (storage) ImplType(std::forward<Func>(func), std::forward<Params>(params)...);
+			using ImplType = typename task_stack<Any, Params...>::type;
+			new (storage) ImplType(std::forward<Any>(func), std::forward<Params>(params)...);
 		}
 
-		template <bool Condition, typename Func, typename... Params>
-		typename std::enable_if<!Condition, void>::type construct(Func&& func, Params &&...params)
+		template <bool Condition, typename Any, typename... Params>
+		typename std::enable_if<!Condition, void>::type
+			construct(Any&& func, Params &&...params)//HeapCallable
 		{
-			typedef typename task_stack<HeapCallable<Func, Params...>>::type ImplType;
-			static_assert(alignof(HeapCallable<Func, Params...>) <= ALIGN);
-			new (storage) ImplType(HeapCallable<Func, Params...>(std::forward<Func>(func), std::forward<Params>(params)...));
+			using ImplType = typename task_stack<HeapCallable<Any, Params...>>::type;
+			new (storage) ImplType(HeapCallable<Any, Params...>(std::forward<Any>(func), std::forward<Params>(params)...));
 		}
 
 	public:
@@ -936,10 +948,9 @@ namespace HSLL
 			typename std::enable_if<!is_generic_ts<typename std::decay<F>::type>::value, int>::type = 0>
 		TaskStack(F&& func, Args &&...args) HSLL_ALLOW_THROW
 		{
-			typedef typename task_stack<F, Args...>::type ImplType;
-			construct<(sizeof(ImplType) <= TSIZE && alignof(ImplType) <= ALIGN), F, Args...>(
-				std::forward<F>(func), std::forward<Args>(args)...
-			);
+			using ImplType = typename task_stack<F, Args...>::type;
+			constexpr bool can_store = sizeof(ImplType) <= TSIZE && alignof(ImplType) <= ALIGN;
+			construct<can_store>(std::forward<F>(func), std::forward<Args>(args)...);
 		}
 
 		/**
@@ -2845,7 +2856,7 @@ namespace HSLL
 	template <class T, unsigned int BATCH, INSERT_POS POS = TAIL>
 	class BatchSubmitter
 	{
-		static_assert(is_generic_ts<T>::value, "T must be a TaskStack type");
+		static_assert(is_generic_ts<T>::value, "TYPE must be a TaskStack type");
 		static_assert(BATCH > 0, "BATCH > 0");
 		alignas(alignof(T)) unsigned char buf[BATCH * sizeof(T)];
 
