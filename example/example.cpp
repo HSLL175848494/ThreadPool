@@ -38,32 +38,27 @@ void heapExample()
 // 异步任务示例
 void asyncExample()
 {
-	auto task = make_callable_async(calculateSum, 10, 20);
+	auto task = make_callable_async(calculateSum, 333, 333);
 	auto future = task.get_future();
 
 	//task隐式转化为TaskType类型(构造函数)
 	globalPool.enqueue(std::move(task));
 
-	try {
-		auto result = future.get();
-		std::cout << "Async result: " << result << std::endl;
-	}
-	catch (const std::exception& e) {
-		std::cerr << "Async error: " << e.what() << std::endl;
-	}
+	auto result = future.get();
+	std::cout << "Async result1: " << result << std::endl;
 }
 
-// 异步任务示例2(效率远高于堆上任务)
+// 异步任务示例1(效率高于堆上任务,但需要确保任务返回前promise有效)
 void asyncExample2()
 {
-	std::promise<int> promise;//需要确保任务返回前引用有效
+	std::promise<int> promise;
 
 	globalPool.enqueue([&]() {
-		promise.set_value(666);
+		promise.set_value(777);
 		});
 
 	std::future<int> future = promise.get_future();
-	std::cout << "Async result: " << future.get() << std::endl;
+	std::cout << "Async result3: " << future.get() << std::endl;
 }
 
 // 可取消任务示例
@@ -75,7 +70,6 @@ void cancelableExample1()
 		});
 
 	auto controller = task.get_controller();
-
 	globalPool.enqueue(std::move(task));
 	std::this_thread::sleep_for(std::chrono::nanoseconds(150));
 
@@ -107,10 +101,10 @@ void cancelableExample1()
 	}
 }
 
-// 可取消任务示例2(效率远高于堆上任务)
+// 可取消任务示例2(效率高于堆上任务,但需要确保任务执行前Cancelable有效)
 void cancelableExample2()
 {
-	Cancelable<void> cancelable;//需要确保任务返回前引用有效
+	Cancelable<void> cancelable;
 
 	globalPool.enqueue([&]() {
 
@@ -204,7 +198,7 @@ void storageStrategyExample()
 	};
 
 	TaskType smallTask(lambda_small);
-	TaskType bigTask(lambda_big, "Large", " parameters", " require", " heap allocation");
+	TaskType bigTask(lambda_big, "Large", " parameters", " require", " heap allocation.");
 
 	//if (TaskType::is_stored_on_stack<decltype(lambda_small)>::value)
 	globalPool.enqueue(std::move(smallTask));
@@ -230,7 +224,7 @@ void taskPropertiesExample()
 
 int main()
 {
-	// 初始化线程池：10000任务容量,最小/大线程数1,无批处理
+	// 初始化线程池：10000任务容量，最小/大线程数1,无批处理
 	globalPool.init(10000, 1, 1, 1);
 
 	std::cout << "==== Simple Task Example ====" << std::endl;
