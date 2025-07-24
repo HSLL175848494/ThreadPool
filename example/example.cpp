@@ -38,7 +38,7 @@ void heapExample()
 // 异步任务示例
 void asyncExample()
 {
-	auto task = make_callable_async<int>(calculateSum, 10, 20);
+	auto task = make_callable_async(calculateSum, 10, 20);
 	auto future = task.get_future();
 
 	//task隐式转化为TaskType类型(构造函数)
@@ -69,7 +69,7 @@ void asyncExample2()
 // 可取消任务示例
 void cancelableExample1()
 {
-	auto task = make_callable_cancelable<void>([]() {
+	auto task = make_callable_cancelable([]() {
 		std::cout << "Cancelable task completed." << std::endl;
 		return;
 		});
@@ -111,7 +111,7 @@ void cancelableExample1()
 void cancelableExample2()
 {
 	Cancelable<void> cancelable;//需要确保任务返回前引用有效
-	
+
 	globalPool.enqueue([&]() {
 
 		if (cancelable.enter())//尝试进入临界区

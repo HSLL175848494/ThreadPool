@@ -945,7 +945,7 @@ namespace HSLL
 	template <class T, unsigned int BATCH, INSERT_POS POS = TAIL>
 	class BatchSubmitter
 	{
-		static_assert(is_generic_ts<T>::value, "TYPE must be a TaskStack type");
+		static_assert(is_generic_ts<T>::value, "T must be a TaskStack type");
 		static_assert(BATCH > 0, "BATCH > 0");
 		alignas(alignof(T)) unsigned char buf[BATCH * sizeof(T)];
 
