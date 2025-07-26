@@ -33,7 +33,6 @@ void C() {
 **hsll_tp**：   HSLL::ThreadPool
   - 队列长度: 8192  
   - 容器: `TaskStack<24,8>`  
-  - 动态线程: 关闭
   - 队列分组: 开启
 
 

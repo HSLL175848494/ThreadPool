@@ -123,7 +123,9 @@ double test_single_submit()
 
 int main()
 {
-	pool.init(CAPACITY, WORKER, WORKER, PROCESS_BATCH);
+	pool.init(CAPACITY, 1, WORKER, PROCESS_BATCH);
+
+	//std::this_thread::sleep_for(std::chrono::seconds(15));
 
 	long long total_tasks = (long long)(PEER * PRODUCER);
 
