@@ -2328,49 +2328,6 @@ namespace HSLL
 		}
 	};
 
-	class ThreadPoolRegister
-	{
-		template <class TYPE>
-		friend class ThreadPool;
-
-		struct Key
-		{
-			void* poolAddr;
-			std::thread::id id;
-
-			bool operator<(const Key& other) const noexcept
-			{
-				if (poolAddr != other.poolAddr)
-					return poolAddr < other.poolAddr;
-
-				return id < other.id;
-			}
-		};
-
-		thread_local static std::set<Key> threadpool_register;
-
-
-		static bool is_registered(void* poolAddr, std::thread::id id)
-		{
-			return threadpool_register.find({ poolAddr, id }) != threadpool_register.end();
-		}
-
-		static void register_this_thread(void* poolAddr, std::thread::id id)
-		{
-			if (threadpool_register.find({ poolAddr, id }) == threadpool_register.end())
-				threadpool_register.insert({ poolAddr, id });
-		}
-
-		static void unregister_this_thread(void* poolAddr, std::thread::id id)
-		{
-			const auto it = threadpool_register.find({ poolAddr, id });
-			if (it != threadpool_register.end())
-				threadpool_register.erase(it);
-		}
-	};
-
-	thread_local std::set<ThreadPoolRegister::Key> ThreadPoolRegister::threadpool_register;
-
 	/**
 	 * @brief Thread pool implementation with multiple queues for task distribution
 	 */
@@ -2500,15 +2457,17 @@ namespace HSLL
 																	\
 		std::thread::id id = std::this_thread::get_id();			\
 																	\
-		if (ThreadPoolRegister::is_registered(this, id))			\
-		{															\
 			ReadLockGuard lock(rwLock);								\
 																	\
 			if (threadNum == 1)										\
 				return exp1;										\
 																	\
 			RoundRobinGroup<T>* group = groupAllocator.find(id);	\
-			TPBlockQueue<T>* queue = group->current_queue();			\
+																	\
+			if(!group)												\
+				return exp3;										\
+																	\
+			TPBlockQueue<T>* queue = group->current_queue();		\
 			unsigned int size = exp2;								\
 																	\
 			if (size)												\
@@ -2534,20 +2493,7 @@ namespace HSLL
 				}													\
 			}														\
 																	\
-			return size;											\
-		}															\
-		else														\
-		{															\
-			if (enableMonitor)										\
-			{														\
-				ReadLockGuard lock(rwLock);							\
-				return exp3;										\
-			}														\
-			else													\
-			{														\
-				return exp3;										\
-			}														\
-		}
+			return size;											
 
 		/**
 		 * @brief Non-blocking task emplacement with perfect forwarding
@@ -2819,7 +2765,6 @@ namespace HSLL
 		void register_this_thread()
 		{
 			std::thread::id id = std::this_thread::get_id();
-			ThreadPoolRegister::register_this_thread(this, id);
 			WriteLockGuard lock(rwLock);
 			groupAllocator.register_thread(id);
 		}
@@ -2827,7 +2772,6 @@ namespace HSLL
 		void unregister_this_thread()
 		{
 			std::thread::id id = std::this_thread::get_id();
-			ThreadPoolRegister::unregister_this_thread(this, id);
 			WriteLockGuard lock(rwLock);
 			groupAllocator.unregister_thread(id);
 		}
