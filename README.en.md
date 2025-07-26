@@ -9,7 +9,7 @@ Its core strengths lie in **efficiency and flexibility**:
 *   **Multiple submission methods:** Supports blocking or non-blocking submission of single tasks or batches to suit various scenarios.
 *   **Rich Task Types:** Supports storage on the task stack or heap (regular tasks, async tasks, cancellable tasks).
 *   **Flexible task management:** Allows inserting tasks at either the head or tail of the queue (double-ended operation).
-*   **Intelligent load balancing:** Combines Round-Robin scheduling, secondary queue selection, and work-stealing to distribute workload efficiently.
+*   **Intelligent Load Balancing:** Combines Round-Robin scheduling, queue grouping, and task stealing mechanisms to efficiently distribute the workload.
 *   **Resource optimization:** Dynamically adjusts active thread count based on current load, reducing unnecessary memory usage.
 *   **Graceful shutdown:** Offers immediate termination or waits for all pending tasks to complete before shutting down.
 
