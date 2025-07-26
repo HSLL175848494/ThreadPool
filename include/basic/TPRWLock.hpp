@@ -5,6 +5,9 @@ namespace HSLL
 {
 	constexpr long long HSLL_SPINREADWRITELOCK_MAXREADER = (1LL << 62);
 
+	/**
+	 * @brief Efficient spin lock based on atomic variables, suitable for scenarios where reads significantly outnumber writes
+	 */
 	class SpinReadWriteLock
 	{
 	private:
@@ -14,21 +17,19 @@ namespace HSLL
 
 		SpinReadWriteLock() :count(0) {}
 
+
 		void lock_read()
 		{
-			long long old = count.load(std::memory_order_relaxed);
+			long long old = count.fetch_add(1, std::memory_order_acquire);
 
-			while (true)
+			while (old < 0)
 			{
-				if (old < 0)
-				{
+				count.fetch_sub(1, std::memory_order_relaxed);
+
+				while (count.load(std::memory_order_relaxed) < 0)
 					std::this_thread::yield();
-					old = count.load(std::memory_order_relaxed);
-				}
-				else if (count.compare_exchange_weak(old, old + 1, std::memory_order_acquire, std::memory_order_relaxed))
-				{
-					break;
-				}
+
+				old = count.fetch_add(1, std::memory_order_acquire);
 			}
 		}
 

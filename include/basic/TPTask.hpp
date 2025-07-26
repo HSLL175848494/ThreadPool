@@ -16,44 +16,44 @@ namespace HSLL
 	struct TaskImpl;
 
 	template <class F, class... Args>
-	struct HeapCallable;
+	class HeapCallable;
 
 	template <class F, class... Args>
-	struct HeapCallable_Async;
+	class HeapCallable_Async;
 
 	template <class F, class... Args>
-	struct HeapCallable_Cancelable;
+	class HeapCallable_Cancelable;
 
 	//helper1_sfinae
 	template <typename T>
-	struct is_generic_ti : std::false_type {};
+	struct is_TaskImpl : std::false_type {};
 
 	template <class... Args>
-	struct is_generic_ti<TaskImpl<Args...>> : std::true_type {};
+	struct is_TaskImpl<TaskImpl<Args...>> : std::true_type {};
 
 	template <typename T>
-	struct is_generic_ts : std::false_type {};
+	struct is_TaskStack : std::false_type {};
 
 	template <unsigned int S, unsigned int A>
-	struct is_generic_ts<TaskStack<S, A>> : std::true_type {};
+	struct is_TaskStack<TaskStack<S, A>> : std::true_type {};
 
 	template <typename T>
-	struct is_generic_hc : std::false_type {};
+	struct is_HeapCallable : std::false_type {};
 
 	template <class F, class... Args>
-	struct is_generic_hc<HeapCallable<F, Args...>> : std::true_type {};
+	struct is_HeapCallable<HeapCallable<F, Args...>> : std::true_type {};
 
 	template <typename T>
-	struct is_generic_hc_async : std::false_type {};
+	struct is_HeapCallable_Async : std::false_type {};
 
 	template <class F, class... Args>
-	struct is_generic_hc_async<HeapCallable_Async<F, Args...>> : std::true_type {};
+	struct is_HeapCallable_Async<HeapCallable_Async<F, Args...>> : std::true_type {};
 
 	template <typename T>
-	struct is_generic_hc_cancel : std::false_type {};
+	struct is_HeapCallable_Cancelable : std::false_type {};
 
 	template <class F, class... Args>
-	struct is_generic_hc_cancel<HeapCallable_Cancelable<F, Args...>> : std::true_type {};
+	struct is_HeapCallable_Cancelable<HeapCallable_Cancelable<F, Args...>> : std::true_type {};
 
 	//helper2_is_moveable_copyable
 	template <typename T>
@@ -103,7 +103,7 @@ namespace HSLL
 		using type = typename make_index_sequence_impl<N>::type;
 	};
 
-	//helper4
+	//helper4_all_true
 	template <bool...>
 	struct bool_pack;
 
@@ -219,7 +219,7 @@ namespace HSLL
 
 	//helper8_result_infer
 	template <class F, class... Args>
-	struct result_infer
+	struct result_type_infer
 	{
 		using type = decltype(
 			std::declval<typename std::decay<F>::type>()
@@ -246,7 +246,7 @@ namespace HSLL
 		 * @param func Callable object to store
 		 * @param args Arguments to bind to the callable
 		 */
-		template<class Func, typename std::enable_if<!is_generic_hc<typename std::decay<Func>::type>::value, int>::type = 0 >
+		template<class Func, typename std::enable_if<!is_HeapCallable<typename std::decay<Func>::type>::value, int>::type = 0 >
 		HeapCallable(Func&& func, Args &&...args) HSLL_ALLOW_THROW
 			: storage(HSLL::make_unique<Package>(std::forward<Func>(func), std::forward<Args>(args)...)) {}
 
@@ -270,7 +270,7 @@ namespace HSLL
 	template <class F, class... Args>
 	class HeapCallable_Async
 	{
-		using ResultType = typename result_infer<F, Args...>::type;
+		using ResultType = typename result_type_infer<F, Args...>::type;
 		using Package = std::tuple<std::promise<ResultType>, typename std::decay<F>::type, typename std::decay<Args>::type...>;
 
 	protected:
@@ -311,7 +311,7 @@ namespace HSLL
 		 * @param func Callable object to store
 		 * @param args Arguments to bind to the callable
 		 */
-		template<class Func, typename std::enable_if<!is_generic_hc_async<typename std::decay<Func>::type>::value, int>::type = 0 >
+		template<class Func, typename std::enable_if<!is_HeapCallable_Async<typename std::decay<Func>::type>::value, int>::type = 0 >
 		HeapCallable_Async(Func&& func, Args &&...args) HSLL_ALLOW_THROW
 			: storage(HSLL::make_unique<Package>(std::promise<ResultType>(), std::forward<Func>(func), std::forward<Args>(args)...)) {}
 
@@ -335,13 +335,13 @@ namespace HSLL
 		}
 	};
 
-	class Cancelable_Flag
+	class CancelableFlag
 	{
 		std::atomic<bool> flag;
 
 	public:
 
-		Cancelable_Flag(bool ignore = false) : flag(false) {};
+		CancelableFlag(bool ignore = false) : flag(false) {};
 
 		bool cancel()
 		{
@@ -368,7 +368,7 @@ namespace HSLL
 			return false;
 		}
 
-		Cancelable_Flag& operator=(Cancelable_Flag&& other)
+		CancelableFlag& operator=(CancelableFlag&& other)
 		{
 			if (this != &other)
 				flag = other.flag.load();
@@ -376,7 +376,7 @@ namespace HSLL
 			return *this;
 		}
 
-		Cancelable_Flag(Cancelable_Flag&& other) :flag(other.flag.load()) {}
+		CancelableFlag(CancelableFlag&& other) :flag(other.flag.load()) {}
 	};
 
 	/**
@@ -389,7 +389,7 @@ namespace HSLL
 	{
 	private:
 
-		Cancelable_Flag flag;
+		CancelableFlag flag;
 		std::promise<ResultType> promise;
 		std::future<ResultType> future;
 
@@ -522,8 +522,8 @@ namespace HSLL
 	template <class F, class... Args>
 	class HeapCallable_Cancelable
 	{
-		using ResultType = typename result_infer<F, Args...>::type;
-		using Package = std::tuple<std::promise<ResultType>, Cancelable_Flag,
+		using ResultType = typename result_type_infer<F, Args...>::type;
+		using Package = std::tuple<std::promise<ResultType>, CancelableFlag,
 			typename std::decay<F>::type, typename std::decay<Args>::type...>;
 
 	private:
@@ -636,7 +636,7 @@ namespace HSLL
 		 * @param func Callable object to store
 		 * @param args Arguments to bind to the callable
 		 */
-		template<class Func, typename std::enable_if<!is_generic_hc_cancel<typename std::decay<Func>::type>::value, int>::type = 0 >
+		template<class Func, typename std::enable_if<!is_HeapCallable_Cancelable<typename std::decay<Func>::type>::value, int>::type = 0 >
 		HeapCallable_Cancelable(Func&& func, Args &&...args) HSLL_ALLOW_THROW
 			: storage(std::make_shared<Package>(std::promise<ResultType>(), false, std::forward<Func>(func), std::forward<Args>(args)...)) {}
 
@@ -791,7 +791,7 @@ namespace HSLL
 		}
 
 		template <class Func, class... Params,
-			typename std::enable_if<!is_generic_ti<typename std::decay<Func>::type>::value, int>::type = 0>
+			typename std::enable_if<!is_TaskImpl<typename std::decay<Func>::type>::value, int>::type = 0>
 		TaskImpl(Func&& func, Params &&...args)
 			: storage(std::forward<Func>(func), std::forward<Params>(args)...) {}
 
@@ -916,7 +916,7 @@ namespace HSLL
 		 * @param args Arguments to bind to function call
 		 */
 		template <class F, class... Args,
-			typename std::enable_if<!is_generic_ts<typename std::decay<F>::type>::value, int>::type = 0>
+			typename std::enable_if<!is_TaskStack<typename std::decay<F>::type>::value, int>::type = 0>
 		TaskStack(F&& func, Args &&...args) HSLL_ALLOW_THROW
 		{
 			using ImplType = typename task_stack<F, Args...>::type;

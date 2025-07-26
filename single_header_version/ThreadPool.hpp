@@ -1,6 +1,8 @@
 #ifndef HSLL_THREADPOOL
 #define HSLL_THREADPOOL
 
+#include <set>
+#include <map>
 #include <vector>
 #include <atomic>
 #include <thread>
@@ -45,44 +47,44 @@ namespace HSLL
 	struct TaskImpl;
 
 	template <class F, class... Args>
-	struct HeapCallable;
+	class HeapCallable;
 
 	template <class F, class... Args>
-	struct HeapCallable_Async;
+	class HeapCallable_Async;
 
 	template <class F, class... Args>
-	struct HeapCallable_Cancelable;
+	class HeapCallable_Cancelable;
 
 	//helper1_sfinae
 	template <typename T>
-	struct is_generic_ti : std::false_type {};
+	struct is_TaskImpl : std::false_type {};
 
 	template <class... Args>
-	struct is_generic_ti<TaskImpl<Args...>> : std::true_type {};
+	struct is_TaskImpl<TaskImpl<Args...>> : std::true_type {};
 
 	template <typename T>
-	struct is_generic_ts : std::false_type {};
+	struct is_TaskStack : std::false_type {};
 
 	template <unsigned int S, unsigned int A>
-	struct is_generic_ts<TaskStack<S, A>> : std::true_type {};
+	struct is_TaskStack<TaskStack<S, A>> : std::true_type {};
 
 	template <typename T>
-	struct is_generic_hc : std::false_type {};
+	struct is_HeapCallable : std::false_type {};
 
 	template <class F, class... Args>
-	struct is_generic_hc<HeapCallable<F, Args...>> : std::true_type {};
+	struct is_HeapCallable<HeapCallable<F, Args...>> : std::true_type {};
 
 	template <typename T>
-	struct is_generic_hc_async : std::false_type {};
+	struct is_HeapCallable_Async : std::false_type {};
 
 	template <class F, class... Args>
-	struct is_generic_hc_async<HeapCallable_Async<F, Args...>> : std::true_type {};
+	struct is_HeapCallable_Async<HeapCallable_Async<F, Args...>> : std::true_type {};
 
 	template <typename T>
-	struct is_generic_hc_cancel : std::false_type {};
+	struct is_HeapCallable_Cancelable : std::false_type {};
 
 	template <class F, class... Args>
-	struct is_generic_hc_cancel<HeapCallable_Cancelable<F, Args...>> : std::true_type {};
+	struct is_HeapCallable_Cancelable<HeapCallable_Cancelable<F, Args...>> : std::true_type {};
 
 	//helper2_is_moveable_copyable
 	template <typename T>
@@ -132,7 +134,7 @@ namespace HSLL
 		using type = typename make_index_sequence_impl<N>::type;
 	};
 
-	//helper4
+	//helper4_all_true
 	template <bool...>
 	struct bool_pack;
 
@@ -248,7 +250,7 @@ namespace HSLL
 
 	//helper8_result_infer
 	template <class F, class... Args>
-	struct result_infer
+	struct result_type_infer
 	{
 		using type = decltype(
 			std::declval<typename std::decay<F>::type>()
@@ -275,7 +277,7 @@ namespace HSLL
 		 * @param func Callable object to store
 		 * @param args Arguments to bind to the callable
 		 */
-		template<class Func, typename std::enable_if<!is_generic_hc<typename std::decay<Func>::type>::value, int>::type = 0 >
+		template<class Func, typename std::enable_if<!is_HeapCallable<typename std::decay<Func>::type>::value, int>::type = 0 >
 		HeapCallable(Func&& func, Args &&...args) HSLL_ALLOW_THROW
 			: storage(HSLL::make_unique<Package>(std::forward<Func>(func), std::forward<Args>(args)...)) {}
 
@@ -299,7 +301,7 @@ namespace HSLL
 	template <class F, class... Args>
 	class HeapCallable_Async
 	{
-		using ResultType = typename result_infer<F, Args...>::type;
+		using ResultType = typename result_type_infer<F, Args...>::type;
 		using Package = std::tuple<std::promise<ResultType>, typename std::decay<F>::type, typename std::decay<Args>::type...>;
 
 	protected:
@@ -340,7 +342,7 @@ namespace HSLL
 		 * @param func Callable object to store
 		 * @param args Arguments to bind to the callable
 		 */
-		template<class Func, typename std::enable_if<!is_generic_hc_async<typename std::decay<Func>::type>::value, int>::type = 0 >
+		template<class Func, typename std::enable_if<!is_HeapCallable_Async<typename std::decay<Func>::type>::value, int>::type = 0 >
 		HeapCallable_Async(Func&& func, Args &&...args) HSLL_ALLOW_THROW
 			: storage(HSLL::make_unique<Package>(std::promise<ResultType>(), std::forward<Func>(func), std::forward<Args>(args)...)) {}
 
@@ -364,13 +366,13 @@ namespace HSLL
 		}
 	};
 
-	class Cancelable_Flag
+	class CancelableFlag
 	{
 		std::atomic<bool> flag;
 
 	public:
 
-		Cancelable_Flag(bool ignore = false) : flag(false) {};
+		CancelableFlag(bool ignore = false) : flag(false) {};
 
 		bool cancel()
 		{
@@ -397,7 +399,7 @@ namespace HSLL
 			return false;
 		}
 
-		Cancelable_Flag& operator=(Cancelable_Flag&& other)
+		CancelableFlag& operator=(CancelableFlag&& other)
 		{
 			if (this != &other)
 				flag = other.flag.load();
@@ -405,7 +407,7 @@ namespace HSLL
 			return *this;
 		}
 
-		Cancelable_Flag(Cancelable_Flag&& other) :flag(other.flag.load()) {}
+		CancelableFlag(CancelableFlag&& other) :flag(other.flag.load()) {}
 	};
 
 	/**
@@ -418,7 +420,7 @@ namespace HSLL
 	{
 	private:
 
-		Cancelable_Flag flag;
+		CancelableFlag flag;
 		std::promise<ResultType> promise;
 		std::future<ResultType> future;
 
@@ -551,8 +553,8 @@ namespace HSLL
 	template <class F, class... Args>
 	class HeapCallable_Cancelable
 	{
-		using ResultType = typename result_infer<F, Args...>::type;
-		using Package = std::tuple<std::promise<ResultType>, Cancelable_Flag,
+		using ResultType = typename result_type_infer<F, Args...>::type;
+		using Package = std::tuple<std::promise<ResultType>, CancelableFlag,
 			typename std::decay<F>::type, typename std::decay<Args>::type...>;
 
 	private:
@@ -665,7 +667,7 @@ namespace HSLL
 		 * @param func Callable object to store
 		 * @param args Arguments to bind to the callable
 		 */
-		template<class Func, typename std::enable_if<!is_generic_hc_cancel<typename std::decay<Func>::type>::value, int>::type = 0 >
+		template<class Func, typename std::enable_if<!is_HeapCallable_Cancelable<typename std::decay<Func>::type>::value, int>::type = 0 >
 		HeapCallable_Cancelable(Func&& func, Args &&...args) HSLL_ALLOW_THROW
 			: storage(std::make_shared<Package>(std::promise<ResultType>(), false, std::forward<Func>(func), std::forward<Args>(args)...)) {}
 
@@ -820,7 +822,7 @@ namespace HSLL
 		}
 
 		template <class Func, class... Params,
-			typename std::enable_if<!is_generic_ti<typename std::decay<Func>::type>::value, int>::type = 0>
+			typename std::enable_if<!is_TaskImpl<typename std::decay<Func>::type>::value, int>::type = 0>
 		TaskImpl(Func&& func, Params &&...args)
 			: storage(std::forward<Func>(func), std::forward<Params>(args)...) {}
 
@@ -945,7 +947,7 @@ namespace HSLL
 		 * @param args Arguments to bind to function call
 		 */
 		template <class F, class... Args,
-			typename std::enable_if<!is_generic_ts<typename std::decay<F>::type>::value, int>::type = 0>
+			typename std::enable_if<!is_TaskStack<typename std::decay<F>::type>::value, int>::type = 0>
 		TaskStack(F&& func, Args &&...args) HSLL_ALLOW_THROW
 		{
 			using ImplType = typename task_stack<F, Args...>::type;
@@ -1013,6 +1015,9 @@ namespace HSLL
 {
 	constexpr long long HSLL_SPINREADWRITELOCK_MAXREADER = (1LL << 62);
 
+	/**
+	 * @brief Efficient spin lock based on atomic variables, suitable for scenarios where reads significantly outnumber writes
+	 */
 	class SpinReadWriteLock
 	{
 	private:
@@ -1022,21 +1027,19 @@ namespace HSLL
 
 		SpinReadWriteLock() :count(0) {}
 
+
 		void lock_read()
 		{
-			long long old = count.load(std::memory_order_relaxed);
+			long long old = count.fetch_add(1, std::memory_order_acquire);
 
-			while (true)
+			while (old < 0)
 			{
-				if (old < 0)
-				{
+				count.fetch_sub(1, std::memory_order_relaxed);
+
+				while (count.load(std::memory_order_relaxed) < 0)
 					std::this_thread::yield();
-					old = count.load(std::memory_order_relaxed);
-				}
-				else if (count.compare_exchange_weak(old, old + 1, std::memory_order_acquire, std::memory_order_relaxed))
-				{
-					break;
-				}
+
+				old = count.fetch_add(1, std::memory_order_acquire);
 			}
 		}
 
@@ -1296,12 +1299,12 @@ namespace HSLL
 	class alignas(64) TPBlockQueue
 	{
 		template <typename T>
-		struct is_generic_dr : std::false_type
+		struct is_duration : std::false_type
 		{
 		};
 
 		template <typename Rep, typename Period>
-		struct is_generic_dr<std::chrono::duration<Rep, Period>> : std::true_type
+		struct is_duration<std::chrono::duration<Rep, Period>> : std::true_type
 		{
 		};
 
@@ -1341,10 +1344,10 @@ namespace HSLL
 		unsigned int isStopped; ///< Flag for stopping all operations
 
 		// Queue state tracking
+		unsigned int size;		///< Current number of elements in queue
 		unsigned int maxSpin;
-		unsigned int maxSize;	///< Capacity of the queue
+		unsigned int capacity;	///< Capacity of the queue
 		unsigned int totalsize; ///< Total allocated memory size
-		std::atomic<unsigned int> size;		///< Current number of elements in queue
 
 		// Buffer pointers
 		TYPE* dataListHead; ///< Pointer to first element in queue
@@ -1462,7 +1465,7 @@ namespace HSLL
 		template <INSERT_POS POS, typename... Args>
 		void emplace_helper(std::unique_lock<std::mutex>& lock, Args &&...args)
 		{
-			size.fetch_add(1, std::memory_order_release);
+			size += 1;
 			emplace_impl<POS>(std::forward<Args>(args)...);
 			lock.unlock();
 			notEmptyCond.notify_one();
@@ -1471,7 +1474,7 @@ namespace HSLL
 		template <INSERT_POS POS, class T>
 		void enqueue_helper(std::unique_lock<std::mutex>& lock, T&& element)
 		{
-			size.fetch_add(1, std::memory_order_release);
+			size += 1;
 			enqueue_impl<POS>(std::forward<T>(element));
 			lock.unlock();
 			notEmptyCond.notify_one();
@@ -1480,8 +1483,8 @@ namespace HSLL
 		template <BULK_CMETHOD METHOD, INSERT_POS POS>
 		unsigned int enqueue_bulk_helper(std::unique_lock<std::mutex>& lock, TYPE* elements, unsigned int count)
 		{
-			unsigned int toPush = std::min(count, maxSize - size.load(std::memory_order_relaxed));
-			size.fetch_add(toPush, std::memory_order_release);
+			unsigned int toPush = std::min(count, capacity - size);
+			size += toPush;
 			enqueue_bulk_impl<POS, METHOD>(elements, toPush);
 			lock.unlock();
 
@@ -1496,8 +1499,8 @@ namespace HSLL
 		unsigned int enqueue_bulk_helper(std::unique_lock<std::mutex>& lock,
 			TYPE* part1, unsigned int count1, TYPE* part2, unsigned int count2)
 		{
-			unsigned int toPush = std::min(count1 + count2, maxSize - size.load(std::memory_order_relaxed));
-			size.fetch_add(toPush, std::memory_order_release);
+			unsigned int toPush = std::min(count1 + count2, capacity - size);
+			size += toPush;
 
 			if (toPush > count1)
 				enqueue_bulk_impl<POS, METHOD>(part1, count1, part2, toPush - count1);
@@ -1515,7 +1518,7 @@ namespace HSLL
 
 		void dequeue_helper(std::unique_lock<std::mutex>& lock, TYPE& element)
 		{
-			size.fetch_sub(1, std::memory_order_release);
+			size -= 1;
 			move_element_dequeue(element, *dataListHead);
 			move_head_next();
 			lock.unlock();
@@ -1524,8 +1527,8 @@ namespace HSLL
 
 		unsigned int dequeue_bulk_helper(std::unique_lock<std::mutex>& lock, TYPE* elements, unsigned int count)
 		{
-			unsigned int toPop = std::min(count, size.load(std::memory_order_relaxed));
-			size.fetch_sub(toPop, std::memory_order_release);
+			unsigned int toPop = std::min(count, size);
+			size -= toPop;
 			for (unsigned int i = 0; i < toPop; ++i)
 			{
 				move_element_dequeue(elements[i], *dataListHead);
@@ -1556,16 +1559,8 @@ namespace HSLL
 		{
 			for (unsigned int i = 0; i < maxSpin; ++i)
 			{
-				if ((i & 127) != 127)
-				{
-					if (get_size())
-						return;
-				}
-				else
-				{
-					if (get_exact_size())
-						return;
-				}
+				if (size)
+					return;
 			}
 			return;
 		}
@@ -1586,8 +1581,8 @@ namespace HSLL
 				return false;
 
 			size = 0;
-			maxSize = capacity;
 			maxSpin = spin;
+			this->capacity = capacity;
 			dataListHead = (TYPE*)memoryBlock;
 			dataListTail = (TYPE*)memoryBlock;
 			border = (uintptr_t)memoryBlock + totalsize;
@@ -1601,7 +1596,7 @@ namespace HSLL
 
 			std::unique_lock<std::mutex> lock(dataMutex);
 
-			if (UNLIKELY(size.load(std::memory_order_relaxed) == maxSize))
+			if (UNLIKELY(size == capacity))
 				return false;
 
 			emplace_helper<POS>(lock, std::forward<Args>(args)...);
@@ -1609,7 +1604,7 @@ namespace HSLL
 		}
 
 		template <INSERT_POS POS = TAIL, typename... Args>
-		typename std::enable_if<!is_generic_dr<typename std::tuple_element<0, std::tuple<Args...>>::type>::value, bool>::type
+		typename std::enable_if<!is_duration<typename std::tuple_element<0, std::tuple<Args...>>::type>::value, bool>::type
 			wait_emplace(Args &&...args)
 		{
 			assert(memoryBlock);
@@ -1617,7 +1612,7 @@ namespace HSLL
 			std::unique_lock<std::mutex> lock(dataMutex);
 
 			notFullCond.wait(lock, [this]
-				{ return LIKELY(size.load(std::memory_order_relaxed) != maxSize) || UNLIKELY(isStopped); });
+				{ return LIKELY(size != capacity) || UNLIKELY(isStopped); });
 
 			if (UNLIKELY(isStopped))
 				return false;
@@ -1634,7 +1629,7 @@ namespace HSLL
 			std::unique_lock<std::mutex> lock(dataMutex);
 
 			bool success = notFullCond.wait_for(lock, timeout, [this]
-				{ return LIKELY(size.load(std::memory_order_relaxed) != maxSize) || UNLIKELY(isStopped); });
+				{ return LIKELY(size != capacity) || UNLIKELY(isStopped); });
 
 			if (UNLIKELY(!success || isStopped))
 				return false;
@@ -1649,7 +1644,7 @@ namespace HSLL
 			assert(memoryBlock);
 			std::unique_lock<std::mutex> lock(dataMutex);
 
-			if (UNLIKELY(size.load(std::memory_order_relaxed) == maxSize))
+			if (UNLIKELY(size == capacity))
 				return false;
 
 			enqueue_helper<POS>(lock, std::forward<T>(element));
@@ -1664,7 +1659,7 @@ namespace HSLL
 			std::unique_lock<std::mutex> lock(dataMutex);
 
 			notFullCond.wait(lock, [this]
-				{ return LIKELY(size.load(std::memory_order_relaxed) != maxSize) || UNLIKELY(isStopped); });
+				{ return LIKELY(size != capacity) || UNLIKELY(isStopped); });
 
 			if (UNLIKELY(isStopped))
 				return false;
@@ -1681,7 +1676,7 @@ namespace HSLL
 			std::unique_lock<std::mutex> lock(dataMutex);
 
 			bool success = notFullCond.wait_for(lock, timeout, [this]
-				{ return LIKELY(size.load(std::memory_order_relaxed) != maxSize) || UNLIKELY(isStopped); });
+				{ return LIKELY(size != capacity) || UNLIKELY(isStopped); });
 
 			if (UNLIKELY(!success || isStopped))
 				return false;
@@ -1697,7 +1692,7 @@ namespace HSLL
 			assert(elements && count);
 			std::unique_lock<std::mutex> lock(dataMutex);
 
-			if (UNLIKELY(!(maxSize - size.load(std::memory_order_relaxed))))
+			if (UNLIKELY(!(capacity - size)))
 				return 0;
 
 			return enqueue_bulk_helper<METHOD, POS>(lock, elements, count);
@@ -1714,7 +1709,7 @@ namespace HSLL
 
 			std::unique_lock<std::mutex> lock(dataMutex);
 
-			if (UNLIKELY(!(maxSize - size.load(std::memory_order_relaxed))))
+			if (UNLIKELY(!(capacity - size)))
 				return 0;
 
 			return enqueue_bulk_helper<METHOD, POS>(lock, part1, count1, part2, count2);
@@ -1729,7 +1724,7 @@ namespace HSLL
 			std::unique_lock<std::mutex> lock(dataMutex);
 
 			notFullCond.wait(lock, [this]
-				{ return LIKELY(size.load(std::memory_order_relaxed) != maxSize) || UNLIKELY(isStopped); });
+				{ return LIKELY(size != capacity) || UNLIKELY(isStopped); });
 
 			if (UNLIKELY(isStopped))
 				return 0;
@@ -1746,7 +1741,7 @@ namespace HSLL
 			std::unique_lock<std::mutex> lock(dataMutex);
 
 			bool success = notFullCond.wait_for(lock, timeout, [this]
-				{ return LIKELY(size.load(std::memory_order_relaxed) != maxSize) || UNLIKELY(isStopped); });
+				{ return LIKELY(size != capacity) || UNLIKELY(isStopped); });
 
 			if (UNLIKELY(!success || isStopped))
 				return 0;
@@ -1759,7 +1754,7 @@ namespace HSLL
 			assert(memoryBlock);
 			std::unique_lock<std::mutex> lock(dataMutex);
 
-			if (UNLIKELY(!size.load(std::memory_order_relaxed)))
+			if (UNLIKELY(!size))
 				return false;
 
 			dequeue_helper(lock, element);
@@ -1773,7 +1768,7 @@ namespace HSLL
 			std::unique_lock<std::mutex> lock(dataMutex);
 
 			notEmptyCond.wait(lock, [this]
-				{ return LIKELY(size.load(std::memory_order_relaxed)) || UNLIKELY(isStopped); });
+				{ return LIKELY(size) || UNLIKELY(isStopped); });
 
 			if (UNLIKELY(isStopped))
 				return false;
@@ -1790,7 +1785,7 @@ namespace HSLL
 			std::unique_lock<std::mutex> lock(dataMutex);
 
 			bool success = notEmptyCond.wait_for(lock, timeout, [this]
-				{ return LIKELY(size.load(std::memory_order_relaxed)) || UNLIKELY(isStopped); });
+				{ return LIKELY(size) || UNLIKELY(isStopped); });
 
 			if (UNLIKELY(!success || isStopped))
 				return false;
@@ -1805,7 +1800,7 @@ namespace HSLL
 			assert(elements && count);
 			std::unique_lock<std::mutex> lock(dataMutex);
 
-			if (UNLIKELY(!size.load(std::memory_order_relaxed)))
+			if (UNLIKELY(!size))
 				return 0;
 
 			return dequeue_bulk_helper(lock, elements, count);
@@ -1819,7 +1814,7 @@ namespace HSLL
 			std::unique_lock<std::mutex> lock(dataMutex);
 
 			notEmptyCond.wait(lock, [this]
-				{ return LIKELY(size.load(std::memory_order_relaxed)) || UNLIKELY(isStopped); });
+				{ return LIKELY(size) || UNLIKELY(isStopped); });
 
 			if (UNLIKELY(isStopped))
 				return 0;
@@ -1836,7 +1831,7 @@ namespace HSLL
 			std::unique_lock<std::mutex> lock(dataMutex);
 
 			bool success = notEmptyCond.wait_for(lock, timeout, [this]
-				{ return LIKELY(size.load(std::memory_order_relaxed)) || UNLIKELY(isStopped); });
+				{ return LIKELY(size) || UNLIKELY(isStopped); });
 
 			if (UNLIKELY(!success || isStopped))
 				return 0;
@@ -1847,13 +1842,7 @@ namespace HSLL
 		unsigned int get_size()
 		{
 			assert(memoryBlock);
-			return size.load(std::memory_order_relaxed);
-		}
-
-		unsigned int get_exact_size()
-		{
-			assert(memoryBlock);
-			return size.load(std::memory_order_acquire);
+			return size;
 		}
 
 		unsigned int is_Stopped()
@@ -1900,7 +1889,7 @@ namespace HSLL
 			ALIGNED_FREE(memoryBlock);
 
 			size = 0;
-			maxSize = 0;
+			capacity = 0;
 			isStopped = 0;
 			memoryBlock = nullptr;
 			dataListHead = nullptr;
@@ -1919,7 +1908,279 @@ namespace HSLL
 	};
 }
 
-#define HSLL_THREADPOOL_TIMEOUT_MILLISECONDS 5
+namespace HSLL
+{
+	template<class T>
+	class RoundRobinGroup
+	{
+		unsigned int currentIndex;
+		unsigned int taskCount;
+		unsigned int capacityThreshold;
+		unsigned int taskThreshold;
+		std::vector<TPBlockQueue<T>*>* assignedQueues;
+
+		void advance_index()
+		{
+			if (taskCount >= taskThreshold)
+			{
+				currentIndex = (currentIndex + 1) % assignedQueues->size();
+				taskCount = 0;
+			}
+		}
+
+	public:
+
+		void resetAndInit(std::vector<TPBlockQueue<T>*>* queues, unsigned int capacity, unsigned int threshold)
+		{
+			currentIndex = 0;
+			taskCount = 0;
+			this->assignedQueues = queues;
+			this->capacityThreshold = capacity * 0.995;
+			this->taskThreshold = threshold;
+		}
+
+		TPBlockQueue<T>* current_queue()
+		{
+			return (*assignedQueues)[currentIndex];
+		}
+
+		TPBlockQueue<T>* available_queue()
+		{
+			TPBlockQueue<T>* candidateQueue;
+
+			for (int i = 0; i < assignedQueues->size() - 1; ++i)
+			{
+				currentIndex = (currentIndex + 1) % assignedQueues->size();
+				candidateQueue = (*assignedQueues)[currentIndex];
+
+				if (candidateQueue->get_size() <= capacityThreshold)
+				{
+					taskCount = 0;
+					return candidateQueue;
+				}
+			}
+
+			return nullptr;
+		}
+
+		void record(unsigned int taskSize)
+		{
+			if (taskSize)
+			{
+				taskCount += taskSize;
+				advance_index();
+			}
+			else
+			{
+				currentIndex = (currentIndex + 1) % assignedQueues->size();
+				taskCount = 0;
+				return;
+			}
+		}
+	};
+
+	template<class T>
+	class TPGroupAllocator
+	{
+		unsigned int totalQueues;
+		unsigned int taskThreshold;
+		unsigned int queueCapacity;
+		TPBlockQueue<T>* queueArray;
+		std::vector<std::vector<TPBlockQueue<T>*>> threadSlots;
+		std::map<std::thread::id, RoundRobinGroup<T>> threadGroups;
+
+		void manage_thread_entry(bool addThread, std::thread::id threadId)
+		{
+			if (addThread)
+			{
+				if (threadGroups.find(threadId) == threadGroups.end())
+					threadGroups.insert({ threadId, RoundRobinGroup<T>() });
+				else
+					return;
+			}
+			else
+			{
+				auto group = threadGroups.find(threadId);
+
+				if (group != threadGroups.end())
+					threadGroups.erase(group);
+				else
+					return;
+			}
+
+			if (addThread)
+				threadSlots.emplace_back(std::vector<TPBlockQueue<T>*>());
+			else
+				threadSlots.pop_back();
+
+			rebuild_slot_assignments();
+			reinitialize_groups();
+		}
+
+		void rebuild_slot_assignments()
+		{
+			if (threadSlots.size())
+			{
+				for (int i = 0; i < threadSlots.size(); ++i)
+					threadSlots[i].clear();
+
+				distribute_queues_to_threads(threadSlots.size());
+			}
+		}
+
+		void reinitialize_groups()
+		{
+			if (threadSlots.size())
+			{
+				unsigned int slotIndex = 0;
+				for (auto& group : threadGroups)
+				{
+					group.second.resetAndInit(&threadSlots[slotIndex], queueCapacity, taskThreshold);
+					slotIndex++;
+				}
+			}
+		}
+
+		static unsigned int calculate_balanced_thread_count(unsigned int queueCount, unsigned int threadCount)
+		{
+			if (threadCount > queueCount)
+			{
+				while (threadCount > queueCount)
+				{
+					if (!(threadCount % queueCount))
+						break;
+
+					threadCount--;
+				}
+			}
+			else
+			{
+				while (threadCount)
+				{
+					if (!(queueCount % threadCount))
+						break;
+
+					threadCount--;
+				}
+			}
+
+			return threadCount;
+		}
+
+		void populate_slot(bool forwardOrder, std::vector<TPBlockQueue<T>*>& slot)
+		{
+			if (forwardOrder)
+			{
+				for (unsigned int k = 0; k < totalQueues; k++)
+					slot.emplace_back(queueArray + k);
+			}
+			else
+			{
+				for (unsigned int k = totalQueues; k > 0; k--)
+					slot.emplace_back(queueArray + k - 1);
+			}
+		}
+
+		void handle_remainder_case(unsigned int threadCount)
+		{
+			bool fillDirection = false;
+			unsigned int balancedCount = calculate_balanced_thread_count(totalQueues, threadCount - 1);
+			distribute_queues_to_threads(balancedCount);
+
+			for (unsigned int i = 0; i < threadCount - balancedCount; ++i)
+			{
+				populate_slot(fillDirection, threadSlots[balancedCount + i]);
+				fillDirection = !fillDirection;
+			}
+		}
+
+		void distribute_queues_to_threads(unsigned int threadCount)
+		{
+			if (!threadCount)
+				return;
+
+			if (threadCount <= totalQueues)
+			{
+				unsigned int queuesPerThread = totalQueues / threadCount;
+				unsigned int remainder = totalQueues % threadCount;
+
+				if (remainder)
+				{
+					handle_remainder_case(threadCount);
+				}
+				else
+				{
+					for (unsigned int i = 0; i < threadCount; ++i)
+						for (unsigned int k = 0; k < queuesPerThread; k++)
+							threadSlots[i].emplace_back(queueArray + i * queuesPerThread + k);
+				}
+			}
+			else
+			{
+				unsigned int threadsPerQueue = threadCount / totalQueues;
+				unsigned int remainder = threadCount % totalQueues;
+				if (remainder)
+				{
+					handle_remainder_case(threadCount);
+				}
+				else
+				{
+					for (unsigned int i = 0; i < threadCount; i++)
+						threadSlots[i].emplace_back(queueArray + i / threadsPerQueue);
+				}
+			}
+
+			return;
+		}
+
+	public:
+
+		void reset()
+		{
+			std::vector<std::vector<TPBlockQueue<T>*>>().swap(threadSlots);
+			std::map<std::thread::id, RoundRobinGroup<T>>().swap(threadGroups);
+		}
+
+		void initialize(TPBlockQueue<T>* queues, unsigned int queueCount, unsigned int capacity, unsigned int threshold)
+		{
+			this->queueArray = queues;
+			this->totalQueues = queueCount;
+			this->queueCapacity = capacity;
+			this->taskThreshold = threshold;
+		}
+
+		RoundRobinGroup<T>* find(std::thread::id threadId)
+		{
+			auto it = threadGroups.find(threadId);
+
+			if (it != threadGroups.end())
+				return &(it->second);
+
+			return nullptr;
+		}
+
+		void register_thread(std::thread::id threadId)
+		{
+			manage_thread_entry(true, threadId);
+		}
+
+		void unregister_thread(std::thread::id threadId)
+		{
+			manage_thread_entry(false, threadId);
+		}
+
+		void update(unsigned int newQueueCount)
+		{
+			if (this->totalQueues != newQueueCount)
+			{
+				this->totalQueues = newQueueCount;
+				rebuild_slot_assignments();
+			}
+		}
+	};
+}
+
+#define HSLL_THREADPOOL_TIMEOUT_MILLISECONDS 1
 #define HSLL_THREADPOOL_SHRINK_FACTOR 0.25
 #define HSLL_THREADPOOL_EXPAND_FACTOR 0.75
 
@@ -1938,21 +2199,21 @@ namespace HSLL
 
 		bool monitor;
 		unsigned int index;
-		unsigned int queueLength;
-		unsigned int* threadNum;
+		unsigned int capacity;
 		unsigned int threshold;
+		unsigned int* threadNum;
 
-		SpinReadWriteLock* rwLock;
 		TPBlockQueue<T>* queues;
 		TPBlockQueue<T>* ignore;
+		SpinReadWriteLock* rwLock;
 
 		SingleStealer(SpinReadWriteLock* rwLock, TPBlockQueue<T>* queues, TPBlockQueue<T>* ignore,
-			unsigned int queueLength, unsigned int* threadNum, bool monitor)
+			unsigned int capacity, unsigned int* threadNum, unsigned int maxThreadum, bool monitor)
 		{
 			this->index = 0;
-			this->queueLength = queueLength;
+			this->capacity = capacity;
 			this->threadNum = threadNum;
-			this->threshold = std::min((unsigned int)2, queueLength);
+			this->threshold = std::min(capacity / 2, maxThreadum / 2);
 			this->rwLock = rwLock;
 			this->queues = queues;
 			this->ignore = ignore;
@@ -1972,23 +2233,25 @@ namespace HSLL
 			}
 		}
 
-		unsigned int steal_inner(T& element)
+		bool steal_inner(T& element)
 		{
 			unsigned int num = *threadNum;
-			for (int i = 0; i < num; ++i)
+
+			for (unsigned int i = 0; i < num; ++i)
 			{
 				unsigned int now = (index + i) % num;
 				TPBlockQueue<T>* queue = queues + now;
-				if (queue->get_size() >= threshold && queue != ignore)
+
+				if (queue != ignore && queue->get_size() >= threshold)
 				{
 					if (queue->dequeue(element))
 					{
 						index = now;
-						return 1;
+						return true;
 					}
 				}
 			}
-			return 0;
+			return false;
 		}
 	};
 
@@ -2002,23 +2265,23 @@ namespace HSLL
 
 		bool monitor;
 		unsigned int index;
+		unsigned int capacity;
 		unsigned int batchSize;
-		unsigned int queueLength;
-		unsigned int* threadNum;
 		unsigned int threshold;
+		unsigned int* threadNum;
 
-		SpinReadWriteLock* rwLock;
 		TPBlockQueue<T>* queues;
 		TPBlockQueue<T>* ignore;
+		SpinReadWriteLock* rwLock;
 
-		BulkStealer(SpinReadWriteLock* rwLock, TPBlockQueue<T>* queues, TPBlockQueue<T>* ignore, unsigned int queueLength,
-			unsigned int* threadNum, unsigned int batchSize, bool monitor)
+		BulkStealer(SpinReadWriteLock* rwLock, TPBlockQueue<T>* queues, TPBlockQueue<T>* ignore, unsigned int capacity,
+			unsigned int* threadNum, unsigned int maxThreadum, unsigned int batchSize, bool monitor)
 		{
 			this->index = 0;
 			this->batchSize = batchSize;
-			this->queueLength = queueLength;
+			this->capacity = capacity;
 			this->threadNum = threadNum;
-			this->threshold = std::min(2 * batchSize, queueLength / 2);
+			this->threshold = std::min(capacity / 2, batchSize * maxThreadum / 2);
 			this->rwLock = rwLock;
 			this->queues = queues;
 			this->ignore = ignore;
@@ -2040,17 +2303,23 @@ namespace HSLL
 
 		unsigned int steal_inner(T* elements)
 		{
+			unsigned int count;
 			unsigned int num = *threadNum;
-			for (int i = 0; i < num; ++i)
+
+			for (unsigned int i = 0; i < num; ++i)
 			{
 				unsigned int now = (index + i) % num;
 				TPBlockQueue<T>* queue = queues + now;
-				if (queue->get_size() >= threshold && queue != ignore)
+
+				if (queue != ignore && queue->get_size() >= threshold)
 				{
-					unsigned int count = queue->dequeue_bulk(elements, batchSize);
-					if (count)
+					if (count = queue->dequeue_bulk(elements, batchSize))
 					{
-						index = now;
+						if (count == batchSize)
+							index = now;
+						else
+							index = (now + 1) % num;
+
 						return count;
 					}
 				}
@@ -2059,21 +2328,64 @@ namespace HSLL
 		}
 	};
 
+	class ThreadPoolRegister
+	{
+		template <class TYPE>
+		friend class ThreadPool;
+
+		struct Key
+		{
+			void* poolAddr;
+			std::thread::id id;
+
+			bool operator<(const Key& other) const noexcept
+			{
+				if (poolAddr != other.poolAddr)
+					return poolAddr < other.poolAddr;
+
+				return id < other.id;
+			}
+		};
+
+		thread_local static std::set<Key> threadpool_register;
+
+
+		static bool is_registered(void* poolAddr, std::thread::id id)
+		{
+			return threadpool_register.find({ poolAddr, id }) != threadpool_register.end();
+		}
+
+		static void register_this_thread(void* poolAddr, std::thread::id id)
+		{
+			if (threadpool_register.find({ poolAddr, id }) == threadpool_register.end())
+				threadpool_register.insert({ poolAddr, id });
+		}
+
+		static void unregister_this_thread(void* poolAddr, std::thread::id id)
+		{
+			const auto it = threadpool_register.find({ poolAddr, id });
+			if (it != threadpool_register.end())
+				threadpool_register.erase(it);
+		}
+	};
+
+	thread_local std::set<ThreadPoolRegister::Key> ThreadPoolRegister::threadpool_register;
+
 	/**
 	 * @brief Thread pool implementation with multiple queues for task distribution
 	 */
 	template <class T = TaskStack<>>
 	class ThreadPool
 	{
-		static_assert(is_generic_ts<T>::value, "TYPE must be a TaskStack type");
+		static_assert(is_TaskStack<T>::value, "TYPE must be a TaskStack type");
 
 	private:
 
+		unsigned int capacity;
+		unsigned int batchSize;
 		unsigned int threadNum;
 		unsigned int minThreadNum;
 		unsigned int maxThreadNum;
-		unsigned int batchSize;
-		unsigned int queueLength;
 
 		bool enableMonitor;
 		Semaphore monitorSem;
@@ -2091,6 +2403,7 @@ namespace HSLL
 		TPBlockQueue<T>* queues;
 		std::vector<std::thread> workers;
 		std::atomic<unsigned int> index;
+		TPGroupAllocator<T> groupAllocator;
 
 	public:
 
@@ -2123,9 +2436,10 @@ namespace HSLL
 			this->maxThreadNum = threadNum;
 			this->threadNum = maxThreadNum;
 			this->batchSize = std::min(batchSize, capacity / 2);
-			this->queueLength = capacity;
+			this->capacity = capacity;
 			this->adjustMillis = adjustMillis;
 			workers.reserve(maxThreadNum);
+			groupAllocator.init(queues, maxThreadNum, capacity, capacity * 0.01 > 1 ? capacity * 0.01 : 1);
 
 			for (unsigned i = 0; i < maxThreadNum; ++i)
 				workers.emplace_back(&ThreadPool::worker, this, i);
@@ -2144,8 +2458,7 @@ namespace HSLL
 		* @return false Initialization failed (invalid parameters or resource allocation failure)
 		*/
 		bool init(unsigned int capacity, unsigned int minThreadNum, unsigned int maxThreadNum,
-			unsigned int batchSize, unsigned int adjustMillis = 2500
-		) noexcept
+			unsigned int batchSize, unsigned int adjustMillis = 2500) noexcept
 		{
 			assert(!queues);
 
@@ -2164,9 +2477,10 @@ namespace HSLL
 			this->maxThreadNum = maxThreadNum;
 			this->threadNum = maxThreadNum;
 			this->batchSize = std::min(batchSize, capacity / 2);
-			this->queueLength = capacity;
+			this->capacity = capacity;
 			this->adjustMillis = std::chrono::milliseconds(adjustMillis);
 			workers.reserve(maxThreadNum);
+			groupAllocator.initialize(queues, maxThreadNum, capacity, capacity * 0.05 > 1 ? capacity * 0.05 : 1);
 
 			for (unsigned i = 0; i < maxThreadNum; ++i)
 				workers.emplace_back(&ThreadPool::worker, this, i);
@@ -2177,20 +2491,62 @@ namespace HSLL
 			return true;
 		}
 
-#define HSLL_ENQUEUE_HELPER(exp1,exp2)  \
-		assert(queues);					\
-		if(maxThreadNum == 1)			\
-		{								\
-			return exp1;				\
-		}								\
-		else if (enableMonitor)			\
-		{								\
-			ReadLockGuard lock(rwLock); \
-			return exp2;				\
-		}								\
-		else							\
-		{								\
-			return exp2;				\
+#define HSLL_ENQUEUE_HELPER(exp1,exp2,exp3)							\
+																	\
+		assert(queues);												\
+																	\
+		if (maxThreadNum == 1)										\
+			return exp1;											\
+																	\
+		std::thread::id id = std::this_thread::get_id();			\
+																	\
+		if (ThreadPoolRegister::is_registered(this, id))			\
+		{															\
+			ReadLockGuard lock(rwLock);								\
+																	\
+			if (threadNum == 1)										\
+				return exp1;										\
+																	\
+			RoundRobinGroup<T>* group = groupAllocator.find(id);	\
+			TPBlockQueue<T>* queue = group->current_queue();			\
+			unsigned int size = exp2;								\
+																	\
+			if (size)												\
+			{														\
+				group->record(size);								\
+				return size;										\
+			}														\
+			else													\
+			{														\
+				if ((queue = group->available_queue()))				\
+				{													\
+					size = exp2;									\
+																	\
+					if (size)										\
+					{												\
+						group->record(size);						\
+						return size;								\
+					}												\
+					else											\
+					{												\
+						group->record(0);							\
+					}												\
+				}													\
+			}														\
+																	\
+			return size;											\
+		}															\
+		else														\
+		{															\
+			if (enableMonitor)										\
+			{														\
+				ReadLockGuard lock(rwLock);							\
+				return exp3;										\
+			}														\
+			else													\
+			{														\
+				return exp3;										\
+			}														\
 		}
 
 		/**
@@ -2204,9 +2560,11 @@ namespace HSLL
 		template <INSERT_POS POS = TAIL, typename... Args>
 		bool emplace(Args &&...args) noexcept
 		{
-			HSLL_ENQUEUE_HELPER(queues->template emplace<POS>(std::forward<Args>(args)...),
-				select_queue().template emplace<POS>(std::forward<Args>(args)...)
-			);
+			HSLL_ENQUEUE_HELPER(
+				(queues-> template emplace<POS>(std::forward<Args>(args)...)),
+				(queue-> template emplace<POS>(std::forward<Args>(args)...)),
+				(select_queue()-> template emplace<POS>(std::forward<Args>(args)...))
+			)
 		}
 
 		/**
@@ -2220,9 +2578,11 @@ namespace HSLL
 		template <INSERT_POS POS = TAIL, typename... Args>
 		bool wait_emplace(Args &&...args) noexcept
 		{
-			HSLL_ENQUEUE_HELPER(queues->template wait_emplace<POS>(std::forward<Args>(args)...),
-				select_queue().template wait_emplace<POS>(std::forward<Args>(args)...)
-			);
+			HSLL_ENQUEUE_HELPER(
+				(queues-> template wait_emplace<POS>(std::forward<Args>(args)...)),
+				(queue-> template wait_emplace<POS>(std::forward<Args>(args)...)),
+				(select_queue()-> template wait_emplace<POS>(std::forward<Args>(args)...))
+			)
 		}
 
 		/**
@@ -2238,9 +2598,11 @@ namespace HSLL
 		template <INSERT_POS POS = TAIL, class Rep, class Period, typename... Args>
 		bool wait_emplace(const std::chrono::duration<Rep, Period>& timeout, Args &&...args) noexcept
 		{
-			HSLL_ENQUEUE_HELPER(queues->template wait_emplace<POS>(timeout, std::forward<Args>(args)...),
-				select_queue().template wait_emplace<POS>(timeout, std::forward<Args>(args)...)
-			);
+			HSLL_ENQUEUE_HELPER(
+				(queues-> template wait_emplace<POS>(timeout, std::forward<Args>(args)...)),
+				(queue-> template wait_emplace<POS>(timeout, std::forward<Args>(args)...)),
+				(select_queue()-> template wait_emplace<POS>(timeout, std::forward<Args>(args)...))
+			)
 		}
 
 		/**
@@ -2253,9 +2615,11 @@ namespace HSLL
 		template <INSERT_POS POS = TAIL, class U>
 		bool enqueue(U&& task) noexcept
 		{
-			HSLL_ENQUEUE_HELPER(queues->template enqueue<POS>(std::forward<U>(task)),
-				select_queue().template enqueue<POS>(std::forward<U>(task))
-			);
+			HSLL_ENQUEUE_HELPER(
+				(queues-> template enqueue<POS>(std::forward<U>(task))),
+				(queue-> template enqueue<POS>(std::forward<U>(task))),
+				(select_queue()-> template enqueue<POS>(std::forward<U>(task)))
+			)
 		}
 
 		/**
@@ -2268,9 +2632,11 @@ namespace HSLL
 		template <INSERT_POS POS = TAIL, class U>
 		bool wait_enqueue(U&& task) noexcept
 		{
-			HSLL_ENQUEUE_HELPER(queues->template wait_push<POS>(std::forward<U>(task)),
-				select_queue().template wait_push<POS>(std::forward<U>(task))
-			);
+			HSLL_ENQUEUE_HELPER(
+				(queues-> template wait_push<POS>(std::forward<U>(task))),
+				(queue-> template wait_push<POS>(std::forward<U>(task))),
+				(select_queue()-> template wait_push<POS>(std::forward<U>(task)))
+			)
 		}
 
 		/**
@@ -2286,9 +2652,11 @@ namespace HSLL
 		template <INSERT_POS POS = TAIL, class U, class Rep, class Period>
 		bool wait_enqueue(U&& task, const std::chrono::duration<Rep, Period>& timeout) noexcept
 		{
-			HSLL_ENQUEUE_HELPER(queues->template wait_push<POS>(std::forward<U>(task), timeout),
-				select_queue().template wait_push<POS>(std::forward<U>(task), timeout)
-			);
+			HSLL_ENQUEUE_HELPER(
+				(queues-> template wait_push<POS>(std::forward<U>(task), timeout)),
+				(queue-> template wait_push<POS>(std::forward<U>(task), timeout)),
+				(select_queue()-> template wait_push<POS>(std::forward<U>(task), timeout))
+			)
 		}
 
 		/**
@@ -2302,9 +2670,11 @@ namespace HSLL
 		template <BULK_CMETHOD METHOD = COPY, INSERT_POS POS = TAIL>
 		unsigned int enqueue_bulk(T* tasks, unsigned int count) noexcept
 		{
-			HSLL_ENQUEUE_HELPER((queues->template enqueue_bulk<METHOD, POS>(tasks, count)),
-				(select_queue_for_bulk(std::max(1u, count / 2)).template enqueue_bulk<METHOD, POS>(tasks, count))
-			);
+			HSLL_ENQUEUE_HELPER(
+				(queues-> template enqueue_bulk<METHOD, POS>(tasks, count)),
+				(queue-> template enqueue_bulk<METHOD, POS>(tasks, count)),
+				(select_queue()-> template enqueue_bulk<METHOD, POS>(tasks, count))
+			)
 		}
 
 		/**
@@ -2321,9 +2691,11 @@ namespace HSLL
 		template <BULK_CMETHOD METHOD = COPY, INSERT_POS POS = TAIL>
 		unsigned int enqueue_bulk(T* part1, unsigned int count1, T* part2, unsigned int count2) noexcept
 		{
-			HSLL_ENQUEUE_HELPER((queues->template enqueue_bulk<METHOD, POS>(part1, count1, part2, count2)),
-				(select_queue_for_bulk(std::max(1u, (count1 + count2) / 2)).template enqueue_bulk<METHOD, POS>(part1, count1, part2, count2))
-			);
+			HSLL_ENQUEUE_HELPER(
+				(queues-> template enqueue_bulk<METHOD, POS>(part1, count1, part2, count2)),
+				(queue-> template enqueue_bulk<METHOD, POS>(part1, count1, part2, count2)),
+				(select_queue()-> template enqueue_bulk<METHOD, POS>(part1, count1, part2, count2))
+			)
 		}
 
 		/**
@@ -2337,9 +2709,11 @@ namespace HSLL
 		template <BULK_CMETHOD METHOD = COPY, INSERT_POS POS = TAIL>
 		unsigned int wait_enqueue_bulk(T* tasks, unsigned int count) noexcept
 		{
-			HSLL_ENQUEUE_HELPER((queues->template wait_pushBulk<METHOD, POS>(tasks, count)),
-				(select_queue().template wait_pushBulk<METHOD, POS>(tasks, count))
-			);
+			HSLL_ENQUEUE_HELPER(
+				(queues-> template wait_pushBulk<METHOD, POS>(tasks, count)),
+				(queue-> template wait_pushBulk<METHOD, POS>(tasks, count)),
+				(select_queue()-> template wait_pushBulk<METHOD, POS>(tasks, count))
+			)
 		}
 
 		/**
@@ -2356,9 +2730,11 @@ namespace HSLL
 		template <BULK_CMETHOD METHOD = COPY, INSERT_POS POS = TAIL, class Rep, class Period>
 		unsigned int wait_enqueue_bulk(T* tasks, unsigned int count, const std::chrono::duration<Rep, Period>& timeout) noexcept
 		{
-			HSLL_ENQUEUE_HELPER((queues->template wait_pushBulk<METHOD, POS>(tasks, count, timeout)),
-				(select_queue().template wait_pushBulk<METHOD, POS>(tasks, count, timeout))
-			);
+			HSLL_ENQUEUE_HELPER(
+				(queues-> template wait_pushBulk<METHOD, POS>(tasks, count, timeout)),
+				(queue-> template wait_pushBulk<METHOD, POS>(tasks, count, timeout)),
+				(select_queue()-> template wait_pushBulk<METHOD, POS>(tasks, count, timeout))
+			)
 		}
 
 		/**
@@ -2440,6 +2816,22 @@ namespace HSLL
 			rleaseResourse();
 		}
 
+		void register_this_thread()
+		{
+			std::thread::id id = std::this_thread::get_id();
+			ThreadPoolRegister::register_this_thread(this, id);
+			WriteLockGuard lock(rwLock);
+			groupAllocator.register_thread(id);
+		}
+
+		void unregister_this_thread()
+		{
+			std::thread::id id = std::this_thread::get_id();
+			ThreadPoolRegister::unregister_this_thread(this, id);
+			WriteLockGuard lock(rwLock);
+			groupAllocator.unregister_thread(id);
+		}
+
 		~ThreadPool() noexcept
 		{
 			if (queues)
@@ -2453,39 +2845,14 @@ namespace HSLL
 
 	private:
 
-		unsigned int caculate_threshold()
-		{
-			if (queueLength <= 40)
-				return 1;
-			else
-				return queueLength * 0.05;
-		}
-
 		unsigned int next_index() noexcept
 		{
 			return index.fetch_add(1, std::memory_order_relaxed) % threadNum;
 		}
 
-		TPBlockQueue<T>& select_queue() noexcept
+		TPBlockQueue<T>* select_queue() noexcept
 		{
-			unsigned int index = next_index();
-
-			if (queues[index].get_exact_size() < queueLength)
-				return queues[index];
-
-			unsigned int half = threadNum / 2;
-			return queues[(index + half) % threadNum];
-		}
-
-		TPBlockQueue<T>& select_queue_for_bulk(unsigned required) noexcept
-		{
-			unsigned int index = next_index();
-
-			if (queues[index].get_exact_size() + required <= queueLength)
-				return queues[index];
-
-			unsigned int half = threadNum / 2;
-			return queues[(index + half) % threadNum];
+			return queues + next_index();
 		}
 
 		void load_monitor() noexcept
@@ -2507,11 +2874,11 @@ namespace HSLL
 					}
 				}
 
-				unsigned int allSize = queueLength * threadNum;
+				unsigned int allSize = capacity * threadNum;
 				unsigned int totalSize = 0;
 
 				for (int i = 0; i < threadNum; ++i)
-					totalSize += queues[i].get_exact_size();
+					totalSize += queues[i].get_size();
 
 				if (totalSize < allSize * HSLL_THREADPOOL_SHRINK_FACTOR && threadNum > minThreadNum)
 				{
@@ -2521,6 +2888,7 @@ namespace HSLL
 					{
 						rwLock.lock_write();
 						threadNum--;
+						groupAllocator.update(threadNum);
 						rwLock.unlock_write();
 						queues[threadNum].stopWait();
 						stoppedSem[threadNum].acquire();
@@ -2536,7 +2904,7 @@ namespace HSLL
 						unsigned int succeed = 0;
 						for (int i = threadNum; i < threadNum + newThreads; ++i)
 						{
-							if (!queues[i].init(queueLength))
+							if (!queues[i].init(capacity))
 								break;
 
 							restartSem[i].release();
@@ -2547,6 +2915,7 @@ namespace HSLL
 						{
 							rwLock.lock_write();
 							threadNum += succeed;
+							groupAllocator.update(threadNum);
 							rwLock.unlock_write();
 						}
 					}
@@ -2559,19 +2928,9 @@ namespace HSLL
 		void worker(unsigned int index) noexcept
 		{
 			if (batchSize == 1)
-			{
-				if (maxThreadNum == 1)
-					process_single1(queues + index, index);
-				else
-					process_single2(queues + index, index);
-			}
+				process_single(queues + index, index);
 			else
-			{
-				if (maxThreadNum == 1)
-					process_bulk1(queues + index, index);
-				else
-					process_bulk2(queues + index, index);
-			}
+				process_bulk(queues + index, index);
 		}
 
 		static inline void execute_tasks(T* tasks, unsigned int count)
@@ -2583,9 +2942,11 @@ namespace HSLL
 			}
 		}
 
-		void process_single1(TPBlockQueue<T>* queue, unsigned int index) noexcept
+		void process_single(TPBlockQueue<T>* queue, unsigned int index) noexcept
 		{
+			bool enableSteal = (maxThreadNum != 1);
 			T* task = containers + index * batchSize;
+			SingleStealer<T> stealer(&rwLock, queues, queue, capacity, &threadNum, maxThreadNum, enableMonitor);
 
 			while (true)
 			{
@@ -2595,6 +2956,13 @@ namespace HSLL
 					{
 						task->execute();
 						task->~T();
+					}
+
+					if (enableSteal && stealer.steal(*task))
+					{
+						task->execute();
+						task->~T();
+						goto cheak;
 					}
 
 					if (queue->wait_dequeue(*task, std::chrono::milliseconds(HSLL_THREADPOOL_TIMEOUT_MILLISECONDS)))
@@ -2603,55 +2971,7 @@ namespace HSLL
 						task->~T();
 					}
 
-					if (queue->is_Stopped())
-						break;
-				}
-
-				if (shutdownPolicy)
-				{
-					while (queue->dequeue(*task))
-					{
-						task->execute();
-						task->~T();
-					}
-				}
-
-				stoppedSem[index].release();
-				restartSem[index].acquire();
-
-				if (exitFlag)
-					break;
-			}
-		}
-
-		void process_single2(TPBlockQueue<T>* queue, unsigned int index) noexcept
-		{
-			T* task = containers + index * batchSize;
-			SingleStealer<T> stealer(&rwLock, queues, queue, queueLength, &threadNum, enableMonitor);
-
-			while (true)
-			{
-				while (true)
-				{
-					while (queue->dequeue(*task))
-					{
-						task->execute();
-						task->~T();
-					}
-
-					if (stealer.steal(*task))
-					{
-						task->execute();
-						task->~T();
-					}
-					else
-					{
-						if (queue->wait_dequeue(*task, std::chrono::milliseconds(HSLL_THREADPOOL_TIMEOUT_MILLISECONDS)))
-						{
-							task->execute();
-							task->~T();
-						}
-					}
+				cheak:
 
 					if (queue->is_Stopped())
 						break;
@@ -2674,11 +2994,11 @@ namespace HSLL
 			}
 		}
 
-		void process_bulk1(TPBlockQueue<T>* queue, unsigned int index) noexcept
+		void process_bulk(TPBlockQueue<T>* queue, unsigned int index) noexcept
 		{
+			bool enableSteal = (maxThreadNum != 1);
 			T* tasks = containers + index * batchSize;
-			unsigned int size_threshold = batchSize;
-			unsigned int round_threshold = batchSize / 2;
+			BulkStealer<T> stealer(&rwLock, queues, queue, capacity, &threadNum, maxThreadNum, batchSize, enableMonitor);
 
 			while (true)
 			{
@@ -2688,27 +3008,33 @@ namespace HSLL
 				{
 					while (true)
 					{
-						unsigned int round = 1;
-						unsigned int size = queue->get_exact_size();
+						unsigned int size = queue->get_size();
+						unsigned int round = batchSize;
 
-						while (size < size_threshold && round < round_threshold)
+						while (round && size < batchSize)
 						{
 							std::this_thread::yield();
-							size = queue->get_exact_size();
-							round++;
-							std::this_thread::yield();
+							size = queue->get_size();
+							round--;
 						}
 
-						if (size && (count = queue->dequeue_bulk(tasks, size_threshold)))
+						if (size && (count = queue->dequeue_bulk(tasks, batchSize)))
 							execute_tasks(tasks, count);
 						else
 							break;
 					}
 
-					count = queue->wait_dequeue_bulk(tasks, size_threshold, std::chrono::milliseconds(HSLL_THREADPOOL_TIMEOUT_MILLISECONDS));
-
-					if (count)
+					if (enableSteal && (count = stealer.steal(tasks)))
+					{
 						execute_tasks(tasks, count);
+						goto cheak;
+					}
+
+					if (count = queue->wait_dequeue_bulk(tasks, batchSize,
+						std::chrono::milliseconds(HSLL_THREADPOOL_TIMEOUT_MILLISECONDS)))
+						execute_tasks(tasks, count);
+
+				cheak:
 
 					if (queue->is_Stopped())
 						break;
@@ -2716,70 +3042,7 @@ namespace HSLL
 
 				if (shutdownPolicy)
 				{
-					while (count = queue->dequeue_bulk(tasks, size_threshold))
-						execute_tasks(tasks, count);
-				}
-
-				stoppedSem[index].release();
-				restartSem[index].acquire();
-
-				if (exitFlag)
-					break;
-			}
-		}
-
-		void process_bulk2(TPBlockQueue<T>* queue, unsigned int index) noexcept
-		{
-			T* tasks = containers + index * batchSize;
-			unsigned int size_threshold = batchSize;
-			unsigned int round_threshold = batchSize / 2;
-			BulkStealer<T> stealer(&rwLock, queues, queue, queueLength, &threadNum, batchSize, enableMonitor);
-
-			while (true)
-			{
-				unsigned int count;
-
-				while (true)
-				{
-					while (true)
-					{
-						unsigned int round = 1;
-						unsigned int size = queue->get_exact_size();
-
-						while (size < size_threshold && round < round_threshold)
-						{
-							std::this_thread::yield();
-							size = queue->get_exact_size();
-							round++;
-							std::this_thread::yield();
-						}
-
-						if (size && (count = queue->dequeue_bulk(tasks, size_threshold)))
-							execute_tasks(tasks, count);
-						else
-							break;
-					}
-
-					count = stealer.steal(tasks);
-					if (count)
-					{
-						execute_tasks(tasks, count);
-					}
-					else
-					{
-						count = queue->wait_dequeue_bulk(tasks, size_threshold, std::chrono::milliseconds(HSLL_THREADPOOL_TIMEOUT_MILLISECONDS));
-
-						if (count)
-							execute_tasks(tasks, count);
-					}
-
-					if (queue->is_Stopped())
-						break;
-				}
-
-				if (shutdownPolicy)
-				{
-					while (count = queue->dequeue_bulk(tasks, size_threshold))
+					while (count = queue->dequeue_bulk(tasks, batchSize))
 						execute_tasks(tasks, count);
 				}
 
@@ -2803,7 +3066,7 @@ namespace HSLL
 			if (!(containers = (T*)ALIGNED_MALLOC(sizeof(T) * batchSize * maxThreadNum, alignof(T))))
 				goto clean_2;
 
-			if (!(queues = (TPBlockQueue<T>*)ALIGNED_MALLOC(maxThreadNum * sizeof(TPBlockQueue<T>), 64)))
+			if (!(queues = (TPBlockQueue<T>*)ALIGNED_MALLOC(maxThreadNum * sizeof(TPBlockQueue<T>), alignof(TPBlockQueue<T>))))
 				goto clean_3;
 
 			for (unsigned i = 0; i < maxThreadNum; ++i)
@@ -2850,13 +3113,14 @@ namespace HSLL
 			queues = nullptr;
 			workers.clear();
 			workers.shrink_to_fit();
+			groupAllocator.reset();
 		}
 	};
 
 	template <class T, unsigned int BATCH, INSERT_POS POS = TAIL>
 	class BatchSubmitter
 	{
-		static_assert(is_generic_ts<T>::value, "TYPE must be a TaskStack type");
+		static_assert(is_TaskStack<T>::value, "T must be a TaskStack type");
 		static_assert(BATCH > 0, "BATCH > 0");
 		alignas(alignof(T)) unsigned char buf[BATCH * sizeof(T)];
 
