@@ -222,6 +222,42 @@ void taskPropertiesExample()
 		<< "Is stored on stack: " << (TaskType::is_stored_on_stack<decltype(lambda), int>::value ? "Yes" : "No") << "\n";
 }
 
+// 线程注册示例
+void threadRegisterExample()
+{
+	/*
+	* 注册线程到线程池的分组分配器
+	* 每个注册线程会被动态分配一个专属队列组（RoundRobinGroup）
+	* 队列组包含一个或多个任务队列（TPBlockQueue），分配策略：
+	*   - 队列数 >= 线程数：每个线程分配 (总队列数/线程数) 个队列
+	*   - 队列数 < 线程数：每个队列被 (线程数/队列数) 个线程共享
+	*
+	* 示例：3个队列(1,2,3)，4个生产线程(A,B,C,D)
+	* 未注册时队列分配可能(进行轮询):
+	*
+	*   A->1, A->2, A->3, A->1
+	*	B->1, B->2, B->3, B->1
+	* 	C->1, C->2, C->3, C->1
+	*	D->1, D->2, D->3, D->1
+	*
+	*	(频繁切换导致缓存失效)
+	*
+	* 注册后动态分配：
+	*   A: 专属队列组[1]
+	*   B: 专属队列组[2]
+	*   C: 专属队列组[3]
+	*   D: 专属队列组[1,2,3] (多队列组)
+	*/
+
+	globalPool.register_this_thread(); // 注册当前线程
+
+	/* 添加任务操作 */
+
+	// 注意:不再使用线程池时需及时注销
+	globalPool.unregister_this_thread();
+	std::cout << "Thread register example" << std::endl;
+}
+
 int main()
 {
 	// 初始化线程池：10000任务容量，最小/大线程数1,无批处理
@@ -266,6 +302,9 @@ int main()
 
 	std::cout << "\n==== Task Properties Example ====" << std::endl;
 	taskPropertiesExample();
+
+	std::cout << "\n==== Thread register Example ====" << std::endl;
+	threadRegisterExample();
 
 	globalPool.exit(true);
 	return 0;
