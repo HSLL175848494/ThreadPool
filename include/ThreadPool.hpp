@@ -225,7 +225,7 @@ namespace HSLL
 			this->capacity = capacity;
 			this->adjustMillis = adjustMillis;
 			workers.reserve(maxThreadNum);
-			groupAllocator.init(queues, maxThreadNum, capacity, capacity * 0.01 > 1 ? capacity * 0.01 : 1);
+			groupAllocator.initialize(queues, maxThreadNum, capacity, capacity * 0.01 > 1 ? capacity * 0.01 : 1);
 
 			for (unsigned i = 0; i < maxThreadNum; ++i)
 				workers.emplace_back(&ThreadPool::worker, this, i);
@@ -297,7 +297,12 @@ namespace HSLL
 				return exp3;										\
 																	\
 			TPBlockQueue<T>* queue = group->current_queue();		\
-			unsigned int size = exp2;								\
+			unsigned int size;										\
+																	\
+			if (queue)												\
+				size = exp2;										\
+			else													\
+				size = 0;											\
 																	\
 			if (size)												\
 			{														\
@@ -309,16 +314,7 @@ namespace HSLL
 				if ((queue = group->available_queue()))				\
 				{													\
 					size = exp2;									\
-																	\
-					if (size)										\
-					{												\
-						group->record(size);						\
-						return size;								\
-					}												\
-					else											\
-					{												\
-						group->record(0);							\
-					}												\
+					group->record(size);							\
 				}													\
 			}														\
 																	\
@@ -510,15 +506,6 @@ namespace HSLL
 				(queue-> template wait_pushBulk<METHOD, POS>(tasks, count, timeout)),
 				(select_queue()-> template wait_pushBulk<METHOD, POS>(tasks, count, timeout))
 			)
-		}
-
-		/**
-		* @brief Get the maximum occupied space of the thread pool.
-		*/
-		unsigned long long get_max_usage()
-		{
-			assert(queues);
-			return  maxThreadNum * queues->get_bsize();
 		}
 
 		/**

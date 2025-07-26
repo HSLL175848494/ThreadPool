@@ -34,7 +34,6 @@ void C() { }
   - Queue Length: 8192  
   - Container: `TaskStack<24,8>`  
   - Dynamic Threads: Disabled  
-  - Queue Partitioning: Enabled  
 
 | Thread Pool Type                     | Threads | Task A (M/s) | Task B (M/s) | Task C (M/s) |  
 |--------------------------------------|---------|--------------|--------------|--------------|  

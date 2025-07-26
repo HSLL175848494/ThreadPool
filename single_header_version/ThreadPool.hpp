@@ -1021,63 +1021,165 @@ namespace HSLL
 	class SpinReadWriteLock
 	{
 	private:
-		std::atomic<long long> count;
+
+		class InnerRWLock
+		{
+		private:
+			std::atomic<long long> count;
+
+		public:
+
+			InnerRWLock() :count(0) {}
+
+			// Optimistic locking since reads greatly outnumber writes: increment first then handle rollback if needed
+			void lock_read()
+			{
+				long long old = count.fetch_add(1, std::memory_order_acquire); // Acquire semantics to get write results
+
+				while (old < 0)
+				{
+					count.fetch_sub(1, std::memory_order_relaxed);
+
+					while (count.load(std::memory_order_relaxed) < 0)
+						std::this_thread::yield();
+
+					old = count.fetch_add(1, std::memory_order_acquire);
+				}
+			}
+
+			// Relaxed semantics sufficient since read operations don't modify shared state
+			void unlock_read()
+			{
+				count.fetch_sub(1, std::memory_order_relaxed);
+			}
+
+			// Add write flag to prevent new read locks
+			void mark_write()
+			{
+				long long old = count.load(std::memory_order_relaxed);
+
+				while (!count.compare_exchange_weak(old, old - HSLL_SPINREADWRITELOCK_MAXREADER, std::memory_order_relaxed, std::memory_order_relaxed));
+			}
+
+			// Must call mark_write() before this function, otherwise will never succeed
+			bool is_write_ready()
+			{
+				return count.load(std::memory_order_relaxed) == -HSLL_SPINREADWRITELOCK_MAXREADER;
+			}
+
+			// Release semantics to propagate write results
+			void unlock_write()
+			{
+				count.fetch_add(HSLL_SPINREADWRITELOCK_MAXREADER, std::memory_order_release);
+			}
+		};
+
+		struct alignas(64) PeerLock
+		{
+			InnerRWLock lock;
+
+			void lock_read()
+			{
+				lock.lock_read();
+			}
+
+			void unlock_read()
+			{
+				lock.unlock_read();
+			}
+
+			void mark_write()
+			{
+				lock.mark_write();
+			}
+
+			bool is_write_ready()
+			{
+				return lock.is_write_ready();
+			}
+
+			void unlock_write()
+			{
+				lock.unlock_write();
+			}
+		};
+
+		PeerLock counter[256];
+		std::atomic<bool> flag;
+		thread_local static int local_index;
+		static std::atomic<unsigned char> index;
 
 	public:
 
-		SpinReadWriteLock() :count(0) {}
+		SpinReadWriteLock() :flag(true) {}
 
+		unsigned int get_local_index()
+		{
+			if (local_index == -1)
+				local_index = index.fetch_add(1, std::memory_order_relaxed); // unsigned char auto-wraps, no modulo needed
+
+			return local_index;
+		}
 
 		void lock_read()
 		{
-			long long old = count.fetch_add(1, std::memory_order_acquire);
-
-			while (old < 0)
-			{
-				count.fetch_sub(1, std::memory_order_relaxed);
-
-				while (count.load(std::memory_order_relaxed) < 0)
-					std::this_thread::yield();
-
-				old = count.fetch_add(1, std::memory_order_acquire);
-			}
+			counter[get_local_index()].lock_read();
 		}
 
 		void unlock_read()
 		{
-			count.fetch_sub(1, std::memory_order_relaxed);
+			counter[get_local_index()].unlock_read();
 		}
 
 		void lock_write()
 		{
-			long long old = count.load(std::memory_order_relaxed);
+			bool old = true;
+
+			// Set write flag to block new writers and acquire write permission
+			while (!flag.compare_exchange_weak(old, false, std::memory_order_acquire, std::memory_order_relaxed))
+			{
+				std::this_thread::yield();
+				old = true;
+			}
+
+			for (int i = 0; i < 256; ++i) // Mark writer waiting to prevent new readers
+				counter[i].mark_write();
 
 			while (true)
 			{
-				if (old < 0)
+				bool allReady = true;
+
+				for (int i = 0; i < 256; ++i) // Lock successful when all write locks acquired
 				{
-					std::this_thread::yield();
-					old = count.load(std::memory_order_relaxed);
+					if (!counter[i].is_write_ready())
+					{
+						allReady = false;
+						break;
+					}
 				}
-				else if (count.compare_exchange_weak(old, old - HSLL_SPINREADWRITELOCK_MAXREADER, std::memory_order_acquire, std::memory_order_relaxed))
-				{
+
+				if (allReady)
 					break;
-				}
+
+				std::this_thread::yield();
 			}
-
-			while (count.load(std::memory_order_relaxed) != -HSLL_SPINREADWRITELOCK_MAXREADER);
-
-			std::atomic_thread_fence(std::memory_order_acquire);
+			int a = 5;
 		}
 
 		void unlock_write()
 		{
-			count.fetch_add(HSLL_SPINREADWRITELOCK_MAXREADER, std::memory_order_release);
+			for (int i = 0; i < 256; ++i) // Release all read-write locks and propagate to readers
+				counter[i].unlock_write();
+
+			flag.store(true, std::memory_order_release); // Allow new writers and propagate result
 		}
 
 		SpinReadWriteLock(const SpinReadWriteLock&) = delete;
 		SpinReadWriteLock& operator=(const SpinReadWriteLock&) = delete;
 	};
+
+	thread_local int SpinReadWriteLock::local_index = -1;
+	std::atomic<unsigned char> SpinReadWriteLock::index = 0;
 
 	class ReadLockGuard
 	{
@@ -1913,18 +2015,27 @@ namespace HSLL
 	template<class T>
 	class RoundRobinGroup
 	{
-		unsigned int currentIndex;
-		unsigned int taskCount;
-		unsigned int capacityThreshold;
+		unsigned int nowCount;
+		unsigned int nowIndex;
 		unsigned int taskThreshold;
+		unsigned int mainThreshold;
+		unsigned int otherThreshold;
 		std::vector<TPBlockQueue<T>*>* assignedQueues;
+
+		void move_index()
+		{
+			if (nowIndex != assignedQueues->size() - 1)
+				nowIndex++;
+			else
+				nowIndex = 0;
+		}
 
 		void advance_index()
 		{
-			if (taskCount >= taskThreshold)
+			if (nowCount >= taskThreshold)
 			{
-				currentIndex = (currentIndex + 1) % assignedQueues->size();
-				taskCount = 0;
+				move_index();
+				nowCount = 0;
 			}
 		}
 
@@ -1932,16 +2043,22 @@ namespace HSLL
 
 		void resetAndInit(std::vector<TPBlockQueue<T>*>* queues, unsigned int capacity, unsigned int threshold)
 		{
-			currentIndex = 0;
-			taskCount = 0;
+			nowCount = 0;
+			nowIndex = 0;
 			this->assignedQueues = queues;
-			this->capacityThreshold = capacity * 0.995;
 			this->taskThreshold = threshold;
+			this->mainThreshold = capacity * 0.999;
+			this->otherThreshold = capacity * 0.995;
 		}
 
 		TPBlockQueue<T>* current_queue()
 		{
-			return (*assignedQueues)[currentIndex];
+			TPBlockQueue<T>* queue = (*assignedQueues)[nowIndex];
+
+			if (queue->get_size() <= mainThreshold)
+				return queue;
+			else
+				return nullptr;
 		}
 
 		TPBlockQueue<T>* available_queue()
@@ -1950,12 +2067,12 @@ namespace HSLL
 
 			for (int i = 0; i < assignedQueues->size() - 1; ++i)
 			{
-				currentIndex = (currentIndex + 1) % assignedQueues->size();
-				candidateQueue = (*assignedQueues)[currentIndex];
+				move_index();
+				candidateQueue = (*assignedQueues)[nowIndex];
 
-				if (candidateQueue->get_size() <= capacityThreshold)
+				if (candidateQueue->get_size() <= otherThreshold)
 				{
-					taskCount = 0;
+					nowCount = 0;
 					return candidateQueue;
 				}
 			}
@@ -1963,17 +2080,20 @@ namespace HSLL
 			return nullptr;
 		}
 
-		void record(unsigned int taskSize)
+		void record(unsigned int count)
 		{
-			if (taskSize)
+			if (assignedQueues->size() == 1)
+				return;
+
+			if (count)
 			{
-				taskCount += taskSize;
+				nowCount += count;
 				advance_index();
 			}
 			else
 			{
-				currentIndex = (currentIndex + 1) % assignedQueues->size();
-				taskCount = 0;
+				move_index();
+				nowCount = 0;
 				return;
 			}
 		}
@@ -1982,10 +2102,10 @@ namespace HSLL
 	template<class T>
 	class TPGroupAllocator
 	{
-		unsigned int totalQueues;
-		unsigned int taskThreshold;
-		unsigned int queueCapacity;
-		TPBlockQueue<T>* queueArray;
+		unsigned int capacity;
+		unsigned int threshold;
+		unsigned int queueCount;
+		TPBlockQueue<T>* queues;
 		std::vector<std::vector<TPBlockQueue<T>*>> threadSlots;
 		std::map<std::thread::id, RoundRobinGroup<T>> threadGroups;
 
@@ -2014,7 +2134,6 @@ namespace HSLL
 				threadSlots.pop_back();
 
 			rebuild_slot_assignments();
-			reinitialize_groups();
 		}
 
 		void rebuild_slot_assignments()
@@ -2025,6 +2144,7 @@ namespace HSLL
 					threadSlots[i].clear();
 
 				distribute_queues_to_threads(threadSlots.size());
+				reinitialize_groups();
 			}
 		}
 
@@ -2035,7 +2155,7 @@ namespace HSLL
 				unsigned int slotIndex = 0;
 				for (auto& group : threadGroups)
 				{
-					group.second.resetAndInit(&threadSlots[slotIndex], queueCapacity, taskThreshold);
+					group.second.resetAndInit(&threadSlots[slotIndex], capacity, threshold);
 					slotIndex++;
 				}
 			}
@@ -2071,20 +2191,20 @@ namespace HSLL
 		{
 			if (forwardOrder)
 			{
-				for (unsigned int k = 0; k < totalQueues; k++)
-					slot.emplace_back(queueArray + k);
+				for (unsigned int k = 0; k < queueCount; ++k)
+					slot.emplace_back(queues + k);
 			}
 			else
 			{
-				for (unsigned int k = totalQueues; k > 0; k--)
-					slot.emplace_back(queueArray + k - 1);
+				for (unsigned int k = queueCount; k > 0; --k)
+					slot.emplace_back(queues + k - 1);
 			}
 		}
 
 		void handle_remainder_case(unsigned int threadCount)
 		{
 			bool fillDirection = false;
-			unsigned int balancedCount = calculate_balanced_thread_count(totalQueues, threadCount - 1);
+			unsigned int balancedCount = calculate_balanced_thread_count(queueCount, threadCount - 1);
 			distribute_queues_to_threads(balancedCount);
 
 			for (unsigned int i = 0; i < threadCount - balancedCount; ++i)
@@ -2099,10 +2219,10 @@ namespace HSLL
 			if (!threadCount)
 				return;
 
-			if (threadCount <= totalQueues)
+			if (threadCount <= queueCount)
 			{
-				unsigned int queuesPerThread = totalQueues / threadCount;
-				unsigned int remainder = totalQueues % threadCount;
+				unsigned int queuesPerThread = queueCount / threadCount;
+				unsigned int remainder = queueCount % threadCount;
 
 				if (remainder)
 				{
@@ -2111,22 +2231,22 @@ namespace HSLL
 				else
 				{
 					for (unsigned int i = 0; i < threadCount; ++i)
-						for (unsigned int k = 0; k < queuesPerThread; k++)
-							threadSlots[i].emplace_back(queueArray + i * queuesPerThread + k);
+						for (unsigned int k = 0; k < queuesPerThread; ++k)
+							threadSlots[i].emplace_back(queues + i * queuesPerThread + k);
 				}
 			}
 			else
 			{
-				unsigned int threadsPerQueue = threadCount / totalQueues;
-				unsigned int remainder = threadCount % totalQueues;
+				unsigned int threadsPerQueue = threadCount / queueCount;
+				unsigned int remainder = threadCount % queueCount;
 				if (remainder)
 				{
 					handle_remainder_case(threadCount);
 				}
 				else
 				{
-					for (unsigned int i = 0; i < threadCount; i++)
-						threadSlots[i].emplace_back(queueArray + i / threadsPerQueue);
+					for (unsigned int i = 0; i < threadCount; ++i)
+						threadSlots[i].emplace_back(queues + i / threadsPerQueue);
 				}
 			}
 
@@ -2143,10 +2263,10 @@ namespace HSLL
 
 		void initialize(TPBlockQueue<T>* queues, unsigned int queueCount, unsigned int capacity, unsigned int threshold)
 		{
-			this->queueArray = queues;
-			this->totalQueues = queueCount;
-			this->queueCapacity = capacity;
-			this->taskThreshold = threshold;
+			this->queues = queues;
+			this->capacity = capacity;
+			this->threshold = threshold;
+			this->queueCount = queueCount;
 		}
 
 		RoundRobinGroup<T>* find(std::thread::id threadId)
@@ -2171,9 +2291,9 @@ namespace HSLL
 
 		void update(unsigned int newQueueCount)
 		{
-			if (this->totalQueues != newQueueCount)
+			if (this->queueCount != newQueueCount)
 			{
-				this->totalQueues = newQueueCount;
+				this->queueCount = newQueueCount;
 				rebuild_slot_assignments();
 			}
 		}
@@ -2396,7 +2516,7 @@ namespace HSLL
 			this->capacity = capacity;
 			this->adjustMillis = adjustMillis;
 			workers.reserve(maxThreadNum);
-			groupAllocator.init(queues, maxThreadNum, capacity, capacity * 0.01 > 1 ? capacity * 0.01 : 1);
+			groupAllocator.initialize(queues, maxThreadNum, capacity, capacity * 0.01 > 1 ? capacity * 0.01 : 1);
 
 			for (unsigned i = 0; i < maxThreadNum; ++i)
 				workers.emplace_back(&ThreadPool::worker, this, i);
@@ -2468,7 +2588,12 @@ namespace HSLL
 				return exp3;										\
 																	\
 			TPBlockQueue<T>* queue = group->current_queue();		\
-			unsigned int size = exp2;								\
+			unsigned int size;										\
+																	\
+			if (queue)												\
+				size = exp2;										\
+			else													\
+				size = 0;											\
 																	\
 			if (size)												\
 			{														\
@@ -2480,16 +2605,7 @@ namespace HSLL
 				if ((queue = group->available_queue()))				\
 				{													\
 					size = exp2;									\
-																	\
-					if (size)										\
-					{												\
-						group->record(size);						\
-						return size;								\
-					}												\
-					else											\
-					{												\
-						group->record(0);							\
-					}												\
+					group->record(size);							\
 				}													\
 			}														\
 																	\
@@ -2681,15 +2797,6 @@ namespace HSLL
 				(queue-> template wait_pushBulk<METHOD, POS>(tasks, count, timeout)),
 				(select_queue()-> template wait_pushBulk<METHOD, POS>(tasks, count, timeout))
 			)
-		}
-
-		/**
-		* @brief Get the maximum occupied space of the thread pool.
-		*/
-		unsigned long long get_max_usage()
-		{
-			assert(queues);
-			return  maxThreadNum * queues->get_bsize();
 		}
 
 		/**
