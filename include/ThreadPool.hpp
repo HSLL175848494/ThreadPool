@@ -509,15 +509,6 @@ namespace HSLL
 		}
 
 		/**
-		* @brief Get the maximum occupied space of the thread pool.
-		*/
-		unsigned long long get_max_usage()
-		{
-			assert(queues);
-			return  maxThreadNum * queues->get_bsize();
-		}
-
-		/**
 		 * @brief Waits for all tasks to complete.
 		 * @note
 		 *  1. During the join operation, adding any new tasks is prohibited.
