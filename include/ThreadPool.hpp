@@ -1,24 +1,28 @@
 #ifndef HSLL_THREADPOOL
 #define HSLL_THREADPOOL
 
-#include<set>
+#include <map>
+#include <vector>
+#include <future>
 #include <thread>
+#include <assert.h>
+
+
 #include "basic/TPTask.hpp"
-#include "basic/TPRWLock.hpp"
+#include "basic/TPSRWLock.hpp"
 #include "basic/TPSemaphore.hpp"
-#include "basic/TPBlockQueue.hpp"
 #include "basic/TPGroupAllocator.hpp"
-
-#define HSLL_THREADPOOL_TIMEOUT_MILLISECONDS 1
-#define HSLL_THREADPOOL_SHRINK_FACTOR 0.25
-#define HSLL_THREADPOOL_EXPAND_FACTOR 0.75
-
-static_assert(HSLL_THREADPOOL_TIMEOUT_MILLISECONDS > 0, "Invalid timeout value.");
-static_assert(HSLL_THREADPOOL_SHRINK_FACTOR < HSLL_THREADPOOL_EXPAND_FACTOR&& HSLL_THREADPOOL_EXPAND_FACTOR < 1.0
-	&& HSLL_THREADPOOL_SHRINK_FACTOR>0.0, "Invalid factors.");
 
 namespace HSLL
 {
+	constexpr float HSLL_THREADPOOL_SHRINK_FACTOR = 0.25f;
+	constexpr float HSLL_THREADPOOL_EXPAND_FACTOR = 0.75f;
+	constexpr unsigned int HSLL_THREADPOOL_TIMEOUT_MILLISECONDS = 1;
+
+	static_assert(HSLL_THREADPOOL_TIMEOUT_MILLISECONDS > 0, "Invalid timeout value.");
+	static_assert(HSLL_THREADPOOL_SHRINK_FACTOR < HSLL_THREADPOOL_EXPAND_FACTOR&& HSLL_THREADPOOL_EXPAND_FACTOR < 1.0
+		&& HSLL_THREADPOOL_SHRINK_FACTOR > 0.0, "Invalid factors.");
+
 	template <class T>
 	class SingleStealer
 	{
@@ -171,7 +175,7 @@ namespace HSLL
 		unsigned int batchSize;
 		unsigned int threadNum;
 		unsigned int minThreadNum;
-		unsigned int maxThreadNum;	
+		unsigned int maxThreadNum;
 		unsigned int fullThreshold;
 
 

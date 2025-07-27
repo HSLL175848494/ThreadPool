@@ -1,10 +1,7 @@
 #ifndef HSLL_TPBLOCKQUEUE
 #define HSLL_TPBLOCKQUEUE
 
-#include <atomic>
-#include <assert.h>
-#include <condition_variable>
-
+//Branch Prediction
 #if defined(__GNUC__) || defined(__clang__)
 #define LIKELY(x) __builtin_expect(!!(x), 1)
 #define UNLIKELY(x) __builtin_expect(!!(x), 0)
@@ -13,6 +10,7 @@
 #define UNLIKELY(x) (x)
 #endif
 
+//Align_alloc
 #if defined(_WIN32)
 #include <malloc.h>
 #define ALIGNED_MALLOC(size, align) _aligned_malloc(size, align)
