@@ -19,6 +19,7 @@ void testC() {
 
 }
 
+
 constexpr const char* taskType[] = { "A","B","C" };
 
 #define WORKER 8
@@ -31,6 +32,7 @@ constexpr const char* taskType[] = { "A","B","C" };
 #define FUNC testC
 
 using namespace HSLL;
+
 using ContainerType = TaskStack<TSIZE>;
 ThreadPool<ContainerType> pool;
 
@@ -124,7 +126,7 @@ double test_single_submit()
 int main()
 {
 	pool.init(CAPACITY, 1, WORKER, PROCESS_BATCH);
-
+	
 	//std::this_thread::sleep_for(std::chrono::seconds(15));
 
 	long long total_tasks = (long long)(PEER * PRODUCER);
@@ -135,7 +137,7 @@ int main()
 	printf("%-20s: %d\n", "Process Batch Size", PROCESS_BATCH);
 	printf("%-20s: %d\n", "Container Size", TSIZE);
 	printf("%-20s: %s\n", "Task type", FUNC == testA ? taskType[0] : FUNC == testB ? taskType[1] : taskType[2]);
-	printf("%-20s: %u\n", "Actual Size", task_stack<decltype(FUNC)>::size);
+	printf("%-20s: %u\n", "Actual Size", TaskImplTraits<decltype(FUNC)>::size);
 	printf("%-20s: %s\n", "Storage method ", ContainerType::is_stored_on_stack<decltype(FUNC)>::value ? "stack" : "heap");
 	printf("%-20s: %d\n", "Queue Capacity", CAPACITY);
 	printf("%-20s: %d\n", "Tasks per Producer", PEER);

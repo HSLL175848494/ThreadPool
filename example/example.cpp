@@ -216,7 +216,7 @@ void taskPropertiesExample()
 	// ºÏ≤È Ù–‘
 	std::cout << "Task properties:\n"
 		<< "Storage size: " << sizeof(task) << " bytes\n"
-		<< "Actual size:" << task_stack<decltype(lambda), int>::size << "\n"
+		<< "Actual size:" << TaskImplTraits<decltype(lambda), int>::size << "\n"
 		<< "Copyable: " << (task.is_copyable() ? "Yes" : "No") << "\n"
 		<< "Moveable: " << (task.is_moveable() ? "Yes" : "No") << "\n"
 		<< "Is stored on stack: " << (TaskType::is_stored_on_stack<decltype(lambda), int>::value ? "Yes" : "No") << "\n";

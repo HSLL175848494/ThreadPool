@@ -5,17 +5,14 @@
 
 namespace HSLL
 {
-	namespace CONST_VALUE
+	namespace INNER
 	{
 		constexpr float HSLL_QUEUE_FULL_FACTOR_MAIN = 0.999;
 		constexpr float HSLL_QUEUE_FULL_FACTOR_OTHER = 0.995;
 
 		static_assert(HSLL_QUEUE_FULL_FACTOR_MAIN > 0 && HSLL_QUEUE_FULL_FACTOR_MAIN <= 1, "Invalid factors.");
 		static_assert(HSLL_QUEUE_FULL_FACTOR_OTHER > 0 && HSLL_QUEUE_FULL_FACTOR_OTHER <= 1, "Invalid factors.");
-	}
 
-	namespace DETAILS
-	{
 		template<class T>
 		class RoundRobinGroup
 		{
@@ -46,8 +43,8 @@ namespace HSLL
 				nowIndex = 0;
 				this->assignedQueues = queues;
 				this->taskThreshold = threshold;
-				this->mainFullThreshold = capacity * CONST_VALUE::HSLL_QUEUE_FULL_FACTOR_MAIN;
-				this->otherFullThreshold = capacity * CONST_VALUE::HSLL_QUEUE_FULL_FACTOR_OTHER;
+				this->mainFullThreshold = capacity * HSLL_QUEUE_FULL_FACTOR_MAIN;
+				this->otherFullThreshold = capacity * HSLL_QUEUE_FULL_FACTOR_OTHER;
 			}
 
 			TPBlockQueue<T>* current_queue()
@@ -268,7 +265,7 @@ namespace HSLL
 				this->capacity = capacity;
 				this->queueCount = queueCount;
 				this->moveThreshold = threshold;
-				this->fullThreshold = capacity * CONST_VALUE::HSLL_QUEUE_FULL_FACTOR_OTHER;
+				this->fullThreshold = capacity * HSLL_QUEUE_FULL_FACTOR_OTHER;
 			}
 
 			RoundRobinGroup<T>* find(std::thread::id threadId)

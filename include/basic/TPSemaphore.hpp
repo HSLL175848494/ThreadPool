@@ -7,7 +7,7 @@
 
 namespace HSLL
 {
-	namespace DETAILS
+	namespace INNER
 	{
 		class Semaphore
 		{
@@ -76,7 +76,7 @@ namespace HSLL
 
 namespace HSLL
 {
-	namespace DETAILS
+	namespace INNER
 	{
 		class Semaphore
 		{
@@ -130,7 +130,7 @@ namespace HSLL
 
 namespace HSLL
 {
-	namespace DETAILS
+	namespace INNER
 	{
 		class Semaphore
 		{
@@ -206,7 +206,7 @@ namespace HSLL
 
 namespace HSLL
 {
-	namespace DETAILS
+	namespace INNER
 	{
 		class Semaphore
 		{
@@ -252,6 +252,7 @@ namespace HSLL
 		};
 	}
 }
+
 #endif
 
 #endif // !HSLL_TPSEMAPHORE
