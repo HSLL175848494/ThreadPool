@@ -5,31 +5,29 @@
 #include<vector>
 #include"TPBlockQueue.hpp"
 
+#define HSLL_QUEUE_FULL_FACTOR_MAIN 0.999
+#define HSLL_QUEUE_FULL_FACTOR_OTHER 0.995
+
 namespace HSLL
 {
 	template<class T>
 	class RoundRobinGroup
 	{
+		template<class TYPE>
+		friend class TPGroupAllocator;
+
 		unsigned int nowCount;
 		unsigned int nowIndex;
 		unsigned int taskThreshold;
-		unsigned int mainThreshold;
-		unsigned int otherThreshold;
+		unsigned int mainFullThreshold;
+		unsigned int otherFullThreshold;
 		std::vector<TPBlockQueue<T>*>* assignedQueues;
-
-		void move_index()
-		{
-			if (nowIndex != assignedQueues->size() - 1)
-				nowIndex++;
-			else
-				nowIndex = 0;
-		}
 
 		void advance_index()
 		{
 			if (nowCount >= taskThreshold)
 			{
-				move_index();
+				nowIndex = (nowIndex + 1) % assignedQueues->size();
 				nowCount = 0;
 			}
 		}
@@ -42,15 +40,15 @@ namespace HSLL
 			nowIndex = 0;
 			this->assignedQueues = queues;
 			this->taskThreshold = threshold;
-			this->mainThreshold = capacity * 0.999;
-			this->otherThreshold = capacity * 0.995;
+			this->mainFullThreshold = capacity * HSLL_QUEUE_FULL_FACTOR_MAIN;
+			this->otherFullThreshold = capacity * HSLL_QUEUE_FULL_FACTOR_OTHER;
 		}
 
 		TPBlockQueue<T>* current_queue()
 		{
 			TPBlockQueue<T>* queue = (*assignedQueues)[nowIndex];
 
-			if (queue->get_size() <= mainThreshold)
+			if (queue->get_size() <= mainFullThreshold)
 				return queue;
 			else
 				return nullptr;
@@ -62,10 +60,10 @@ namespace HSLL
 
 			for (int i = 0; i < assignedQueues->size() - 1; ++i)
 			{
-				move_index();
+				nowIndex = (nowIndex + 1) % assignedQueues->size();
 				candidateQueue = (*assignedQueues)[nowIndex];
 
-				if (candidateQueue->get_size() <= otherThreshold)
+				if (candidateQueue->get_size() <= otherFullThreshold)
 				{
 					nowCount = 0;
 					return candidateQueue;
@@ -87,7 +85,7 @@ namespace HSLL
 			}
 			else
 			{
-				move_index();
+				nowIndex = (nowIndex + 1) % assignedQueues->size();
 				nowCount = 0;
 				return;
 			}
@@ -98,8 +96,10 @@ namespace HSLL
 	class TPGroupAllocator
 	{
 		unsigned int capacity;
-		unsigned int threshold;
 		unsigned int queueCount;
+		unsigned int fullThreshold;
+		unsigned int moveThreshold;
+
 		TPBlockQueue<T>* queues;
 		std::vector<std::vector<TPBlockQueue<T>*>> threadSlots;
 		std::map<std::thread::id, RoundRobinGroup<T>> threadGroups;
@@ -150,7 +150,7 @@ namespace HSLL
 				unsigned int slotIndex = 0;
 				for (auto& group : threadGroups)
 				{
-					group.second.resetAndInit(&threadSlots[slotIndex], capacity, threshold);
+					group.second.resetAndInit(&threadSlots[slotIndex], capacity, moveThreshold);
 					slotIndex++;
 				}
 			}
@@ -260,8 +260,9 @@ namespace HSLL
 		{
 			this->queues = queues;
 			this->capacity = capacity;
-			this->threshold = threshold;
 			this->queueCount = queueCount;
+			this->moveThreshold = threshold;
+			this->fullThreshold = capacity * HSLL_QUEUE_FULL_FACTOR_OTHER;
 		}
 
 		RoundRobinGroup<T>* find(std::thread::id threadId)
@@ -270,6 +271,34 @@ namespace HSLL
 
 			if (it != threadGroups.end())
 				return &(it->second);
+
+			return nullptr;
+		}
+
+		TPBlockQueue<T>* available_queue(RoundRobinGroup<T>* group)
+		{
+			unsigned int size = group->assignedQueues->size();
+
+			if (size == queueCount)
+				return nullptr;
+
+			unsigned int start = std::rand() % queueCount;
+			std::vector <TPBlockQueue<T>*>& assignedQueues = *group->assignedQueues;
+			TPBlockQueue<T>* lowBounds = assignedQueues[0];
+
+			for (unsigned int i = 0; i < queueCount; ++i)
+			{
+				TPBlockQueue<T>* queue = queues + (start + i) % queueCount;
+
+				if (queues == lowBounds)
+				{
+					i += size - 1;
+					continue;
+				}
+
+				if (queue->get_size() <= fullThreshold)
+					return queue;
+			}
 
 			return nullptr;
 		}

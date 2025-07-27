@@ -171,7 +171,9 @@ namespace HSLL
 		unsigned int batchSize;
 		unsigned int threadNum;
 		unsigned int minThreadNum;
-		unsigned int maxThreadNum;
+		unsigned int maxThreadNum;	
+		unsigned int fullThreshold;
+
 
 		bool enableMonitor;
 		Semaphore monitorSem;
@@ -187,8 +189,8 @@ namespace HSLL
 
 		std::thread monitor;
 		TPBlockQueue<T>* queues;
-		std::vector<std::thread> workers;
 		std::atomic<unsigned int> index;
+		std::vector<std::thread> workers;
 		TPGroupAllocator<T> groupAllocator;
 
 	public:
@@ -223,6 +225,7 @@ namespace HSLL
 			this->threadNum = maxThreadNum;
 			this->batchSize = std::min(batchSize, capacity / 2);
 			this->capacity = capacity;
+			this->fullThreshold = capacity * HSLL_QUEUE_FULL_FACTOR_OTHER;
 			this->adjustMillis = adjustMillis;
 			workers.reserve(maxThreadNum);
 			groupAllocator.initialize(queues, maxThreadNum, capacity, capacity * 0.01 > 1 ? capacity * 0.01 : 1);
@@ -264,6 +267,7 @@ namespace HSLL
 			this->threadNum = maxThreadNum;
 			this->batchSize = std::min(batchSize, capacity / 2);
 			this->capacity = capacity;
+			this->fullThreshold = capacity * HSLL_QUEUE_FULL_FACTOR_OTHER;
 			this->adjustMillis = std::chrono::milliseconds(adjustMillis);
 			workers.reserve(maxThreadNum);
 			groupAllocator.initialize(queues, maxThreadNum, capacity, capacity * 0.05 > 1 ? capacity * 0.05 : 1);
@@ -277,48 +281,72 @@ namespace HSLL
 			return true;
 		}
 
-#define HSLL_ENQUEUE_HELPER(exp1,exp2,exp3)							\
-																	\
-		assert(queues);												\
-																	\
-		if (maxThreadNum == 1)										\
-			return exp1;											\
-																	\
-		std::thread::id id = std::this_thread::get_id();			\
-																	\
-			ReadLockGuard lock(rwLock);								\
-																	\
-			if (threadNum == 1)										\
-				return exp1;										\
-																	\
-			RoundRobinGroup<T>* group = groupAllocator.find(id);	\
-																	\
-			if(!group)												\
-				return exp3;										\
-																	\
-			TPBlockQueue<T>* queue = group->current_queue();		\
-			unsigned int size;										\
-																	\
-			if (queue)												\
-				size = exp2;										\
-			else													\
-				size = 0;											\
-																	\
-			if (size)												\
-			{														\
-				group->record(size);								\
-				return size;										\
-			}														\
-			else													\
-			{														\
-				if ((queue = group->available_queue()))				\
-				{													\
-					size = exp2;									\
-					group->record(size);							\
-				}													\
-			}														\
-																	\
-			return size;											
+#define HSLL_ENQUEUE_HELPER(exp1,exp2)							\
+																\
+		assert(queues);											\
+																\
+		if (maxThreadNum == 1)									\
+			return exp1;										\
+																\
+		ReadLockGuard lock(rwLock);								\
+																\
+		if (threadNum == 1)										\
+			return exp1;										\
+																\
+		unsigned int size;										\
+		TPBlockQueue<T>* queue;									\
+		std::thread::id id = std::this_thread::get_id();		\
+		RoundRobinGroup<T>* group = groupAllocator.find(id);	\
+																\
+		if(!group)												\
+		{														\
+			queue = select_queue();								\
+			size = exp2;										\
+																\
+			if(size)											\
+			{													\
+				return size;									\
+			}													\
+			else											    \
+			{													\
+				queue = available_queue(queue);					\
+																\
+					if (queue)									\
+						return exp2;							\
+			}													\
+																\
+			return size;										\
+		}														\
+																\
+		queue = group->current_queue();							\
+																\
+		if (queue)												\
+			size = exp2;										\
+		else													\
+			size = 0;											\
+																\
+		if (size)												\
+		{														\
+			group->record(size);								\
+			return size;										\
+		}														\
+		else													\
+		{														\
+			if ((queue = group->available_queue()))				\
+			{													\
+				size = exp2;									\
+				group->record(size);							\
+			}													\
+			else												\
+			{													\
+				queue = groupAllocator.available_queue(group);	\
+																\
+				if(queue)										\
+				return exp2;									\
+			}													\
+		}														\
+																\
+		return size;											
 
 		/**
 		 * @brief Non-blocking task emplacement with perfect forwarding
@@ -333,8 +361,7 @@ namespace HSLL
 		{
 			HSLL_ENQUEUE_HELPER(
 				(queues-> template emplace<POS>(std::forward<Args>(args)...)),
-				(queue-> template emplace<POS>(std::forward<Args>(args)...)),
-				(select_queue()-> template emplace<POS>(std::forward<Args>(args)...))
+				(queue-> template emplace<POS>(std::forward<Args>(args)...))
 			)
 		}
 
@@ -351,8 +378,7 @@ namespace HSLL
 		{
 			HSLL_ENQUEUE_HELPER(
 				(queues-> template wait_emplace<POS>(std::forward<Args>(args)...)),
-				(queue-> template wait_emplace<POS>(std::forward<Args>(args)...)),
-				(select_queue()-> template wait_emplace<POS>(std::forward<Args>(args)...))
+				(queue-> template wait_emplace<POS>(std::forward<Args>(args)...))
 			)
 		}
 
@@ -371,8 +397,7 @@ namespace HSLL
 		{
 			HSLL_ENQUEUE_HELPER(
 				(queues-> template wait_emplace<POS>(timeout, std::forward<Args>(args)...)),
-				(queue-> template wait_emplace<POS>(timeout, std::forward<Args>(args)...)),
-				(select_queue()-> template wait_emplace<POS>(timeout, std::forward<Args>(args)...))
+				(queue-> template wait_emplace<POS>(timeout, std::forward<Args>(args)...))
 			)
 		}
 
@@ -388,8 +413,7 @@ namespace HSLL
 		{
 			HSLL_ENQUEUE_HELPER(
 				(queues-> template enqueue<POS>(std::forward<U>(task))),
-				(queue-> template enqueue<POS>(std::forward<U>(task))),
-				(select_queue()-> template enqueue<POS>(std::forward<U>(task)))
+				(queue-> template enqueue<POS>(std::forward<U>(task)))
 			)
 		}
 
@@ -405,8 +429,7 @@ namespace HSLL
 		{
 			HSLL_ENQUEUE_HELPER(
 				(queues-> template wait_push<POS>(std::forward<U>(task))),
-				(queue-> template wait_push<POS>(std::forward<U>(task))),
-				(select_queue()-> template wait_push<POS>(std::forward<U>(task)))
+				(queue-> template wait_push<POS>(std::forward<U>(task)))
 			)
 		}
 
@@ -425,8 +448,7 @@ namespace HSLL
 		{
 			HSLL_ENQUEUE_HELPER(
 				(queues-> template wait_push<POS>(std::forward<U>(task), timeout)),
-				(queue-> template wait_push<POS>(std::forward<U>(task), timeout)),
-				(select_queue()-> template wait_push<POS>(std::forward<U>(task), timeout))
+				(queue-> template wait_push<POS>(std::forward<U>(task), timeout))
 			)
 		}
 
@@ -443,8 +465,7 @@ namespace HSLL
 		{
 			HSLL_ENQUEUE_HELPER(
 				(queues-> template enqueue_bulk<METHOD, POS>(tasks, count)),
-				(queue-> template enqueue_bulk<METHOD, POS>(tasks, count)),
-				(select_queue()-> template enqueue_bulk<METHOD, POS>(tasks, count))
+				(queue-> template enqueue_bulk<METHOD, POS>(tasks, count))
 			)
 		}
 
@@ -464,8 +485,7 @@ namespace HSLL
 		{
 			HSLL_ENQUEUE_HELPER(
 				(queues-> template enqueue_bulk<METHOD, POS>(part1, count1, part2, count2)),
-				(queue-> template enqueue_bulk<METHOD, POS>(part1, count1, part2, count2)),
-				(select_queue()-> template enqueue_bulk<METHOD, POS>(part1, count1, part2, count2))
+				(queue-> template enqueue_bulk<METHOD, POS>(part1, count1, part2, count2))
 			)
 		}
 
@@ -482,8 +502,7 @@ namespace HSLL
 		{
 			HSLL_ENQUEUE_HELPER(
 				(queues-> template wait_pushBulk<METHOD, POS>(tasks, count)),
-				(queue-> template wait_pushBulk<METHOD, POS>(tasks, count)),
-				(select_queue()-> template wait_pushBulk<METHOD, POS>(tasks, count))
+				(queue-> template wait_pushBulk<METHOD, POS>(tasks, count))
 			)
 		}
 
@@ -503,8 +522,7 @@ namespace HSLL
 		{
 			HSLL_ENQUEUE_HELPER(
 				(queues-> template wait_pushBulk<METHOD, POS>(tasks, count, timeout)),
-				(queue-> template wait_pushBulk<METHOD, POS>(tasks, count, timeout)),
-				(select_queue()-> template wait_pushBulk<METHOD, POS>(tasks, count, timeout))
+				(queue-> template wait_pushBulk<METHOD, POS>(tasks, count, timeout))
 			)
 		}
 
@@ -613,6 +631,22 @@ namespace HSLL
 		TPBlockQueue<T>* select_queue() noexcept
 		{
 			return queues + next_index();
+		}
+
+		TPBlockQueue<T>* available_queue(TPBlockQueue<T>* ignore) noexcept
+		{
+			unsigned int start = std::rand() % threadNum;
+
+			for (unsigned int i = 0; i < threadNum; ++i)
+			{
+				TPBlockQueue<T>* queue = queues + (i + start) % threadNum;
+				if (ignore != queue)
+				{
+					if (queue->get_size() <= fullThreshold)
+						return queue;
+				}
+			}
+			return nullptr;
 		}
 
 		void load_monitor() noexcept
