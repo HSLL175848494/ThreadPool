@@ -3,30 +3,35 @@
 
 //Branch Prediction
 #if defined(__GNUC__) || defined(__clang__)
-#define LIKELY(x) __builtin_expect(!!(x), 1)
-#define UNLIKELY(x) __builtin_expect(!!(x), 0)
+#define HSLL_LIKELY(x) __builtin_expect(!!(x), 1)
+#define HSLL_UNLIKELY(x) __builtin_expect(!!(x), 0)
 #else
-#define LIKELY(x) (x)
-#define UNLIKELY(x) (x)
+#define HSLL_LIKELY(x) (x)
+#define HSLL_UNLIKELY(x) (x)
 #endif
 
-//Align_alloc
+//Aligned Malloc
 #if defined(_WIN32)
 #include <malloc.h>
-#define ALIGNED_MALLOC(size, align) _aligned_malloc(size, align)
-#define ALIGNED_FREE(ptr) _aligned_free(ptr)
+#define HSLL_ALIGNED_MALLOC(size, align) _aligned_malloc(size, align)
+#define HSLL_ALIGNED_FREE(ptr) _aligned_free(ptr)
 #else
 #include <stdlib.h>
-#if !defined(_ISOC11_SOURCE) && !defined(__APPLE__)
-#define ALIGNED_MALLOC(size, align) ({ \
-    void* ptr = NULL; \
-    if (posix_memalign(&ptr, align, size) != 0) ptr = NULL; \
-    ptr; \
-})
+#if defined(__APPLE__) || !defined(_ISOC11_SOURCE)
+inline void* hsll_aligned_alloc(size_t align, size_t size) {
+	void* ptr = nullptr;
+	if (posix_memalign(&ptr, align, size) return nullptr;
+		return ptr;
+}
+#define HSLL_ALIGNED_MALLOC(size, align) hsll_aligned_alloc(align, size)
 #else
-#define ALIGNED_MALLOC(size, align) aligned_alloc(align, (size + align - 1) & ~(size_t)(align - 1))
+inline void* hsll_aligned_alloc(size_t align, size_t size) {
+	const size_t aligned_size = (size + align - 1) & ~(align - 1);
+	return aligned_alloc(align, aligned_size);
+}
+#define HSLL_ALIGNED_MALLOC(size, align) hsll_aligned_alloc(align, size)
 #endif
-#define ALIGNED_FREE(ptr) free(ptr)
+#define HSLL_ALIGNED_FREE(ptr) free(ptr)
 #endif
 
 namespace HSLL
@@ -119,14 +124,14 @@ namespace HSLL
 		void move_tail_next()
 		{
 			dataListTail = (TYPE*)((char*)dataListTail + sizeof(TYPE));
-			if (UNLIKELY((uintptr_t)dataListTail == border))
+			if (HSLL_UNLIKELY((uintptr_t)dataListTail == border))
 				dataListTail = (TYPE*)(uintptr_t)memoryBlock;
 		}
 
 		void move_head_next()
 		{
 			dataListHead = (TYPE*)((char*)dataListHead + sizeof(TYPE));
-			if (UNLIKELY((uintptr_t)dataListHead == border))
+			if (HSLL_UNLIKELY((uintptr_t)dataListHead == border))
 				dataListHead = (TYPE*)(uintptr_t)memoryBlock;
 		}
 
@@ -134,7 +139,7 @@ namespace HSLL
 		void move_head_prev()
 		{
 			dataListHead = (TYPE*)((char*)dataListHead - sizeof(TYPE));
-			if (UNLIKELY((uintptr_t)dataListHead < (uintptr_t)memoryBlock))
+			if (HSLL_UNLIKELY((uintptr_t)dataListHead < (uintptr_t)memoryBlock))
 				dataListHead = (TYPE*)(border - sizeof(TYPE));
 		}
 
@@ -245,7 +250,7 @@ namespace HSLL
 			enqueue_bulk_impl<POS, METHOD>(elements, toPush);
 			lock.unlock();
 
-			if (UNLIKELY(toPush == 1))
+			if (HSLL_UNLIKELY(toPush == 1))
 				notEmptyCond.notify_one();
 			else
 				notEmptyCond.notify_all();
@@ -266,7 +271,7 @@ namespace HSLL
 
 			lock.unlock();
 
-			if (UNLIKELY(toPush == 1))
+			if (HSLL_UNLIKELY(toPush == 1))
 				notEmptyCond.notify_one();
 			else
 				notEmptyCond.notify_all();
@@ -293,7 +298,7 @@ namespace HSLL
 			}
 			lock.unlock();
 
-			if (UNLIKELY(toPop == 1))
+			if (HSLL_UNLIKELY(toPop == 1))
 				notFullCond.notify_one();
 			else
 				notFullCond.notify_all();
@@ -332,7 +337,7 @@ namespace HSLL
 				return false;
 
 			totalsize = sizeof(TYPE) * capacity;
-			memoryBlock = ALIGNED_MALLOC(totalsize, std::max(alignof(TYPE), (size_t)64));
+			memoryBlock = HSLL_ALIGNED_MALLOC(totalsize, std::max(alignof(TYPE), (size_t)64));
 
 			if (!memoryBlock)
 				return false;
@@ -353,7 +358,7 @@ namespace HSLL
 
 			std::unique_lock<std::mutex> lock(dataMutex);
 
-			if (UNLIKELY(size == capacity))
+			if (HSLL_UNLIKELY(size == capacity))
 				return false;
 
 			emplace_helper<POS>(lock, std::forward<Args>(args)...);
@@ -369,9 +374,9 @@ namespace HSLL
 			std::unique_lock<std::mutex> lock(dataMutex);
 
 			notFullCond.wait(lock, [this]
-				{ return LIKELY(size != capacity) || UNLIKELY(isStopped); });
+				{ return HSLL_LIKELY(size != capacity) || HSLL_UNLIKELY(isStopped); });
 
-			if (UNLIKELY(isStopped))
+			if (HSLL_UNLIKELY(isStopped))
 				return false;
 
 			emplace_helper<POS>(lock, std::forward<Args>(args)...);
@@ -386,9 +391,9 @@ namespace HSLL
 			std::unique_lock<std::mutex> lock(dataMutex);
 
 			bool success = notFullCond.wait_for(lock, timeout, [this]
-				{ return LIKELY(size != capacity) || UNLIKELY(isStopped); });
+				{ return HSLL_LIKELY(size != capacity) || HSLL_UNLIKELY(isStopped); });
 
-			if (UNLIKELY(!success || isStopped))
+			if (HSLL_UNLIKELY(!success || isStopped))
 				return false;
 
 			emplace_helper<POS>(lock, std::forward<Args>(args)...);
@@ -401,7 +406,7 @@ namespace HSLL
 			assert(memoryBlock);
 			std::unique_lock<std::mutex> lock(dataMutex);
 
-			if (UNLIKELY(size == capacity))
+			if (HSLL_UNLIKELY(size == capacity))
 				return false;
 
 			enqueue_helper<POS>(lock, std::forward<T>(element));
@@ -416,9 +421,9 @@ namespace HSLL
 			std::unique_lock<std::mutex> lock(dataMutex);
 
 			notFullCond.wait(lock, [this]
-				{ return LIKELY(size != capacity) || UNLIKELY(isStopped); });
+				{ return HSLL_LIKELY(size != capacity) || HSLL_UNLIKELY(isStopped); });
 
-			if (UNLIKELY(isStopped))
+			if (HSLL_UNLIKELY(isStopped))
 				return false;
 
 			enqueue_helper<POS>(lock, std::forward<T>(element));
@@ -433,9 +438,9 @@ namespace HSLL
 			std::unique_lock<std::mutex> lock(dataMutex);
 
 			bool success = notFullCond.wait_for(lock, timeout, [this]
-				{ return LIKELY(size != capacity) || UNLIKELY(isStopped); });
+				{ return HSLL_LIKELY(size != capacity) || HSLL_UNLIKELY(isStopped); });
 
-			if (UNLIKELY(!success || isStopped))
+			if (HSLL_UNLIKELY(!success || isStopped))
 				return false;
 
 			enqueue_helper<POS>(lock, std::forward<T>(element));
@@ -449,7 +454,7 @@ namespace HSLL
 			assert(elements && count);
 			std::unique_lock<std::mutex> lock(dataMutex);
 
-			if (UNLIKELY(!(capacity - size)))
+			if (HSLL_UNLIKELY(!(capacity - size)))
 				return 0;
 
 			return enqueue_bulk_helper<METHOD, POS>(lock, elements, count);
@@ -466,7 +471,7 @@ namespace HSLL
 
 			std::unique_lock<std::mutex> lock(dataMutex);
 
-			if (UNLIKELY(!(capacity - size)))
+			if (HSLL_UNLIKELY(!(capacity - size)))
 				return 0;
 
 			return enqueue_bulk_helper<METHOD, POS>(lock, part1, count1, part2, count2);
@@ -481,9 +486,9 @@ namespace HSLL
 			std::unique_lock<std::mutex> lock(dataMutex);
 
 			notFullCond.wait(lock, [this]
-				{ return LIKELY(size != capacity) || UNLIKELY(isStopped); });
+				{ return HSLL_LIKELY(size != capacity) || HSLL_UNLIKELY(isStopped); });
 
-			if (UNLIKELY(isStopped))
+			if (HSLL_UNLIKELY(isStopped))
 				return 0;
 
 			return enqueue_bulk_helper<METHOD, POS>(lock, elements, count);
@@ -498,9 +503,9 @@ namespace HSLL
 			std::unique_lock<std::mutex> lock(dataMutex);
 
 			bool success = notFullCond.wait_for(lock, timeout, [this]
-				{ return LIKELY(size != capacity) || UNLIKELY(isStopped); });
+				{ return HSLL_LIKELY(size != capacity) || HSLL_UNLIKELY(isStopped); });
 
-			if (UNLIKELY(!success || isStopped))
+			if (HSLL_UNLIKELY(!success || isStopped))
 				return 0;
 
 			return enqueue_bulk_helper<METHOD, POS>(lock, elements, count);
@@ -511,7 +516,7 @@ namespace HSLL
 			assert(memoryBlock);
 			std::unique_lock<std::mutex> lock(dataMutex);
 
-			if (UNLIKELY(!size))
+			if (HSLL_UNLIKELY(!size))
 				return false;
 
 			dequeue_helper(lock, element);
@@ -525,9 +530,9 @@ namespace HSLL
 			std::unique_lock<std::mutex> lock(dataMutex);
 
 			notEmptyCond.wait(lock, [this]
-				{ return LIKELY(size) || UNLIKELY(isStopped); });
+				{ return HSLL_LIKELY(size) || HSLL_UNLIKELY(isStopped); });
 
-			if (UNLIKELY(isStopped))
+			if (HSLL_UNLIKELY(isStopped))
 				return false;
 
 			dequeue_helper(lock, element);
@@ -542,9 +547,9 @@ namespace HSLL
 			std::unique_lock<std::mutex> lock(dataMutex);
 
 			bool success = notEmptyCond.wait_for(lock, timeout, [this]
-				{ return LIKELY(size) || UNLIKELY(isStopped); });
+				{ return HSLL_LIKELY(size) || HSLL_UNLIKELY(isStopped); });
 
-			if (UNLIKELY(!success || isStopped))
+			if (HSLL_UNLIKELY(!success || isStopped))
 				return false;
 
 			dequeue_helper(lock, element);
@@ -557,7 +562,7 @@ namespace HSLL
 			assert(elements && count);
 			std::unique_lock<std::mutex> lock(dataMutex);
 
-			if (UNLIKELY(!size))
+			if (HSLL_UNLIKELY(!size))
 				return 0;
 
 			return dequeue_bulk_helper(lock, elements, count);
@@ -571,9 +576,9 @@ namespace HSLL
 			std::unique_lock<std::mutex> lock(dataMutex);
 
 			notEmptyCond.wait(lock, [this]
-				{ return LIKELY(size) || UNLIKELY(isStopped); });
+				{ return HSLL_LIKELY(size) || HSLL_UNLIKELY(isStopped); });
 
-			if (UNLIKELY(isStopped))
+			if (HSLL_UNLIKELY(isStopped))
 				return 0;
 
 			return dequeue_bulk_helper(lock, elements, count);
@@ -588,9 +593,9 @@ namespace HSLL
 			std::unique_lock<std::mutex> lock(dataMutex);
 
 			bool success = notEmptyCond.wait_for(lock, timeout, [this]
-				{ return LIKELY(size) || UNLIKELY(isStopped); });
+				{ return HSLL_LIKELY(size) || HSLL_UNLIKELY(isStopped); });
 
-			if (UNLIKELY(!success || isStopped))
+			if (HSLL_UNLIKELY(!success || isStopped))
 				return 0;
 
 			return dequeue_bulk_helper(lock, elements, count);
@@ -643,7 +648,7 @@ namespace HSLL
 					current = (TYPE*)(memoryBlock);
 			}
 
-			ALIGNED_FREE(memoryBlock);
+			HSLL_ALIGNED_FREE(memoryBlock);
 
 			size = 0;
 			capacity = 0;
@@ -664,4 +669,5 @@ namespace HSLL
 		TPBlockQueue& operator=(const TPBlockQueue&) = delete;
 	};
 }
+
 #endif // HSLL_TPBLOCKQUEUE

@@ -9,30 +9,35 @@
 
 //Branch Prediction
 #if defined(__GNUC__) || defined(__clang__)
-#define LIKELY(x) __builtin_expect(!!(x), 1)
-#define UNLIKELY(x) __builtin_expect(!!(x), 0)
+#define HSLL_LIKELY(x) __builtin_expect(!!(x), 1)
+#define HSLL_UNLIKELY(x) __builtin_expect(!!(x), 0)
 #else
-#define LIKELY(x) (x)
-#define UNLIKELY(x) (x)
+#define HSLL_LIKELY(x) (x)
+#define HSLL_UNLIKELY(x) (x)
 #endif
 
-//Align_alloc
+//Aligned Malloc
 #if defined(_WIN32)
 #include <malloc.h>
-#define ALIGNED_MALLOC(size, align) _aligned_malloc(size, align)
-#define ALIGNED_FREE(ptr) _aligned_free(ptr)
+#define HSLL_ALIGNED_MALLOC(size, align) _aligned_malloc(size, align)
+#define HSLL_ALIGNED_FREE(ptr) _aligned_free(ptr)
 #else
 #include <stdlib.h>
-#if !defined(_ISOC11_SOURCE) && !defined(__APPLE__)
-#define ALIGNED_MALLOC(size, align) ({ \
-    void* ptr = NULL; \
-    if (posix_memalign(&ptr, align, size) != 0) ptr = NULL; \
-    ptr; \
-})
+#if defined(__APPLE__) || !defined(_ISOC11_SOURCE)
+inline void* hsll_aligned_alloc(size_t align, size_t size) {
+	void* ptr = nullptr;
+	if (posix_memalign(&ptr, align, size) return nullptr;
+		return ptr;
+}
+#define HSLL_ALIGNED_MALLOC(size, align) hsll_aligned_alloc(align, size)
 #else
-#define ALIGNED_MALLOC(size, align) aligned_alloc(align, (size + align - 1) & ~(size_t)(align - 1))
+inline void* hsll_aligned_alloc(size_t align, size_t size) {
+	const size_t aligned_size = (size + align - 1) & ~(align - 1);
+		return aligned_alloc(align, aligned_size);
+}
+#define HSLL_ALIGNED_MALLOC(size, align) hsll_aligned_alloc(align, size)
 #endif
-#define ALIGNED_FREE(ptr) free(ptr)
+#define HSLL_ALIGNED_FREE(ptr) free(ptr)
 #endif
 
 // The current function may throw exceptions, including std::bad_alloc
@@ -45,9 +50,6 @@ namespace HSLL
 	template <unsigned int TSIZE, unsigned int ALIGN>
 	class TaskStack;
 
-	template <class... Args>
-	struct TaskImpl;
-
 	template <class F, class... Args>
 	class HeapCallable;
 
@@ -57,207 +59,371 @@ namespace HSLL
 	template <class F, class... Args>
 	class HeapCallable_Cancelable;
 
-	//helper1_sfinae
-	template <typename T>
-	struct is_TaskImpl : std::false_type {};
-
-	template <class... Args>
-	struct is_TaskImpl<TaskImpl<Args...>> : std::true_type {};
-
-	template <typename T>
-	struct is_TaskStack : std::false_type {};
-
-	template <unsigned int S, unsigned int A>
-	struct is_TaskStack<TaskStack<S, A>> : std::true_type {};
-
-	template <typename T>
-	struct is_HeapCallable : std::false_type {};
-
-	template <class F, class... Args>
-	struct is_HeapCallable<HeapCallable<F, Args...>> : std::true_type {};
-
-	template <typename T>
-	struct is_HeapCallable_Async : std::false_type {};
-
-	template <class F, class... Args>
-	struct is_HeapCallable_Async<HeapCallable_Async<F, Args...>> : std::true_type {};
-
-	template <typename T>
-	struct is_HeapCallable_Cancelable : std::false_type {};
-
-	template <class F, class... Args>
-	struct is_HeapCallable_Cancelable<HeapCallable_Cancelable<F, Args...>> : std::true_type {};
-
-	//helper2_is_moveable_copyable
-	template <typename T>
-	struct is_move_constructible
+	namespace DETAILS
 	{
-	private:
-		template <typename U, typename = decltype(U(std::declval<U&&>()))>
-		static constexpr std::true_type test_move(int);
+		//extern
+		template <class... Args>
+		struct TaskImpl;
 
-		template <typename>
-		static constexpr std::false_type test_move(...);
+		//helper1_sfinae
+		template <typename T>
+		struct is_TaskImpl : std::false_type {};
 
-	public:
-		static constexpr bool value = decltype(test_move<T>(true))::value;
-	};
+		template <class... Args>
+		struct is_TaskImpl<TaskImpl<Args...>> : std::true_type {};
 
-	template <typename T>
-	struct is_copy_constructible
-	{
-	private:
-		template <typename U, typename = decltype(U{ std::declval<U&>() }) >
-		static constexpr std::true_type test_copy(bool);
+		template <typename T>
+		struct is_TaskStack : std::false_type {};
 
-		template <typename>
-		static constexpr std::false_type test_copy(...);
+		template <unsigned int S, unsigned int A>
+		struct is_TaskStack<TaskStack<S, A>> : std::true_type {};
 
-	public:
-		static constexpr bool value = decltype(test_copy<T>(true))::value;
-	};
+		template <typename T>
+		struct is_HeapCallable : std::false_type {};
 
-	//helper3_index_sequence
-	template <size_t... Is>
-	struct index_sequence {};
+		template <class F, class... Args>
+		struct is_HeapCallable<HeapCallable<F, Args...>> : std::true_type {};
 
-	template <size_t N, size_t... Is>
-	struct make_index_sequence_impl : make_index_sequence_impl<N - 1, N - 1, Is...> {};
+		template <typename T>
+		struct is_HeapCallable_Async : std::false_type {};
 
-	template <size_t... Is>
-	struct make_index_sequence_impl<0, Is...>
-	{
-		using type = index_sequence<Is...>;
-	};
+		template <class F, class... Args>
+		struct is_HeapCallable_Async<HeapCallable_Async<F, Args...>> : std::true_type {};
 
-	template <size_t N>
-	struct make_index_sequence
-	{
-		using type = typename make_index_sequence_impl<N>::type;
-	};
+		template <typename T>
+		struct is_HeapCallable_Cancelable : std::false_type {};
 
-	//helper4_all_true
-	template <bool...>
-	struct bool_pack;
+		template <class F, class... Args>
+		struct is_HeapCallable_Cancelable<HeapCallable_Cancelable<F, Args...>> : std::true_type {};
 
-	template <bool... Bs>
-	using all_true = std::is_same<bool_pack<true, Bs...>, bool_pack<Bs..., true>>;
-
-	template <typename... Ts>
-	using are_all_copy_constructible = all_true<is_copy_constructible<Ts>::value...>;
-
-	//helper5_invoke
-	enum TASK_TUPLE_TYPE
-	{
-		TASK_TUPLE_TYPE_NORMAL,
-		TASK_TUPLE_TYPE_ASYNC,
-		TASK_TUPLE_TYPE_CANCELABLE
-	};
-
-	template<TASK_TUPLE_TYPE TYPE>
-	struct Invoker {};
-
-	template<>
-	struct Invoker<TASK_TUPLE_TYPE_NORMAL>
-	{
-		template <class ResultType, typename Callable, typename... Ts>
-		static void invoke(Callable& callable, Ts &...args)
+		//helper2_is_moveable_copyable
+		template <typename T>
+		struct is_move_constructible
 		{
-			callable(args...);
-		}
-	};
+		private:
+			template <typename U, typename = decltype(U(std::declval<U&&>()))>
+			static constexpr std::true_type test_move(int);
 
-	template<>
-	struct Invoker<TASK_TUPLE_TYPE_ASYNC>
-	{
-		template <class ResultType, typename std::enable_if<std::is_void<ResultType>::value, bool>::type = true,
-			typename Promise, typename Callable, typename... Ts>
-		static void invoke(Promise& promise, Callable& callable, Ts &...args)
+			template <typename>
+			static constexpr std::false_type test_move(...);
+
+		public:
+			static constexpr bool value = decltype(test_move<T>(true))::value;
+		};
+
+		template <typename T>
+		struct is_copy_constructible
 		{
-			callable(args...);
-		}
+		private:
+			template <typename U, typename = decltype(U{ std::declval<U&>() }) >
+			static constexpr std::true_type test_copy(bool);
 
-		template <class ResultType, typename std::enable_if<!std::is_void<ResultType>::value, bool>::type = true,
-			typename Promise, typename Callable, typename... Ts>
-		static ResultType invoke(Promise& promise, Callable& callable, Ts &...args)
+			template <typename>
+			static constexpr std::false_type test_copy(...);
+
+		public:
+			static constexpr bool value = decltype(test_copy<T>(true))::value;
+		};
+
+		//helper3_index_sequence
+		template <size_t... Is>
+		struct index_sequence {};
+
+		template <size_t N, size_t... Is>
+		struct make_index_sequence_impl : make_index_sequence_impl<N - 1, N - 1, Is...> {};
+
+		template <size_t... Is>
+		struct make_index_sequence_impl<0, Is...>
 		{
-			return callable(args...);
-		}
-	};
+			using type = index_sequence<Is...>;
+		};
 
-	template<>
-	struct Invoker<TASK_TUPLE_TYPE_CANCELABLE>
-	{
-		template <class ResultType, typename std::enable_if<std::is_void<ResultType>::value, bool>::type = true,
-			typename Promise, typename Flag, typename Callable, typename... Ts>
-		static void invoke(Promise& promise, Flag& flag, Callable& callable, Ts &...args)
+		template <size_t N>
+		struct make_index_sequence
 		{
-			callable(args...);
-		}
+			using type = typename make_index_sequence_impl<N>::type;
+		};
 
-		template <class ResultType, typename std::enable_if<!std::is_void<ResultType>::value, bool>::type = true,
-			typename Promise, typename Flag, typename Callable, typename... Ts>
-		static ResultType invoke(Promise& promise, Flag& flag, Callable& callable, Ts &...args)
+		//helper4_all_true
+		template <bool...>
+		struct bool_pack;
+
+		template <bool... Bs>
+		using all_true = std::is_same<bool_pack<true, Bs...>, bool_pack<Bs..., true>>;
+
+		template <typename... Ts>
+		using are_all_copy_constructible = all_true<is_copy_constructible<Ts>::value...>;
+
+		//helper5_invoke
+		enum TASK_TUPLE_TYPE
 		{
-			return callable(args...);
+			TASK_TUPLE_TYPE_NORMAL,
+			TASK_TUPLE_TYPE_ASYNC,
+			TASK_TUPLE_TYPE_CANCELABLE
+		};
+
+		template<TASK_TUPLE_TYPE TYPE>
+		struct Invoker {};
+
+		template<>
+		struct Invoker<TASK_TUPLE_TYPE_NORMAL>
+		{
+			template <class ResultType, typename Callable, typename... Ts>
+			static void invoke(Callable& callable, Ts &...args)
+			{
+				callable(args...);
+			}
+		};
+
+		template<>
+		struct Invoker<TASK_TUPLE_TYPE_ASYNC>
+		{
+			template <class ResultType, typename std::enable_if<std::is_void<ResultType>::value, bool>::type = true,
+				typename Promise, typename Callable, typename... Ts>
+			static void invoke(Promise& promise, Callable& callable, Ts &...args)
+			{
+				callable(args...);
+			}
+
+			template <class ResultType, typename std::enable_if<!std::is_void<ResultType>::value, bool>::type = true,
+				typename Promise, typename Callable, typename... Ts>
+			static ResultType invoke(Promise& promise, Callable& callable, Ts &...args)
+			{
+				return callable(args...);
+			}
+		};
+
+		template<>
+		struct Invoker<TASK_TUPLE_TYPE_CANCELABLE>
+		{
+			template <class ResultType, typename std::enable_if<std::is_void<ResultType>::value, bool>::type = true,
+				typename Promise, typename Flag, typename Callable, typename... Ts>
+			static void invoke(Promise& promise, Flag& flag, Callable& callable, Ts &...args)
+			{
+				callable(args...);
+			}
+
+			template <class ResultType, typename std::enable_if<!std::is_void<ResultType>::value, bool>::type = true,
+				typename Promise, typename Flag, typename Callable, typename... Ts>
+			static ResultType invoke(Promise& promise, Flag& flag, Callable& callable, Ts &...args)
+			{
+				return callable(args...);
+			}
+		};
+
+		//helper6_apply
+		template <TASK_TUPLE_TYPE TYPE, class ResultType, typename std::enable_if<std::is_void<ResultType>::value, bool>::type = true,
+			typename Tuple, size_t... Is>
+		void apply_impl(Tuple& tup, index_sequence<Is...>)
+		{
+			Invoker<TYPE>::template invoke<ResultType>(std::get<Is>(tup)...);
 		}
-	};
 
-	//helper6_apply
-	template <TASK_TUPLE_TYPE TYPE, class ResultType, typename std::enable_if<std::is_void<ResultType>::value, bool>::type = true,
-		typename Tuple, size_t... Is>
-	void apply_impl(Tuple& tup, index_sequence<Is...>)
-	{
-		Invoker<TYPE>::template invoke<ResultType>(std::get<Is>(tup)...);
+		template <TASK_TUPLE_TYPE TYPE, class ResultType, typename std::enable_if<!std::is_void<ResultType>::value, bool>::type = true,
+			typename Tuple, size_t... Is>
+		ResultType apply_impl(Tuple& tup, index_sequence<Is...>)
+		{
+			return Invoker<TYPE>::template invoke<ResultType>(std::get<Is>(tup)...);
+		}
+
+		template <TASK_TUPLE_TYPE TYPE = TASK_TUPLE_TYPE_NORMAL, class ResultType = void,
+			typename std::enable_if<std::is_void<ResultType>::value, bool>::type = true, typename Tuple>
+		void tuple_apply(Tuple& tup)
+		{
+			apply_impl<TYPE, ResultType>(tup, typename make_index_sequence<std::tuple_size<Tuple>::value>::type{});
+		}
+
+		template <TASK_TUPLE_TYPE TYPE = TASK_TUPLE_TYPE_NORMAL, class ResultType = void,
+			typename std::enable_if<!std::is_void<ResultType>::value, bool>::type = true, typename Tuple>
+		ResultType tuple_apply(Tuple& tup)
+		{
+			return apply_impl<TYPE, ResultType>(tup, typename make_index_sequence<std::tuple_size<Tuple>::value>::type{});
+		}
+
+		//helper7_make_unique
+		template <typename T, typename... Args>
+		typename std::enable_if<!std::is_array<T>::value, std::unique_ptr<T>>::type
+			make_unique(Args&&... args) {
+			return std::unique_ptr<T>(new T(std::forward<Args>(args)...));
+		}
+
+		template <typename T>
+		typename std::enable_if<std::is_array<T>::value&& std::extent<T>::value == 0, std::unique_ptr<T>>::type
+			make_unique(std::size_t size) {
+			using U = typename std::remove_extent<T>::type;
+			return std::unique_ptr<T>(new U[size]());
+		}
+
+		template <typename T, typename... Args>
+		typename std::enable_if<std::extent<T>::value != 0, void>::type
+			make_unique(Args&&...) = delete;
+
+		//helper8_result_infer
+		template <class F, class... Args>
+		struct result_type_infer
+		{
+			using type = decltype(
+				std::declval<typename std::decay<F>::type>()
+				(std::declval<typename std::decay<Args>::type&>()...));
+		};
+
+		class CancelableFlag
+		{
+			std::atomic<bool> flag;
+
+		public:
+
+			CancelableFlag(bool ignore = false) : flag(false) {};
+
+			bool cancel()
+			{
+				bool expected = false;
+
+				if (flag.compare_exchange_strong(expected, true))
+					return true;
+
+				return false;
+			}
+
+			/**
+			 * @brief Enters a critical section making the task non-cancelable
+			 * @return true Successfully entered critical section
+			 * @return false Entry failed (task was already canceled, or critical section was already entered successfully)
+			 */
+			bool enter()
+			{
+				bool expected = false;
+
+				if (flag.compare_exchange_strong(expected, true))
+					return true;
+
+				return false;
+			}
+		};
+
+		/**
+		 * @brief Base interface for type-erased task objects
+		 * @details Provides virtual methods for task execution and storage management
+		 */
+		struct TaskBase
+		{
+			virtual ~TaskBase() = default;
+			virtual void execute() noexcept = 0;
+			virtual void copyTo(void* memory) const noexcept = 0;
+			virtual void moveTo(void* memory) noexcept = 0;
+			virtual bool is_copyable() const noexcept = 0;
+		};
+
+		/**
+		 * @brief Concrete task implementation storing function and arguments
+		 * @details Stores decayed copies of function and arguments in a tuple
+		 */
+		template <class... Args>
+		struct TaskImpl : TaskBase
+		{
+			template <typename T, bool Copyable>
+			struct CopyHelper;
+
+			template <typename T>
+			struct CopyHelper<T, true>
+			{
+				static void copyTo(const T* self, void* dst) noexcept
+				{
+					new (dst) T(*self);
+				}
+			};
+
+			template <typename T>
+			struct CopyHelper<T, false>
+			{
+				static void copyTo(const T*, void*) noexcept
+				{
+					printf("\nTaskImpl must be copy constructible for cloneTo()");
+					std::abort();
+				}
+			};
+
+			template <typename T, bool Movable>
+			struct MoveHelper;
+
+			template <typename T>
+			struct MoveHelper<T, true>
+			{
+				static T&& apply(T& obj) noexcept
+				{
+					return std::move(obj);
+				}
+			};
+
+			template <typename T>
+			struct MoveHelper<T, false>
+			{
+				static T& apply(T& obj) noexcept
+				{
+					return obj;
+				}
+			};
+
+			using Tuple = std::tuple<typename std::decay<Args>::type...>;
+			Tuple storage;
+
+			void tuple_move(void* dst)
+			{
+				move_impl(dst, typename make_index_sequence<std::tuple_size<Tuple>::value>::type{});
+			}
+
+			template <size_t... Is>
+			void move_impl(void* dst, index_sequence<Is...>)
+			{
+				tmove(dst, std::get<Is>(storage)...);
+			}
+
+			template <typename... Ts>
+			void tmove(void* dst, Ts &...args)
+			{
+				new (dst) TaskImpl(MoveHelper<Ts, is_move_constructible<Ts>::value>::apply(args)...);
+			}
+
+			template <class Func, class... Params,
+				typename std::enable_if<!is_TaskImpl<typename std::decay<Func>::type>::value, int>::type = 0>
+			TaskImpl(Func&& func, Params &&...args)
+				: storage(std::forward<Func>(func), std::forward<Params>(args)...) {}
+
+
+			template <bool Condition>
+			typename std::enable_if<!Condition, void>::type invoke()
+			{
+				tuple_apply(storage);
+			}
+
+			template <bool Condition>
+			typename std::enable_if<Condition, void>::type invoke()
+			{
+				std::get<0>(storage)();
+			}
+
+			void execute() noexcept override
+			{
+				invoke<sizeof...(Args) == 1>();
+			}
+
+			void copyTo(void* dst) const noexcept override
+			{
+				CopyHelper<TaskImpl,
+					are_all_copy_constructible<typename std::decay<Args>::type...>::value>::copyTo(this, dst);
+			}
+
+			void moveTo(void* dst) noexcept override
+			{
+				tuple_move(dst);
+			}
+
+			bool is_copyable() const noexcept override
+			{
+				return are_all_copy_constructible<typename std::decay<Args>::type...>::value;
+			}
+		};
 	}
-
-	template <TASK_TUPLE_TYPE TYPE, class ResultType, typename std::enable_if<!std::is_void<ResultType>::value, bool>::type = true,
-		typename Tuple, size_t... Is>
-	ResultType apply_impl(Tuple& tup, index_sequence<Is...>)
-	{
-		return Invoker<TYPE>::template invoke<ResultType>(std::get<Is>(tup)...);
-	}
-
-	template <TASK_TUPLE_TYPE TYPE = TASK_TUPLE_TYPE_NORMAL, class ResultType = void,
-		typename std::enable_if<std::is_void<ResultType>::value, bool>::type = true, typename Tuple>
-	void tuple_apply(Tuple& tup)
-	{
-		apply_impl<TYPE, ResultType>(tup, typename make_index_sequence<std::tuple_size<Tuple>::value>::type{});
-	}
-
-	template <TASK_TUPLE_TYPE TYPE = TASK_TUPLE_TYPE_NORMAL, class ResultType = void,
-		typename std::enable_if<!std::is_void<ResultType>::value, bool>::type = true, typename Tuple>
-	ResultType tuple_apply(Tuple& tup)
-	{
-		return apply_impl<TYPE, ResultType>(tup, typename make_index_sequence<std::tuple_size<Tuple>::value>::type{});
-	}
-
-	//helper7_make_unique
-	template <typename T, typename... Args>
-	typename std::enable_if<!std::is_array<T>::value, std::unique_ptr<T>>::type
-		make_unique(Args&&... args) {
-		return std::unique_ptr<T>(new T(std::forward<Args>(args)...));
-	}
-
-	template <typename T>
-	typename std::enable_if<std::is_array<T>::value&& std::extent<T>::value == 0, std::unique_ptr<T>>::type
-		make_unique(std::size_t size) {
-		using U = typename std::remove_extent<T>::type;
-		return std::unique_ptr<T>(new U[size]());
-	}
-
-	template <typename T, typename... Args>
-	typename std::enable_if<std::extent<T>::value != 0, void>::type
-		make_unique(Args&&...) = delete;
-
-	//helper8_result_infer
-	template <class F, class... Args>
-	struct result_type_infer
-	{
-		using type = decltype(
-			std::declval<typename std::decay<F>::type>()
-			(std::declval<typename std::decay<Args>::type&>()...));
-	};
 
 	/**
 	 * @class HeapCallable
@@ -279,9 +445,9 @@ namespace HSLL
 		 * @param func Callable object to store
 		 * @param args Arguments to bind to the callable
 		 */
-		template<class Func, typename std::enable_if<!is_HeapCallable<typename std::decay<Func>::type>::value, int>::type = 0 >
+		template<class Func, typename std::enable_if<!DETAILS::is_HeapCallable<typename std::decay<Func>::type>::value, int>::type = 0 >
 		HeapCallable(Func&& func, Args &&...args) HSLL_MAY_THROW
-			: storage(HSLL::make_unique<Package>(std::forward<Func>(func), std::forward<Args>(args)...)) {}
+			: storage(HSLL::DETAILS::make_unique<Package>(std::forward<Func>(func), std::forward<Args>(args)...)) {}
 
 		/**
 		 * @brief Invokes the stored callable with bound arguments
@@ -289,7 +455,7 @@ namespace HSLL
 		 */
 		void operator()()
 		{
-			tuple_apply(*storage);
+			DETAILS::tuple_apply(*storage);
 		}
 	};
 
@@ -303,7 +469,7 @@ namespace HSLL
 	template <class F, class... Args>
 	class HeapCallable_Async
 	{
-		using ResultType = typename result_type_infer<F, Args...>::type;
+		using ResultType = typename DETAILS::result_type_infer<F, Args...>::type;
 		using Package = std::tuple<std::promise<ResultType>, typename std::decay<F>::type, typename std::decay<Args>::type...>;
 
 	protected:
@@ -315,7 +481,7 @@ namespace HSLL
 			auto& promise = std::get<0>(*storage);
 			try
 			{
-				tuple_apply<TASK_TUPLE_TYPE_ASYNC, ResultType>(*storage);
+				DETAILS::tuple_apply<DETAILS::TASK_TUPLE_TYPE_ASYNC, ResultType>(*storage);
 				promise.set_value();
 			}
 			catch (...)
@@ -330,7 +496,7 @@ namespace HSLL
 			auto& promise = std::get<0>(*storage);
 			try
 			{
-				promise.set_value(tuple_apply<TASK_TUPLE_TYPE_ASYNC, ResultType>(*storage));
+				promise.set_value(DETAILS::tuple_apply<DETAILS::TASK_TUPLE_TYPE_ASYNC, ResultType>(*storage));
 			}
 			catch (...)
 			{
@@ -344,9 +510,9 @@ namespace HSLL
 		 * @param func Callable object to store
 		 * @param args Arguments to bind to the callable
 		 */
-		template<class Func, typename std::enable_if<!is_HeapCallable_Async<typename std::decay<Func>::type>::value, int>::type = 0 >
+		template<class Func, typename std::enable_if<!DETAILS::is_HeapCallable_Async<typename std::decay<Func>::type>::value, int>::type = 0 >
 		HeapCallable_Async(Func&& func, Args &&...args) HSLL_MAY_THROW
-			: storage(HSLL::make_unique<Package>(std::promise<ResultType>(), std::forward<Func>(func), std::forward<Args>(args)...)) {}
+			: storage(HSLL::DETAILS::make_unique<Package>(std::promise<ResultType>(), std::forward<Func>(func), std::forward<Args>(args)...)) {}
 
 		/**
 		 * @brief Executes the callable and sets promise value/exception
@@ -368,50 +534,6 @@ namespace HSLL
 		}
 	};
 
-	class CancelableFlag
-	{
-		std::atomic<bool> flag;
-
-	public:
-
-		CancelableFlag(bool ignore = false) : flag(false) {};
-
-		bool cancel()
-		{
-			bool expected = false;
-
-			if (flag.compare_exchange_strong(expected, true))
-				return true;
-
-			return false;
-		}
-
-		/**
-		 * @brief Enters a critical section making the task non-cancelable
-		 * @return true Successfully entered critical section
-		 * @return false Entry failed (task was already canceled, or critical section was already entered successfully)
-		 */
-		bool enter()
-		{
-			bool expected = false;
-
-			if (flag.compare_exchange_strong(expected, true))
-				return true;
-
-			return false;
-		}
-
-		CancelableFlag& operator=(CancelableFlag&& other)
-		{
-			if (this != &other)
-				flag = other.flag.load();
-
-			return *this;
-		}
-
-		CancelableFlag(CancelableFlag&& other) :flag(other.flag.load()) {}
-	};
-
 	/**
 	 * @class Cancelable
 	 * @brief Manages cancellation state and result propagation for asynchronous tasks.
@@ -422,7 +544,7 @@ namespace HSLL
 	{
 	private:
 
-		CancelableFlag flag;
+		DETAILS::CancelableFlag flag;
 		std::promise<ResultType> promise;
 		std::future<ResultType> future;
 
@@ -555,8 +677,8 @@ namespace HSLL
 	template <class F, class... Args>
 	class HeapCallable_Cancelable
 	{
-		using ResultType = typename result_type_infer<F, Args...>::type;
-		using Package = std::tuple<std::promise<ResultType>, CancelableFlag,
+		using ResultType = typename DETAILS::result_type_infer<F, Args...>::type;
+		using Package = std::tuple<std::promise<ResultType>, DETAILS::CancelableFlag,
 			typename std::decay<F>::type, typename std::decay<Args>::type...>;
 
 	private:
@@ -568,7 +690,7 @@ namespace HSLL
 			auto& promise = std::get<0>(*storage);
 			try
 			{
-				tuple_apply<TASK_TUPLE_TYPE_CANCELABLE, ResultType>(*storage);
+				DETAILS::tuple_apply<DETAILS::TASK_TUPLE_TYPE_CANCELABLE, ResultType>(*storage);
 				promise.set_value();
 			}
 			catch (...)
@@ -583,7 +705,7 @@ namespace HSLL
 			auto& promise = std::get<0>(*storage);
 			try
 			{
-				promise.set_value(tuple_apply<TASK_TUPLE_TYPE_CANCELABLE, ResultType>(*storage));
+				promise.set_value(DETAILS::tuple_apply<DETAILS::TASK_TUPLE_TYPE_CANCELABLE, ResultType>(*storage));
 			}
 			catch (...)
 			{
@@ -669,7 +791,7 @@ namespace HSLL
 		 * @param func Callable object to store
 		 * @param args Arguments to bind to the callable
 		 */
-		template<class Func, typename std::enable_if<!is_HeapCallable_Cancelable<typename std::decay<Func>::type>::value, int>::type = 0 >
+		template<class Func, typename std::enable_if<!DETAILS::is_HeapCallable_Cancelable<typename std::decay<Func>::type>::value, int>::type = 0 >
 		HeapCallable_Cancelable(Func&& func, Args &&...args) HSLL_MAY_THROW
 			: storage(std::make_shared<Package>(std::promise<ResultType>(), false, std::forward<Func>(func), std::forward<Args>(args)...)) {}
 
@@ -741,129 +863,6 @@ namespace HSLL
 	}
 
 	/**
-	 * @brief Base interface for type-erased task objects
-	 * @details Provides virtual methods for task execution and storage management
-	 */
-	struct TaskBase
-	{
-		virtual ~TaskBase() = default;
-		virtual void execute() noexcept = 0;
-		virtual void copyTo(void* memory) const noexcept = 0;
-		virtual void moveTo(void* memory) noexcept = 0;
-		virtual bool is_copyable() const noexcept = 0;
-	};
-
-	/**
-	 * @brief Concrete task implementation storing function and arguments
-	 * @details Stores decayed copies of function and arguments in a tuple
-	 */
-	template <class... Args>
-	struct TaskImpl : TaskBase
-	{
-		template <typename T, bool Copyable>
-		struct CopyHelper;
-
-		template <typename T>
-		struct CopyHelper<T, true>
-		{
-			static void copyTo(const T* self, void* dst) noexcept
-			{
-				new (dst) T(*self);
-			}
-		};
-
-		template <typename T>
-		struct CopyHelper<T, false>
-		{
-			static void copyTo(const T*, void*) noexcept
-			{
-				printf("\nTaskImpl must be copy constructible for cloneTo()");
-				std::abort();
-			}
-		};
-
-		template <typename T, bool Movable>
-		struct MoveHelper;
-
-		template <typename T>
-		struct MoveHelper<T, true>
-		{
-			static T&& apply(T& obj) noexcept
-			{
-				return std::move(obj);
-			}
-		};
-
-		template <typename T>
-		struct MoveHelper<T, false>
-		{
-			static T& apply(T& obj) noexcept
-			{
-				return obj;
-			}
-		};
-
-		using Tuple = std::tuple<typename std::decay<Args>::type...>;
-		Tuple storage;
-
-		void tuple_move(void* dst)
-		{
-			move_impl(dst, typename make_index_sequence<std::tuple_size<Tuple>::value>::type{});
-		}
-
-		template <size_t... Is>
-		void move_impl(void* dst, index_sequence<Is...>)
-		{
-			tmove(dst, std::get<Is>(storage)...);
-		}
-
-		template <typename... Ts>
-		void tmove(void* dst, Ts &...args)
-		{
-			new (dst) TaskImpl(MoveHelper<Ts, is_move_constructible<Ts>::value>::apply(args)...);
-		}
-
-		template <class Func, class... Params,
-			typename std::enable_if<!is_TaskImpl<typename std::decay<Func>::type>::value, int>::type = 0>
-		TaskImpl(Func&& func, Params &&...args)
-			: storage(std::forward<Func>(func), std::forward<Params>(args)...) {}
-
-
-		template <bool Condition>
-		typename std::enable_if<!Condition, void>::type invoke()
-		{
-			tuple_apply(storage);
-		}
-
-		template <bool Condition>
-		typename std::enable_if<Condition, void>::type invoke()
-		{
-			std::get<0>(storage)();
-		}
-
-		void execute() noexcept override
-		{
-			invoke<sizeof...(Args) == 1>();
-		}
-
-		void copyTo(void* dst) const noexcept override
-		{
-			CopyHelper<TaskImpl,
-				are_all_copy_constructible<typename std::decay<Args>::type...>::value>::copyTo(this, dst);
-		}
-
-		void moveTo(void* dst) noexcept override
-		{
-			tuple_move(dst);
-		}
-
-		bool is_copyable() const noexcept override
-		{
-			return are_all_copy_constructible<typename std::decay<Args>::type...>::value;
-		}
-	};
-
-	/**
 	 * @brief Metafunction to compute the task implementation type and its size
 	 * @tparam F Type of callable object
 	 * @tparam Args Types of bound arguments
@@ -874,7 +873,7 @@ namespace HSLL
 	template <class F, class... Args>
 	struct task_stack
 	{
-		using type = TaskImpl<F, Args...>;
+		using type = DETAILS::TaskImpl<F, Args...>;
 		static constexpr unsigned int size = sizeof(type);
 	};
 
@@ -949,7 +948,7 @@ namespace HSLL
 		 * @param args Arguments to bind to function call
 		 */
 		template <class F, class... Args,
-			typename std::enable_if<!is_TaskStack<typename std::decay<F>::type>::value, int>::type = 0>
+			typename std::enable_if<!DETAILS::is_TaskStack<typename std::decay<F>::type>::value, int>::type = 0>
 		TaskStack(F&& func, Args &&...args) HSLL_MAY_THROW
 		{
 			using ImplType = typename task_stack<F, Args...>::type;
@@ -1001,14 +1000,14 @@ namespace HSLL
 		TaskStack& operator=(TaskStack&& other) = delete;
 
 	private:
-		TaskBase* getBase() noexcept
+		DETAILS::TaskBase* getBase() noexcept
 		{
-			return (TaskBase*)storage;
+			return (DETAILS::TaskBase*)storage;
 		}
 
-		const TaskBase* getBase() const noexcept
+		const DETAILS::TaskBase* getBase() const noexcept
 		{
-			return (const TaskBase*)storage;
+			return (const DETAILS::TaskBase*)storage;
 		}
 	};
 }
@@ -1016,289 +1015,297 @@ namespace HSLL
 //TPSRWLock
 namespace HSLL
 {
-	constexpr int HSLL_SPINREADWRITELOCK_MAXSLOTS = 128;
-	constexpr long long HSLL_SPINREADWRITELOCK_MAXREADER = (1LL << 62);
-
-	static_assert(HSLL_SPINREADWRITELOCK_MAXSLOTS > 0, "HSLL_SPINREADWRITELOCK_MAXSLOTS must be > 0");
-	static_assert(HSLL_SPINREADWRITELOCK_MAXREADER > 0 && HSLL_SPINREADWRITELOCK_MAXREADER <= (1LL << 62),
-		"HSLL_SPINREADWRITELOCK_MAXREADER must be > 0 and <= 2^62");
-
-	/**
-	 * @brief Efficient spin lock based on atomic variables, suitable for scenarios where reads significantly outnumber writes
-	 */
-	class SpinReadWriteLock
+	namespace CONST_VALUE
 	{
-	private:
+		constexpr int HSLL_SPINREADWRITELOCK_MAXSLOTS = 128;
+		constexpr long long HSLL_SPINREADWRITELOCK_MAXREADER = (1LL << 62);
 
-		class InnerRWLock
+		static_assert(HSLL_SPINREADWRITELOCK_MAXSLOTS > 0, "HSLL_SPINREADWRITELOCK_MAXSLOTS must be > 0");
+		static_assert(HSLL_SPINREADWRITELOCK_MAXREADER > 0 && HSLL_SPINREADWRITELOCK_MAXREADER <= (1LL << 62),
+			"HSLL_SPINREADWRITELOCK_MAXREADER must be > 0 and <= 2^62");
+	}
+
+	namespace DETAILS
+	{
+		/**
+		 * @brief Efficient spin lock based on atomic variables, suitable for scenarios where reads significantly outnumber writes
+		 */
+		class SpinReadWriteLock
 		{
 		private:
-			std::atomic<long long> count;
+
+			class InnerRWLock
+			{
+			private:
+				std::atomic<long long> count;
+
+			public:
+
+				InnerRWLock() :count(0) {}
+
+				// Optimistic locking since reads greatly outnumber writes: increment first then handle rollback if needed
+				void lock_read()
+				{
+					long long old = count.fetch_add(1, std::memory_order_acquire); // Acquire semantics to get write results
+
+					while (old < 0)
+					{
+						count.fetch_sub(1, std::memory_order_relaxed);
+
+						while (count.load(std::memory_order_relaxed) < 0)
+							std::this_thread::yield();
+
+						old = count.fetch_add(1, std::memory_order_acquire);
+					}
+				}
+
+				// Relaxed semantics sufficient since read operations don't modify shared state
+				void unlock_read()
+				{
+					count.fetch_sub(1, std::memory_order_relaxed);
+				}
+
+				// Add write flag to prevent new read locks
+				void mark_write()
+				{
+					long long old = count.load(std::memory_order_relaxed);
+
+					while (!count.compare_exchange_weak(old, old - CONST_VALUE::HSLL_SPINREADWRITELOCK_MAXREADER, std::memory_order_relaxed, std::memory_order_relaxed));
+				}
+
+				// Must call mark_write() before this function, otherwise will never succeed
+				bool is_write_ready()
+				{
+					return count.load(std::memory_order_relaxed) == -CONST_VALUE::HSLL_SPINREADWRITELOCK_MAXREADER;
+				}
+
+				// Release semantics to propagate write results
+				void unlock_write()
+				{
+					count.fetch_add(CONST_VALUE::HSLL_SPINREADWRITELOCK_MAXREADER, std::memory_order_release);
+				}
+			};
+
+			struct alignas(64) PeerLock
+			{
+				InnerRWLock lock;
+
+				void lock_read()
+				{
+					lock.lock_read();
+				}
+
+				void unlock_read()
+				{
+					lock.unlock_read();
+				}
+
+				void mark_write()
+				{
+					lock.mark_write();
+				}
+
+				bool is_write_ready()
+				{
+					return lock.is_write_ready();
+				}
+
+				void unlock_write()
+				{
+					lock.unlock_write();
+				}
+			};
+
+			std::atomic<bool> flag;
+			thread_local static int local_index;
+			static std::atomic<unsigned int> index;
+			PeerLock counter[CONST_VALUE::HSLL_SPINREADWRITELOCK_MAXSLOTS];
 
 		public:
 
-			InnerRWLock() :count(0) {}
+			SpinReadWriteLock() :flag(true) {}
 
-			// Optimistic locking since reads greatly outnumber writes: increment first then handle rollback if needed
+			unsigned int get_local_index()
+			{
+				if (local_index == -1)
+					local_index = index.fetch_add(1, std::memory_order_relaxed) % CONST_VALUE::HSLL_SPINREADWRITELOCK_MAXSLOTS;
+
+				return local_index;
+			}
+
 			void lock_read()
 			{
-				long long old = count.fetch_add(1, std::memory_order_acquire); // Acquire semantics to get write results
+				counter[get_local_index()].lock_read();
+			}
 
-				while (old < 0)
+			void unlock_read()
+			{
+				counter[get_local_index()].unlock_read();
+			}
+
+			void lock_write()
+			{
+				bool old = true;
+
+				// Set write flag to block new writers and acquire write permission
+				while (!flag.compare_exchange_weak(old, false, std::memory_order_acquire, std::memory_order_relaxed))
 				{
-					count.fetch_sub(1, std::memory_order_relaxed);
+					std::this_thread::yield();
+					old = true;
+				}
 
-					while (count.load(std::memory_order_relaxed) < 0)
-						std::this_thread::yield();
+				for (int i = 0; i < CONST_VALUE::HSLL_SPINREADWRITELOCK_MAXSLOTS; ++i) // Mark writer waiting to prevent new readers
+					counter[i].mark_write();
 
-					old = count.fetch_add(1, std::memory_order_acquire);
+				while (true)
+				{
+					bool allReady = true;
+
+					for (int i = 0; i < CONST_VALUE::HSLL_SPINREADWRITELOCK_MAXSLOTS; ++i) // Lock successful when all write locks acquired
+					{
+						if (!counter[i].is_write_ready())
+						{
+							allReady = false;
+							break;
+						}
+					}
+
+					if (allReady)
+						break;
+
+					std::this_thread::yield();
 				}
 			}
 
-			// Relaxed semantics sufficient since read operations don't modify shared state
-			void unlock_read()
-			{
-				count.fetch_sub(1, std::memory_order_relaxed);
-			}
-
-			// Add write flag to prevent new read locks
-			void mark_write()
-			{
-				long long old = count.load(std::memory_order_relaxed);
-
-				while (!count.compare_exchange_weak(old, old - HSLL_SPINREADWRITELOCK_MAXREADER, std::memory_order_relaxed, std::memory_order_relaxed));
-			}
-
-			// Must call mark_write() before this function, otherwise will never succeed
-			bool is_write_ready()
-			{
-				return count.load(std::memory_order_relaxed) == -HSLL_SPINREADWRITELOCK_MAXREADER;
-			}
-
-			// Release semantics to propagate write results
 			void unlock_write()
 			{
-				count.fetch_add(HSLL_SPINREADWRITELOCK_MAXREADER, std::memory_order_release);
+				for (int i = 0; i < CONST_VALUE::HSLL_SPINREADWRITELOCK_MAXSLOTS; ++i) // Release all read-write locks and propagate to readers
+					counter[i].unlock_write();
+
+				flag.store(true, std::memory_order_release); // Allow new writers and propagate result
 			}
+
+			SpinReadWriteLock(const SpinReadWriteLock&) = delete;
+			SpinReadWriteLock& operator=(const SpinReadWriteLock&) = delete;
 		};
 
-		struct alignas(64) PeerLock
-		{
-			InnerRWLock lock;
+		thread_local int SpinReadWriteLock::local_index{ -1 };
+		std::atomic<unsigned int> SpinReadWriteLock::index{ 0 };
 
-			void lock_read()
+		class ReadLockGuard
+		{
+		private:
+
+			SpinReadWriteLock& lock;
+
+		public:
+
+			explicit ReadLockGuard(SpinReadWriteLock& lock) : lock(lock)
 			{
 				lock.lock_read();
 			}
 
-			void unlock_read()
+			~ReadLockGuard()
 			{
 				lock.unlock_read();
 			}
 
-			void mark_write()
+			ReadLockGuard(const ReadLockGuard&) = delete;
+			ReadLockGuard& operator=(const ReadLockGuard&) = delete;
+		};
+
+		class WriteLockGuard
+		{
+		private:
+
+			SpinReadWriteLock& lock;
+
+		public:
+
+			explicit WriteLockGuard(SpinReadWriteLock& lock) : lock(lock)
 			{
-				lock.mark_write();
+				lock.lock_write();
 			}
 
-			bool is_write_ready()
-			{
-				return lock.is_write_ready();
-			}
-
-			void unlock_write()
+			~WriteLockGuard()
 			{
 				lock.unlock_write();
 			}
+
+			WriteLockGuard(const WriteLockGuard&) = delete;
+			WriteLockGuard& operator=(const WriteLockGuard&) = delete;
 		};
-
-		std::atomic<bool> flag;
-		thread_local static int local_index;
-		static std::atomic<unsigned int> index;
-		PeerLock counter[HSLL_SPINREADWRITELOCK_MAXSLOTS];
-
-	public:
-
-		SpinReadWriteLock() :flag(true) {}
-
-		unsigned int get_local_index()
-		{
-			if (local_index == -1)
-				local_index = index.fetch_add(1, std::memory_order_relaxed) % HSLL_SPINREADWRITELOCK_MAXSLOTS;
-
-			return local_index;
-		}
-
-		void lock_read()
-		{
-			counter[get_local_index()].lock_read();
-		}
-
-		void unlock_read()
-		{
-			counter[get_local_index()].unlock_read();
-		}
-
-		void lock_write()
-		{
-			bool old = true;
-
-			// Set write flag to block new writers and acquire write permission
-			while (!flag.compare_exchange_weak(old, false, std::memory_order_acquire, std::memory_order_relaxed))
-			{
-				std::this_thread::yield();
-				old = true;
-			}
-
-			for (int i = 0; i < HSLL_SPINREADWRITELOCK_MAXSLOTS; ++i) // Mark writer waiting to prevent new readers
-				counter[i].mark_write();
-
-			while (true)
-			{
-				bool allReady = true;
-
-				for (int i = 0; i < HSLL_SPINREADWRITELOCK_MAXSLOTS; ++i) // Lock successful when all write locks acquired
-				{
-					if (!counter[i].is_write_ready())
-					{
-						allReady = false;
-						break;
-					}
-				}
-
-				if (allReady)
-					break;
-
-				std::this_thread::yield();
-			}
-		}
-
-		void unlock_write()
-		{
-			for (int i = 0; i < HSLL_SPINREADWRITELOCK_MAXSLOTS; ++i) // Release all read-write locks and propagate to readers
-				counter[i].unlock_write();
-
-			flag.store(true, std::memory_order_release); // Allow new writers and propagate result
-		}
-
-		SpinReadWriteLock(const SpinReadWriteLock&) = delete;
-		SpinReadWriteLock& operator=(const SpinReadWriteLock&) = delete;
-	};
-
-	thread_local int SpinReadWriteLock::local_index{ -1 };
-	std::atomic<unsigned int> SpinReadWriteLock::index{ 0 };
-
-	class ReadLockGuard
-	{
-	private:
-
-		SpinReadWriteLock& lock;
-
-	public:
-
-		explicit ReadLockGuard(SpinReadWriteLock& lock) : lock(lock)
-		{
-			lock.lock_read();
-		}
-
-		~ReadLockGuard()
-		{
-			lock.unlock_read();
-		}
-
-		ReadLockGuard(const ReadLockGuard&) = delete;
-		ReadLockGuard& operator=(const ReadLockGuard&) = delete;
-	};
-
-	class WriteLockGuard
-	{
-	private:
-
-		SpinReadWriteLock& lock;
-
-	public:
-
-		explicit WriteLockGuard(SpinReadWriteLock& lock) : lock(lock)
-		{
-			lock.lock_write();
-		}
-
-		~WriteLockGuard()
-		{
-			lock.unlock_write();
-		}
-
-		WriteLockGuard(const WriteLockGuard&) = delete;
-		WriteLockGuard& operator=(const WriteLockGuard&) = delete;
-	};
+	}
 }
 
 #if defined(_WIN32)
 #define NOMINMAX
 #include <windows.h>
 
-//TPSemaphore
 namespace HSLL
 {
-	class Semaphore
+	namespace DETAILS
 	{
-	public:
-		explicit Semaphore(unsigned int initial_count = 0)
+		class Semaphore
 		{
-			m_sem = CreateSemaphoreW(nullptr, static_cast<LONG>(initial_count),
-				std::numeric_limits<LONG>::max(), nullptr);
-			if (!m_sem)
-				throw std::system_error(GetLastError(), std::system_category());
-		}
+		public:
+			explicit Semaphore(unsigned int initial_count = 0)
+			{
+				m_sem = CreateSemaphoreW(nullptr, static_cast<LONG>(initial_count),
+					std::numeric_limits<LONG>::max(), nullptr);
+				if (!m_sem)
+					throw std::system_error(GetLastError(), std::system_category());
+			}
 
-		~Semaphore() noexcept
-		{
-			if (m_sem) CloseHandle(m_sem);
-		}
+			~Semaphore() noexcept
+			{
+				if (m_sem) CloseHandle(m_sem);
+			}
 
-		void acquire()
-		{
-			DWORD result = WaitForSingleObject(m_sem, INFINITE);
-			if (result != WAIT_OBJECT_0)
-				throw std::system_error(GetLastError(), std::system_category());
-		}
+			void acquire()
+			{
+				DWORD result = WaitForSingleObject(m_sem, INFINITE);
+				if (result != WAIT_OBJECT_0)
+					throw std::system_error(GetLastError(), std::system_category());
+			}
 
-		template<typename Rep, typename Period>
-		bool try_acquire_for(const std::chrono::duration<Rep, Period>& timeout)
-		{
-			auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(timeout);
-			if (ms.count() < 0) ms = std::chrono::milliseconds(0);
+			template<typename Rep, typename Period>
+			bool try_acquire_for(const std::chrono::duration<Rep, Period>& timeout)
+			{
+				auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(timeout);
+				if (ms.count() < 0) ms = std::chrono::milliseconds(0);
 
-			DWORD wait_ms;
-			if (ms.count() > MAX_WAIT_MS)
-				wait_ms = MAX_WAIT_MS;
-			else
-				wait_ms = static_cast<DWORD>(ms.count());
+				DWORD wait_ms;
+				if (ms.count() > MAX_WAIT_MS)
+					wait_ms = MAX_WAIT_MS;
+				else
+					wait_ms = static_cast<DWORD>(ms.count());
 
-			DWORD result = WaitForSingleObject(m_sem, wait_ms);
-			if (result == WAIT_OBJECT_0)
-				return true;
-			else if (result == WAIT_TIMEOUT)
-				return false;
-			else
-				throw std::system_error(GetLastError(), std::system_category());
-		}
+				DWORD result = WaitForSingleObject(m_sem, wait_ms);
+				if (result == WAIT_OBJECT_0)
+					return true;
+				else if (result == WAIT_TIMEOUT)
+					return false;
+				else
+					throw std::system_error(GetLastError(), std::system_category());
+			}
 
-		void release()
-		{
-			if (!ReleaseSemaphore(m_sem, 1, nullptr))
-				throw std::system_error(GetLastError(), std::system_category());
-		}
+			void release()
+			{
+				if (!ReleaseSemaphore(m_sem, 1, nullptr))
+					throw std::system_error(GetLastError(), std::system_category());
+			}
 
-		Semaphore(const Semaphore&) = delete;
-		Semaphore& operator=(const Semaphore&) = delete;
-		Semaphore(Semaphore&&) = delete;
-		Semaphore& operator=(Semaphore&&) = delete;
+			Semaphore(const Semaphore&) = delete;
+			Semaphore& operator=(const Semaphore&) = delete;
+			Semaphore(Semaphore&&) = delete;
+			Semaphore& operator=(Semaphore&&) = delete;
 
-	private:
-		HANDLE m_sem = nullptr;
-		static constexpr DWORD MAX_WAIT_MS = INFINITE - 1;
-	};
+		private:
+			HANDLE m_sem = nullptr;
+			static constexpr DWORD MAX_WAIT_MS = INFINITE - 1;
+		};
+	}
 }
 
 #elif defined(__APPLE__)
@@ -1306,47 +1313,50 @@ namespace HSLL
 
 namespace HSLL
 {
-	class Semaphore
+	namespace DETAILS
 	{
-	public:
-		explicit Semaphore(unsigned int initial_count = 0)
+		class Semaphore
 		{
-			m_sem = dispatch_semaphore_create(static_cast<long>(initial_count));
-			if (!m_sem)
-				throw std::system_error(errno, std::system_category());
-		}
+		public:
+			explicit Semaphore(unsigned int initial_count = 0)
+			{
+				m_sem = dispatch_semaphore_create(static_cast<long>(initial_count));
+				if (!m_sem)
+					throw std::system_error(errno, std::system_category());
+			}
 
-		~Semaphore() noexcept
-		{
-			dispatch_release(m_sem);
-		}
+			~Semaphore() noexcept
+			{
+				dispatch_release(m_sem);
+			}
 
-		void acquire()
-		{
-			dispatch_semaphore_wait(m_sem, DISPATCH_TIME_FOREVER);
-		}
+			void acquire()
+			{
+				dispatch_semaphore_wait(m_sem, DISPATCH_TIME_FOREVER);
+			}
 
-		template<typename Rep, typename Period>
-		bool try_acquire_for(const std::chrono::duration<Rep, Period>& timeout)
-		{
-			auto ns = std::chrono::duration_cast<std::chrono::nanoseconds>(timeout);
-			return dispatch_semaphore_wait(m_sem,
-				dispatch_time(DISPATCH_TIME_NOW, ns.count())) == 0;
-		}
+			template<typename Rep, typename Period>
+			bool try_acquire_for(const std::chrono::duration<Rep, Period>& timeout)
+			{
+				auto ns = std::chrono::duration_cast<std::chrono::nanoseconds>(timeout);
+				return dispatch_semaphore_wait(m_sem,
+					dispatch_time(DISPATCH_TIME_NOW, ns.count())) == 0;
+			}
 
-		void release()
-		{
-			dispatch_semaphore_signal(m_sem);
-		}
+			void release()
+			{
+				dispatch_semaphore_signal(m_sem);
+			}
 
-		Semaphore(const Semaphore&) = delete;
-		Semaphore& operator=(const Semaphore&) = delete;
-		Semaphore(Semaphore&&) = delete;
-		Semaphore& operator=(Semaphore&&) = delete;
+			Semaphore(const Semaphore&) = delete;
+			Semaphore& operator=(const Semaphore&) = delete;
+			Semaphore(Semaphore&&) = delete;
+			Semaphore& operator=(Semaphore&&) = delete;
 
-	private:
-		dispatch_semaphore_t m_sem;
-	};
+		private:
+			dispatch_semaphore_t m_sem;
+		};
+	}
 }
 
 #elif defined(__linux__) || defined(__FreeBSD__) || \
@@ -1357,71 +1367,74 @@ namespace HSLL
 
 namespace HSLL
 {
-	class Semaphore
+	namespace DETAILS
 	{
-	public:
-		explicit Semaphore(unsigned int initial_count = 0)
+		class Semaphore
 		{
-			if (sem_init(&m_sem, 0, initial_count) != 0)
-				throw std::system_error(errno, std::system_category());
-		}
-
-		~Semaphore() noexcept
-		{
-			sem_destroy(&m_sem);
-		}
-
-		void acquire()
-		{
-			int ret;
-			do {
-				ret = sem_wait(&m_sem);
-			} while (ret != 0 && errno == EINTR);
-
-			if (ret != 0)
-				throw std::system_error(errno, std::system_category());
-		}
-
-		template<typename Rep, typename Period>
-		bool try_acquire_for(const std::chrono::duration<Rep, Period>& timeout)
-		{
-			auto abs_time = std::chrono::system_clock::now() + timeout;
-			auto since_epoch = abs_time.time_since_epoch();
-
-			auto secs = std::chrono::duration_cast<std::chrono::seconds>(since_epoch);
-			auto ns = std::chrono::duration_cast<std::chrono::nanoseconds>(since_epoch - secs);
-
-			struct timespec ts;
-			ts.tv_sec = secs.count();
-			ts.tv_nsec = ns.count();
-
-			while (true) {
-				int result = sem_timedwait(&m_sem, &ts);
-				if (result == 0)
-					return true;
-				else if (errno == EINTR)
-					continue;
-				else if (errno == ETIMEDOUT)
-					return false;
-				else
+		public:
+			explicit Semaphore(unsigned int initial_count = 0)
+			{
+				if (sem_init(&m_sem, 0, initial_count) != 0)
 					throw std::system_error(errno, std::system_category());
 			}
-		}
 
-		void release()
-		{
-			if (sem_post(&m_sem) != 0)
-				throw std::system_error(errno, std::system_category());
-		}
+			~Semaphore() noexcept
+			{
+				sem_destroy(&m_sem);
+			}
 
-		Semaphore(const Semaphore&) = delete;
-		Semaphore& operator=(const Semaphore&) = delete;
-		Semaphore(Semaphore&&) = delete;
-		Semaphore& operator=(Semaphore&&) = delete;
+			void acquire()
+			{
+				int ret;
+				do {
+					ret = sem_wait(&m_sem);
+				} while (ret != 0 && errno == EINTR);
 
-	private:
-		sem_t m_sem;
-	};
+				if (ret != 0)
+					throw std::system_error(errno, std::system_category());
+			}
+
+			template<typename Rep, typename Period>
+			bool try_acquire_for(const std::chrono::duration<Rep, Period>& timeout)
+			{
+				auto abs_time = std::chrono::system_clock::now() + timeout;
+				auto since_epoch = abs_time.time_since_epoch();
+
+				auto secs = std::chrono::duration_cast<std::chrono::seconds>(since_epoch);
+				auto ns = std::chrono::duration_cast<std::chrono::nanoseconds>(since_epoch - secs);
+
+				struct timespec ts;
+				ts.tv_sec = secs.count();
+				ts.tv_nsec = ns.count();
+
+				while (true) {
+					int result = sem_timedwait(&m_sem, &ts);
+					if (result == 0)
+						return true;
+					else if (errno == EINTR)
+						continue;
+					else if (errno == ETIMEDOUT)
+						return false;
+					else
+						throw std::system_error(errno, std::system_category());
+				}
+			}
+
+			void release()
+			{
+				if (sem_post(&m_sem) != 0)
+					throw std::system_error(errno, std::system_category());
+			}
+
+			Semaphore(const Semaphore&) = delete;
+			Semaphore& operator=(const Semaphore&) = delete;
+			Semaphore(Semaphore&&) = delete;
+			Semaphore& operator=(Semaphore&&) = delete;
+
+		private:
+			sem_t m_sem;
+		};
+	}
 }
 
 #else // Generic fallback for other platforms
@@ -1430,48 +1443,51 @@ namespace HSLL
 
 namespace HSLL
 {
-	class Semaphore
+	namespace DETAILS
 	{
-	public:
-		explicit Semaphore(unsigned int initial_count = 0)
-			: m_count(initial_count) {}
-
-		void acquire()
+		class Semaphore
 		{
-			std::unique_lock<std::mutex> lock(m_mutex);
-			m_cv.wait(lock, [this] { return m_count > 0; });
-			--m_count;
-		}
+		public:
+			explicit Semaphore(unsigned int initial_count = 0)
+				: m_count(initial_count) {}
 
-		template<typename Rep, typename Period>
-		bool try_acquire_for(const std::chrono::duration<Rep, Period>& timeout)
-		{
-			std::unique_lock<std::mutex> lock(m_mutex);
-			if (!m_cv.wait_for(lock, timeout, [this] { return m_count > 0; }))
-				return false;
-			--m_count;
-			return true;
-		}
-
-		void release()
-		{
+			void acquire()
 			{
-				std::lock_guard<std::mutex> lock(m_mutex);
-				++m_count;
+				std::unique_lock<std::mutex> lock(m_mutex);
+				m_cv.wait(lock, [this] { return m_count > 0; });
+				--m_count;
 			}
-			m_cv.notify_one();
-		}
 
-		Semaphore(const Semaphore&) = delete;
-		Semaphore& operator=(const Semaphore&) = delete;
-		Semaphore(Semaphore&&) = delete;
-		Semaphore& operator=(Semaphore&&) = delete;
+			template<typename Rep, typename Period>
+			bool try_acquire_for(const std::chrono::duration<Rep, Period>& timeout)
+			{
+				std::unique_lock<std::mutex> lock(m_mutex);
+				if (!m_cv.wait_for(lock, timeout, [this] { return m_count > 0; }))
+					return false;
+				--m_count;
+				return true;
+			}
 
-	private:
-		std::mutex m_mutex;
-		std::condition_variable m_cv;
-		unsigned int m_count = 0;
-	};
+			void release()
+			{
+				{
+					std::lock_guard<std::mutex> lock(m_mutex);
+					++m_count;
+				}
+				m_cv.notify_one();
+			}
+
+			Semaphore(const Semaphore&) = delete;
+			Semaphore& operator=(const Semaphore&) = delete;
+			Semaphore(Semaphore&&) = delete;
+			Semaphore& operator=(Semaphore&&) = delete;
+
+		private:
+			std::mutex m_mutex;
+			std::condition_variable m_cv;
+			unsigned int m_count = 0;
+};
+	}
 }
 #endif
 
@@ -1566,14 +1582,14 @@ namespace HSLL
 		void move_tail_next()
 		{
 			dataListTail = (TYPE*)((char*)dataListTail + sizeof(TYPE));
-			if (UNLIKELY((uintptr_t)dataListTail == border))
+			if (HSLL_UNLIKELY((uintptr_t)dataListTail == border))
 				dataListTail = (TYPE*)(uintptr_t)memoryBlock;
 		}
 
 		void move_head_next()
 		{
 			dataListHead = (TYPE*)((char*)dataListHead + sizeof(TYPE));
-			if (UNLIKELY((uintptr_t)dataListHead == border))
+			if (HSLL_UNLIKELY((uintptr_t)dataListHead == border))
 				dataListHead = (TYPE*)(uintptr_t)memoryBlock;
 		}
 
@@ -1581,7 +1597,7 @@ namespace HSLL
 		void move_head_prev()
 		{
 			dataListHead = (TYPE*)((char*)dataListHead - sizeof(TYPE));
-			if (UNLIKELY((uintptr_t)dataListHead < (uintptr_t)memoryBlock))
+			if (HSLL_UNLIKELY((uintptr_t)dataListHead < (uintptr_t)memoryBlock))
 				dataListHead = (TYPE*)(border - sizeof(TYPE));
 		}
 
@@ -1692,7 +1708,7 @@ namespace HSLL
 			enqueue_bulk_impl<POS, METHOD>(elements, toPush);
 			lock.unlock();
 
-			if (UNLIKELY(toPush == 1))
+			if (HSLL_UNLIKELY(toPush == 1))
 				notEmptyCond.notify_one();
 			else
 				notEmptyCond.notify_all();
@@ -1713,7 +1729,7 @@ namespace HSLL
 
 			lock.unlock();
 
-			if (UNLIKELY(toPush == 1))
+			if (HSLL_UNLIKELY(toPush == 1))
 				notEmptyCond.notify_one();
 			else
 				notEmptyCond.notify_all();
@@ -1740,7 +1756,7 @@ namespace HSLL
 			}
 			lock.unlock();
 
-			if (UNLIKELY(toPop == 1))
+			if (HSLL_UNLIKELY(toPop == 1))
 				notFullCond.notify_one();
 			else
 				notFullCond.notify_all();
@@ -1779,7 +1795,7 @@ namespace HSLL
 				return false;
 
 			totalsize = sizeof(TYPE) * capacity;
-			memoryBlock = ALIGNED_MALLOC(totalsize, std::max(alignof(TYPE), (size_t)64));
+			memoryBlock = HSLL_ALIGNED_MALLOC(totalsize, std::max(alignof(TYPE), (size_t)64));
 
 			if (!memoryBlock)
 				return false;
@@ -1800,7 +1816,7 @@ namespace HSLL
 
 			std::unique_lock<std::mutex> lock(dataMutex);
 
-			if (UNLIKELY(size == capacity))
+			if (HSLL_UNLIKELY(size == capacity))
 				return false;
 
 			emplace_helper<POS>(lock, std::forward<Args>(args)...);
@@ -1816,9 +1832,9 @@ namespace HSLL
 			std::unique_lock<std::mutex> lock(dataMutex);
 
 			notFullCond.wait(lock, [this]
-				{ return LIKELY(size != capacity) || UNLIKELY(isStopped); });
+				{ return HSLL_LIKELY(size != capacity) || HSLL_UNLIKELY(isStopped); });
 
-			if (UNLIKELY(isStopped))
+			if (HSLL_UNLIKELY(isStopped))
 				return false;
 
 			emplace_helper<POS>(lock, std::forward<Args>(args)...);
@@ -1833,9 +1849,9 @@ namespace HSLL
 			std::unique_lock<std::mutex> lock(dataMutex);
 
 			bool success = notFullCond.wait_for(lock, timeout, [this]
-				{ return LIKELY(size != capacity) || UNLIKELY(isStopped); });
+				{ return HSLL_LIKELY(size != capacity) || HSLL_UNLIKELY(isStopped); });
 
-			if (UNLIKELY(!success || isStopped))
+			if (HSLL_UNLIKELY(!success || isStopped))
 				return false;
 
 			emplace_helper<POS>(lock, std::forward<Args>(args)...);
@@ -1848,7 +1864,7 @@ namespace HSLL
 			assert(memoryBlock);
 			std::unique_lock<std::mutex> lock(dataMutex);
 
-			if (UNLIKELY(size == capacity))
+			if (HSLL_UNLIKELY(size == capacity))
 				return false;
 
 			enqueue_helper<POS>(lock, std::forward<T>(element));
@@ -1863,9 +1879,9 @@ namespace HSLL
 			std::unique_lock<std::mutex> lock(dataMutex);
 
 			notFullCond.wait(lock, [this]
-				{ return LIKELY(size != capacity) || UNLIKELY(isStopped); });
+				{ return HSLL_LIKELY(size != capacity) || HSLL_UNLIKELY(isStopped); });
 
-			if (UNLIKELY(isStopped))
+			if (HSLL_UNLIKELY(isStopped))
 				return false;
 
 			enqueue_helper<POS>(lock, std::forward<T>(element));
@@ -1880,9 +1896,9 @@ namespace HSLL
 			std::unique_lock<std::mutex> lock(dataMutex);
 
 			bool success = notFullCond.wait_for(lock, timeout, [this]
-				{ return LIKELY(size != capacity) || UNLIKELY(isStopped); });
+				{ return HSLL_LIKELY(size != capacity) || HSLL_UNLIKELY(isStopped); });
 
-			if (UNLIKELY(!success || isStopped))
+			if (HSLL_UNLIKELY(!success || isStopped))
 				return false;
 
 			enqueue_helper<POS>(lock, std::forward<T>(element));
@@ -1896,7 +1912,7 @@ namespace HSLL
 			assert(elements && count);
 			std::unique_lock<std::mutex> lock(dataMutex);
 
-			if (UNLIKELY(!(capacity - size)))
+			if (HSLL_UNLIKELY(!(capacity - size)))
 				return 0;
 
 			return enqueue_bulk_helper<METHOD, POS>(lock, elements, count);
@@ -1913,7 +1929,7 @@ namespace HSLL
 
 			std::unique_lock<std::mutex> lock(dataMutex);
 
-			if (UNLIKELY(!(capacity - size)))
+			if (HSLL_UNLIKELY(!(capacity - size)))
 				return 0;
 
 			return enqueue_bulk_helper<METHOD, POS>(lock, part1, count1, part2, count2);
@@ -1928,9 +1944,9 @@ namespace HSLL
 			std::unique_lock<std::mutex> lock(dataMutex);
 
 			notFullCond.wait(lock, [this]
-				{ return LIKELY(size != capacity) || UNLIKELY(isStopped); });
+				{ return HSLL_LIKELY(size != capacity) || HSLL_UNLIKELY(isStopped); });
 
-			if (UNLIKELY(isStopped))
+			if (HSLL_UNLIKELY(isStopped))
 				return 0;
 
 			return enqueue_bulk_helper<METHOD, POS>(lock, elements, count);
@@ -1945,9 +1961,9 @@ namespace HSLL
 			std::unique_lock<std::mutex> lock(dataMutex);
 
 			bool success = notFullCond.wait_for(lock, timeout, [this]
-				{ return LIKELY(size != capacity) || UNLIKELY(isStopped); });
+				{ return HSLL_LIKELY(size != capacity) || HSLL_UNLIKELY(isStopped); });
 
-			if (UNLIKELY(!success || isStopped))
+			if (HSLL_UNLIKELY(!success || isStopped))
 				return 0;
 
 			return enqueue_bulk_helper<METHOD, POS>(lock, elements, count);
@@ -1958,7 +1974,7 @@ namespace HSLL
 			assert(memoryBlock);
 			std::unique_lock<std::mutex> lock(dataMutex);
 
-			if (UNLIKELY(!size))
+			if (HSLL_UNLIKELY(!size))
 				return false;
 
 			dequeue_helper(lock, element);
@@ -1972,9 +1988,9 @@ namespace HSLL
 			std::unique_lock<std::mutex> lock(dataMutex);
 
 			notEmptyCond.wait(lock, [this]
-				{ return LIKELY(size) || UNLIKELY(isStopped); });
+				{ return HSLL_LIKELY(size) || HSLL_UNLIKELY(isStopped); });
 
-			if (UNLIKELY(isStopped))
+			if (HSLL_UNLIKELY(isStopped))
 				return false;
 
 			dequeue_helper(lock, element);
@@ -1989,9 +2005,9 @@ namespace HSLL
 			std::unique_lock<std::mutex> lock(dataMutex);
 
 			bool success = notEmptyCond.wait_for(lock, timeout, [this]
-				{ return LIKELY(size) || UNLIKELY(isStopped); });
+				{ return HSLL_LIKELY(size) || HSLL_UNLIKELY(isStopped); });
 
-			if (UNLIKELY(!success || isStopped))
+			if (HSLL_UNLIKELY(!success || isStopped))
 				return false;
 
 			dequeue_helper(lock, element);
@@ -2004,7 +2020,7 @@ namespace HSLL
 			assert(elements && count);
 			std::unique_lock<std::mutex> lock(dataMutex);
 
-			if (UNLIKELY(!size))
+			if (HSLL_UNLIKELY(!size))
 				return 0;
 
 			return dequeue_bulk_helper(lock, elements, count);
@@ -2018,9 +2034,9 @@ namespace HSLL
 			std::unique_lock<std::mutex> lock(dataMutex);
 
 			notEmptyCond.wait(lock, [this]
-				{ return LIKELY(size) || UNLIKELY(isStopped); });
+				{ return HSLL_LIKELY(size) || HSLL_UNLIKELY(isStopped); });
 
-			if (UNLIKELY(isStopped))
+			if (HSLL_UNLIKELY(isStopped))
 				return 0;
 
 			return dequeue_bulk_helper(lock, elements, count);
@@ -2035,9 +2051,9 @@ namespace HSLL
 			std::unique_lock<std::mutex> lock(dataMutex);
 
 			bool success = notEmptyCond.wait_for(lock, timeout, [this]
-				{ return LIKELY(size) || UNLIKELY(isStopped); });
+				{ return HSLL_LIKELY(size) || HSLL_UNLIKELY(isStopped); });
 
-			if (UNLIKELY(!success || isStopped))
+			if (HSLL_UNLIKELY(!success || isStopped))
 				return 0;
 
 			return dequeue_bulk_helper(lock, elements, count);
@@ -2090,7 +2106,7 @@ namespace HSLL
 					current = (TYPE*)(memoryBlock);
 			}
 
-			ALIGNED_FREE(memoryBlock);
+			HSLL_ALIGNED_FREE(memoryBlock);
 
 			size = 0;
 			capacity = 0;
@@ -2115,474 +2131,490 @@ namespace HSLL
 //TPGroupAllocator
 namespace HSLL
 {
-	constexpr float HSLL_QUEUE_FULL_FACTOR_MAIN = 0.999;
-	constexpr float HSLL_QUEUE_FULL_FACTOR_OTHER = 0.995;
-
-	static_assert(HSLL_QUEUE_FULL_FACTOR_MAIN > 0 && HSLL_QUEUE_FULL_FACTOR_MAIN <= 1, "Invalid factors.");
-	static_assert(HSLL_QUEUE_FULL_FACTOR_OTHER > 0 && HSLL_QUEUE_FULL_FACTOR_OTHER <= 1, "Invalid factors.");
-
-	template<class T>
-	class RoundRobinGroup
+	namespace CONST_VALUE
 	{
-		template<class TYPE>
-		friend class TPGroupAllocator;
+		constexpr float HSLL_QUEUE_FULL_FACTOR_MAIN = 0.999;
+		constexpr float HSLL_QUEUE_FULL_FACTOR_OTHER = 0.995;
 
-		unsigned int nowCount;
-		unsigned int nowIndex;
-		unsigned int taskThreshold;
-		unsigned int mainFullThreshold;
-		unsigned int otherFullThreshold;
-		std::vector<TPBlockQueue<T>*>* assignedQueues;
+		static_assert(HSLL_QUEUE_FULL_FACTOR_MAIN > 0 && HSLL_QUEUE_FULL_FACTOR_MAIN <= 1, "Invalid factors.");
+		static_assert(HSLL_QUEUE_FULL_FACTOR_OTHER > 0 && HSLL_QUEUE_FULL_FACTOR_OTHER <= 1, "Invalid factors.");
+	}
 
-		void advance_index()
+	namespace DETAILS
+	{
+		template<class T>
+		class RoundRobinGroup
 		{
-			if (nowCount >= taskThreshold)
+			template<class TYPE>
+			friend class TPGroupAllocator;
+
+			unsigned int nowCount;
+			unsigned int nowIndex;
+			unsigned int taskThreshold;
+			unsigned int mainFullThreshold;
+			unsigned int otherFullThreshold;
+			std::vector<TPBlockQueue<T>*>* assignedQueues;
+
+			void advance_index()
 			{
-				nowIndex = (nowIndex + 1) % assignedQueues->size();
-				nowCount = 0;
-			}
-		}
-
-	public:
-
-		void resetAndInit(std::vector<TPBlockQueue<T>*>* queues, unsigned int capacity, unsigned int threshold)
-		{
-			nowCount = 0;
-			nowIndex = 0;
-			this->assignedQueues = queues;
-			this->taskThreshold = threshold;
-			this->mainFullThreshold = capacity * HSLL_QUEUE_FULL_FACTOR_MAIN;
-			this->otherFullThreshold = capacity * HSLL_QUEUE_FULL_FACTOR_OTHER;
-		}
-
-		TPBlockQueue<T>* current_queue()
-		{
-			TPBlockQueue<T>* queue = (*assignedQueues)[nowIndex];
-
-			if (queue->get_size() <= mainFullThreshold)
-				return queue;
-			else
-				return nullptr;
-		}
-
-		TPBlockQueue<T>* available_queue()
-		{
-			TPBlockQueue<T>* candidateQueue;
-
-			for (int i = 0; i < assignedQueues->size() - 1; ++i)
-			{
-				nowIndex = (nowIndex + 1) % assignedQueues->size();
-				candidateQueue = (*assignedQueues)[nowIndex];
-
-				if (candidateQueue->get_size() <= otherFullThreshold)
+				if (nowCount >= taskThreshold)
 				{
+					nowIndex = (nowIndex + 1) % assignedQueues->size();
 					nowCount = 0;
-					return candidateQueue;
 				}
 			}
 
-			return nullptr;
-		}
+		public:
 
-		void record(unsigned int count)
-		{
-			if (assignedQueues->size() == 1)
-				return;
-
-			if (count)
+			void resetAndInit(std::vector<TPBlockQueue<T>*>* queues, unsigned int capacity, unsigned int threshold)
 			{
-				nowCount += count;
-				advance_index();
-			}
-			else
-			{
-				nowIndex = (nowIndex + 1) % assignedQueues->size();
 				nowCount = 0;
-				return;
-			}
-		}
-	};
-
-	template<class T>
-	class TPGroupAllocator
-	{
-		unsigned int capacity;
-		unsigned int queueCount;
-		unsigned int fullThreshold;
-		unsigned int moveThreshold;
-
-		TPBlockQueue<T>* queues;
-		std::vector<std::vector<TPBlockQueue<T>*>> threadSlots;
-		std::map<std::thread::id, RoundRobinGroup<T>> threadGroups;
-
-		void manage_thread_entry(bool addThread, std::thread::id threadId)
-		{
-			if (addThread)
-			{
-				if (threadGroups.find(threadId) == threadGroups.end())
-					threadGroups.insert({ threadId, RoundRobinGroup<T>() });
-				else
-					return;
-			}
-			else
-			{
-				auto group = threadGroups.find(threadId);
-
-				if (group != threadGroups.end())
-					threadGroups.erase(group);
-				else
-					return;
+				nowIndex = 0;
+				this->assignedQueues = queues;
+				this->taskThreshold = threshold;
+				this->mainFullThreshold = capacity * CONST_VALUE::HSLL_QUEUE_FULL_FACTOR_MAIN;
+				this->otherFullThreshold = capacity * CONST_VALUE::HSLL_QUEUE_FULL_FACTOR_OTHER;
 			}
 
-			if (addThread)
-				threadSlots.emplace_back(std::vector<TPBlockQueue<T>*>());
-			else
-				threadSlots.pop_back();
-
-			rebuild_slot_assignments();
-		}
-
-		void rebuild_slot_assignments()
-		{
-			if (threadSlots.size())
+			TPBlockQueue<T>* current_queue()
 			{
-				for (int i = 0; i < threadSlots.size(); ++i)
-					threadSlots[i].clear();
+				TPBlockQueue<T>* queue = (*assignedQueues)[nowIndex];
 
-				distribute_queues_to_threads(threadSlots.size());
-				reinitialize_groups();
-			}
-		}
-
-		void reinitialize_groups()
-		{
-			if (threadSlots.size())
-			{
-				unsigned int slotIndex = 0;
-				for (auto& group : threadGroups)
-				{
-					group.second.resetAndInit(&threadSlots[slotIndex], capacity, moveThreshold);
-					slotIndex++;
-				}
-			}
-		}
-
-		static unsigned int calculate_balanced_thread_count(unsigned int queueCount, unsigned int threadCount)
-		{
-			if (threadCount > queueCount)
-			{
-				while (threadCount > queueCount)
-				{
-					if (!(threadCount % queueCount))
-						break;
-
-					threadCount--;
-				}
-			}
-			else
-			{
-				while (threadCount)
-				{
-					if (!(queueCount % threadCount))
-						break;
-
-					threadCount--;
-				}
-			}
-
-			return threadCount;
-		}
-
-		void populate_slot(bool forwardOrder, std::vector<TPBlockQueue<T>*>& slot)
-		{
-			if (forwardOrder)
-			{
-				for (unsigned int k = 0; k < queueCount; ++k)
-					slot.emplace_back(queues + k);
-			}
-			else
-			{
-				for (unsigned int k = queueCount; k > 0; --k)
-					slot.emplace_back(queues + k - 1);
-			}
-		}
-
-		void handle_remainder_case(unsigned int threadCount)
-		{
-			bool fillDirection = false;
-			unsigned int balancedCount = calculate_balanced_thread_count(queueCount, threadCount - 1);
-			distribute_queues_to_threads(balancedCount);
-
-			for (unsigned int i = 0; i < threadCount - balancedCount; ++i)
-			{
-				populate_slot(fillDirection, threadSlots[balancedCount + i]);
-				fillDirection = !fillDirection;
-			}
-		}
-
-		void distribute_queues_to_threads(unsigned int threadCount)
-		{
-			if (!threadCount)
-				return;
-
-			if (threadCount <= queueCount)
-			{
-				unsigned int queuesPerThread = queueCount / threadCount;
-				unsigned int remainder = queueCount % threadCount;
-
-				if (remainder)
-				{
-					handle_remainder_case(threadCount);
-				}
-				else
-				{
-					for (unsigned int i = 0; i < threadCount; ++i)
-						for (unsigned int k = 0; k < queuesPerThread; ++k)
-							threadSlots[i].emplace_back(queues + i * queuesPerThread + k);
-				}
-			}
-			else
-			{
-				unsigned int threadsPerQueue = threadCount / queueCount;
-				unsigned int remainder = threadCount % queueCount;
-				if (remainder)
-				{
-					handle_remainder_case(threadCount);
-				}
-				else
-				{
-					for (unsigned int i = 0; i < threadCount; ++i)
-						threadSlots[i].emplace_back(queues + i / threadsPerQueue);
-				}
-			}
-
-			return;
-		}
-
-	public:
-
-		void reset()
-		{
-			std::vector<std::vector<TPBlockQueue<T>*>>().swap(threadSlots);
-			std::map<std::thread::id, RoundRobinGroup<T>>().swap(threadGroups);
-		}
-
-		void initialize(TPBlockQueue<T>* queues, unsigned int queueCount, unsigned int capacity, unsigned int threshold)
-		{
-			this->queues = queues;
-			this->capacity = capacity;
-			this->queueCount = queueCount;
-			this->moveThreshold = threshold;
-			this->fullThreshold = capacity * HSLL_QUEUE_FULL_FACTOR_OTHER;
-		}
-
-		RoundRobinGroup<T>* find(std::thread::id threadId)
-		{
-			auto it = threadGroups.find(threadId);
-
-			if (it != threadGroups.end())
-				return &(it->second);
-
-			return nullptr;
-		}
-
-		TPBlockQueue<T>* available_queue(RoundRobinGroup<T>* group)
-		{
-			unsigned int size = group->assignedQueues->size();
-
-			if (size == queueCount)
-				return nullptr;
-
-			unsigned int start = std::rand() % queueCount;
-			std::vector <TPBlockQueue<T>*>& assignedQueues = *group->assignedQueues;
-			TPBlockQueue<T>* lowBounds = assignedQueues[0];
-
-			for (unsigned int i = 0; i < queueCount; ++i)
-			{
-				TPBlockQueue<T>* queue = queues + (start + i) % queueCount;
-
-				if (queues == lowBounds)
-				{
-					i += size - 1;
-					continue;
-				}
-
-				if (queue->get_size() <= fullThreshold)
+				if (queue->get_size() <= mainFullThreshold)
 					return queue;
+				else
+					return nullptr;
 			}
 
-			return nullptr;
-		}
-
-		void register_thread(std::thread::id threadId)
-		{
-			manage_thread_entry(true, threadId);
-		}
-
-		void unregister_thread(std::thread::id threadId)
-		{
-			manage_thread_entry(false, threadId);
-		}
-
-		void update(unsigned int newQueueCount)
-		{
-			if (this->queueCount != newQueueCount)
+			TPBlockQueue<T>* available_queue()
 			{
-				this->queueCount = newQueueCount;
+				TPBlockQueue<T>* candidateQueue;
+
+				for (int i = 0; i < assignedQueues->size() - 1; ++i)
+				{
+					nowIndex = (nowIndex + 1) % assignedQueues->size();
+					candidateQueue = (*assignedQueues)[nowIndex];
+
+					if (candidateQueue->get_size() <= otherFullThreshold)
+					{
+						nowCount = 0;
+						return candidateQueue;
+					}
+				}
+
+				return nullptr;
+			}
+
+			void record(unsigned int count)
+			{
+				if (assignedQueues->size() == 1)
+					return;
+
+				if (count)
+				{
+					nowCount += count;
+					advance_index();
+				}
+				else
+				{
+					nowIndex = (nowIndex + 1) % assignedQueues->size();
+					nowCount = 0;
+					return;
+				}
+			}
+		};
+
+		template<class T>
+		class TPGroupAllocator
+		{
+			unsigned int capacity;
+			unsigned int queueCount;
+			unsigned int fullThreshold;
+			unsigned int moveThreshold;
+
+			TPBlockQueue<T>* queues;
+			std::vector<std::vector<TPBlockQueue<T>*>> threadSlots;
+			std::map<std::thread::id, RoundRobinGroup<T>> threadGroups;
+
+			void manage_thread_entry(bool addThread, std::thread::id threadId)
+			{
+				if (addThread)
+				{
+					if (threadGroups.find(threadId) == threadGroups.end())
+						threadGroups.insert({ threadId, RoundRobinGroup<T>() });
+					else
+						return;
+				}
+				else
+				{
+					auto group = threadGroups.find(threadId);
+
+					if (group != threadGroups.end())
+						threadGroups.erase(group);
+					else
+						return;
+				}
+
+				if (addThread)
+					threadSlots.emplace_back(std::vector<TPBlockQueue<T>*>());
+				else
+					threadSlots.pop_back();
+
 				rebuild_slot_assignments();
 			}
-		}
-	};
+
+			void rebuild_slot_assignments()
+			{
+				if (threadSlots.size())
+				{
+					for (int i = 0; i < threadSlots.size(); ++i)
+						threadSlots[i].clear();
+
+					distribute_queues_to_threads(threadSlots.size());
+					reinitialize_groups();
+				}
+			}
+
+			void reinitialize_groups()
+			{
+				if (threadSlots.size())
+				{
+					unsigned int slotIndex = 0;
+					for (auto& group : threadGroups)
+					{
+						group.second.resetAndInit(&threadSlots[slotIndex], capacity, moveThreshold);
+						slotIndex++;
+					}
+				}
+			}
+
+			static unsigned int calculate_balanced_thread_count(unsigned int queueCount, unsigned int threadCount)
+			{
+				if (threadCount > queueCount)
+				{
+					while (threadCount > queueCount)
+					{
+						if (!(threadCount % queueCount))
+							break;
+
+						threadCount--;
+					}
+				}
+				else
+				{
+					while (threadCount)
+					{
+						if (!(queueCount % threadCount))
+							break;
+
+						threadCount--;
+					}
+				}
+
+				return threadCount;
+			}
+
+			void populate_slot(bool forwardOrder, std::vector<TPBlockQueue<T>*>& slot)
+			{
+				if (forwardOrder)
+				{
+					for (unsigned int k = 0; k < queueCount; ++k)
+						slot.emplace_back(queues + k);
+				}
+				else
+				{
+					for (unsigned int k = queueCount; k > 0; --k)
+						slot.emplace_back(queues + k - 1);
+				}
+			}
+
+			void handle_remainder_case(unsigned int threadCount)
+			{
+				bool fillDirection = false;
+				unsigned int balancedCount = calculate_balanced_thread_count(queueCount, threadCount - 1);
+				distribute_queues_to_threads(balancedCount);
+
+				for (unsigned int i = 0; i < threadCount - balancedCount; ++i)
+				{
+					populate_slot(fillDirection, threadSlots[balancedCount + i]);
+					fillDirection = !fillDirection;
+				}
+			}
+
+			void distribute_queues_to_threads(unsigned int threadCount)
+			{
+				if (!threadCount)
+					return;
+
+				if (threadCount <= queueCount)
+				{
+					unsigned int queuesPerThread = queueCount / threadCount;
+					unsigned int remainder = queueCount % threadCount;
+
+					if (remainder)
+					{
+						handle_remainder_case(threadCount);
+					}
+					else
+					{
+						for (unsigned int i = 0; i < threadCount; ++i)
+							for (unsigned int k = 0; k < queuesPerThread; ++k)
+								threadSlots[i].emplace_back(queues + i * queuesPerThread + k);
+					}
+				}
+				else
+				{
+					unsigned int threadsPerQueue = threadCount / queueCount;
+					unsigned int remainder = threadCount % queueCount;
+					if (remainder)
+					{
+						handle_remainder_case(threadCount);
+					}
+					else
+					{
+						for (unsigned int i = 0; i < threadCount; ++i)
+							threadSlots[i].emplace_back(queues + i / threadsPerQueue);
+					}
+				}
+
+				return;
+			}
+
+		public:
+
+			void reset()
+			{
+				std::vector<std::vector<TPBlockQueue<T>*>>().swap(threadSlots);
+				std::map<std::thread::id, RoundRobinGroup<T>>().swap(threadGroups);
+			}
+
+			void initialize(TPBlockQueue<T>* queues, unsigned int queueCount, unsigned int capacity, unsigned int threshold)
+			{
+				this->queues = queues;
+				this->capacity = capacity;
+				this->queueCount = queueCount;
+				this->moveThreshold = threshold;
+				this->fullThreshold = capacity * CONST_VALUE::HSLL_QUEUE_FULL_FACTOR_OTHER;
+			}
+
+			RoundRobinGroup<T>* find(std::thread::id threadId)
+			{
+				auto it = threadGroups.find(threadId);
+
+				if (it != threadGroups.end())
+					return &(it->second);
+
+				return nullptr;
+			}
+
+			TPBlockQueue<T>* available_queue(RoundRobinGroup<T>* group)
+			{
+				unsigned int size = group->assignedQueues->size();
+
+				if (size == queueCount)
+					return nullptr;
+
+				unsigned int start = std::rand() % queueCount;
+				std::vector <TPBlockQueue<T>*>& assignedQueues = *group->assignedQueues;
+				TPBlockQueue<T>* lowBounds = assignedQueues[0];
+
+				for (unsigned int i = 0; i < queueCount; ++i)
+				{
+					TPBlockQueue<T>* queue = queues + (start + i) % queueCount;
+
+					if (queues == lowBounds)
+					{
+						i += size - 1;
+						continue;
+					}
+
+					if (queue->get_size() <= fullThreshold)
+						return queue;
+				}
+
+				return nullptr;
+			}
+
+			void register_thread(std::thread::id threadId)
+			{
+				manage_thread_entry(true, threadId);
+			}
+
+			void unregister_thread(std::thread::id threadId)
+			{
+				manage_thread_entry(false, threadId);
+			}
+
+			void update(unsigned int newQueueCount)
+			{
+				if (this->queueCount != newQueueCount)
+				{
+					this->queueCount = newQueueCount;
+					rebuild_slot_assignments();
+				}
+			}
+		};
+	}
 }
 
 //ThreadPool
 namespace HSLL
 {
-	constexpr float HSLL_THREADPOOL_SHRINK_FACTOR = 0.25f;
-	constexpr float HSLL_THREADPOOL_EXPAND_FACTOR = 0.75f;
-	constexpr unsigned int HSLL_THREADPOOL_TIMEOUT_MILLISECONDS = 1;
-
-	static_assert(HSLL_THREADPOOL_TIMEOUT_MILLISECONDS > 0, "Invalid timeout value.");
-	static_assert(HSLL_THREADPOOL_SHRINK_FACTOR < HSLL_THREADPOOL_EXPAND_FACTOR&& HSLL_THREADPOOL_EXPAND_FACTOR < 1.0
-		&& HSLL_THREADPOOL_SHRINK_FACTOR > 0.0, "Invalid factors.");
-
-	template <class T>
-	class SingleStealer
+	namespace CONST_VALUE
 	{
-		template <class TYPE>
-		friend class ThreadPool;
-	private:
+		constexpr float HSLL_THREADPOOL_SHRINK_FACTOR = 0.25f;
+		constexpr float HSLL_THREADPOOL_EXPAND_FACTOR = 0.75f;
+		constexpr unsigned int HSLL_THREADPOOL_TIMEOUT_MILLISECONDS = 1;
 
-		bool monitor;
-		unsigned int index;
-		unsigned int capacity;
-		unsigned int threshold;
-		unsigned int* threadNum;
+		static_assert(HSLL_THREADPOOL_TIMEOUT_MILLISECONDS > 0, "Invalid timeout value.");
+		static_assert(HSLL_THREADPOOL_SHRINK_FACTOR < HSLL_THREADPOOL_EXPAND_FACTOR&& HSLL_THREADPOOL_EXPAND_FACTOR < 1.0
+			&& HSLL_THREADPOOL_SHRINK_FACTOR > 0.0, "Invalid factors.");
+	}
 
-		TPBlockQueue<T>* queues;
-		TPBlockQueue<T>* ignore;
-		SpinReadWriteLock* rwLock;
+	template <class TYPE>
+	class ThreadPool;
 
-		SingleStealer(SpinReadWriteLock* rwLock, TPBlockQueue<T>* queues, TPBlockQueue<T>* ignore,
-			unsigned int capacity, unsigned int* threadNum, unsigned int maxThreadum, bool monitor)
+	namespace DETAILS
+	{
+		template <class T>
+		class SingleStealer
 		{
-			this->index = 0;
-			this->capacity = capacity;
-			this->threadNum = threadNum;
-			this->threshold = std::min(capacity / 2, maxThreadum / 2);
-			this->rwLock = rwLock;
-			this->queues = queues;
-			this->ignore = ignore;
-			this->monitor = monitor;
-		}
+			template <class TYPE>
+			friend class HSLL::ThreadPool;
 
-		unsigned int steal(T& element)
-		{
-			if (monitor)
+		private: 
+
+			bool monitor;
+			unsigned int index;
+			unsigned int capacity;
+			unsigned int threshold;
+			unsigned int* threadNum;
+
+			TPBlockQueue<T>* queues;
+			TPBlockQueue<T>* ignore;
+			SpinReadWriteLock* rwLock;
+
+			SingleStealer(SpinReadWriteLock* rwLock, TPBlockQueue<T>* queues, TPBlockQueue<T>* ignore,
+				unsigned int capacity, unsigned int* threadNum, unsigned int maxThreadum, bool monitor)
 			{
-				ReadLockGuard lock(*rwLock);
-				return steal_inner(element);
+				this->index = 0;
+				this->capacity = capacity;
+				this->threadNum = threadNum;
+				this->threshold = std::min(capacity / 2, maxThreadum / 2);
+				this->rwLock = rwLock;
+				this->queues = queues;
+				this->ignore = ignore;
+				this->monitor = monitor;
 			}
-			else
+
+			unsigned int steal(T& element)
 			{
-				return steal_inner(element);
-			}
-		}
-
-		bool steal_inner(T& element)
-		{
-			unsigned int num = *threadNum;
-
-			for (unsigned int i = 0; i < num; ++i)
-			{
-				unsigned int now = (index + i) % num;
-				TPBlockQueue<T>* queue = queues + now;
-
-				if (queue != ignore && queue->get_size() >= threshold)
+				if (monitor)
 				{
-					if (queue->dequeue(element))
-					{
-						index = now;
-						return true;
-					}
+					ReadLockGuard lock(*rwLock);
+					return steal_inner(element);
+				}
+				else
+				{
+					return steal_inner(element);
 				}
 			}
-			return false;
-		}
-	};
 
-	template <class T>
-	class BulkStealer
-	{
-		template <class TYPE>
-		friend class ThreadPool;
-
-	private:
-
-		bool monitor;
-		unsigned int index;
-		unsigned int capacity;
-		unsigned int batchSize;
-		unsigned int threshold;
-		unsigned int* threadNum;
-
-		TPBlockQueue<T>* queues;
-		TPBlockQueue<T>* ignore;
-		SpinReadWriteLock* rwLock;
-
-		BulkStealer(SpinReadWriteLock* rwLock, TPBlockQueue<T>* queues, TPBlockQueue<T>* ignore, unsigned int capacity,
-			unsigned int* threadNum, unsigned int maxThreadum, unsigned int batchSize, bool monitor)
-		{
-			this->index = 0;
-			this->batchSize = batchSize;
-			this->capacity = capacity;
-			this->threadNum = threadNum;
-			this->threshold = std::min(capacity / 2, batchSize * maxThreadum / 2);
-			this->rwLock = rwLock;
-			this->queues = queues;
-			this->ignore = ignore;
-			this->monitor = monitor;
-		}
-
-		unsigned int steal(T* elements)
-		{
-			if (monitor)
+			bool steal_inner(T& element)
 			{
-				ReadLockGuard lock(*rwLock);
-				return steal_inner(elements);
-			}
-			else
-			{
-				return steal_inner(elements);
-			}
-		}
+				unsigned int num = *threadNum;
 
-		unsigned int steal_inner(T* elements)
-		{
-			unsigned int count;
-			unsigned int num = *threadNum;
-
-			for (unsigned int i = 0; i < num; ++i)
-			{
-				unsigned int now = (index + i) % num;
-				TPBlockQueue<T>* queue = queues + now;
-
-				if (queue != ignore && queue->get_size() >= threshold)
+				for (unsigned int i = 0; i < num; ++i)
 				{
-					if (count = queue->dequeue_bulk(elements, batchSize))
+					unsigned int now = (index + i) % num;
+					TPBlockQueue<T>* queue = queues + now;
+
+					if (queue != ignore && queue->get_size() >= threshold)
 					{
-						if (count == batchSize)
+						if (queue->dequeue(element))
+						{
 							index = now;
-						else
-							index = (now + 1) % num;
-
-						return count;
+							return true;
+						}
 					}
 				}
+				return false;
 			}
-			return 0;
-		}
-	};
+		};
+
+		template <class T>
+		class BulkStealer
+		{
+			template <class TYPE>
+			friend class HSLL::ThreadPool;
+
+		private:
+
+			bool monitor;
+			unsigned int index;
+			unsigned int capacity;
+			unsigned int batchSize;
+			unsigned int threshold;
+			unsigned int* threadNum;
+
+			TPBlockQueue<T>* queues;
+			TPBlockQueue<T>* ignore;
+			SpinReadWriteLock* rwLock;
+
+			BulkStealer(SpinReadWriteLock* rwLock, TPBlockQueue<T>* queues, TPBlockQueue<T>* ignore, unsigned int capacity,
+				unsigned int* threadNum, unsigned int maxThreadum, unsigned int batchSize, bool monitor)
+			{
+				this->index = 0;
+				this->batchSize = batchSize;
+				this->capacity = capacity;
+				this->threadNum = threadNum;
+				this->threshold = std::min(capacity / 2, batchSize * maxThreadum / 2);
+				this->rwLock = rwLock;
+				this->queues = queues;
+				this->ignore = ignore;
+				this->monitor = monitor;
+			}
+
+			unsigned int steal(T* elements)
+			{
+				if (monitor)
+				{
+					ReadLockGuard lock(*rwLock);
+					return steal_inner(elements);
+				}
+				else
+				{
+					return steal_inner(elements);
+				}
+			}
+
+			unsigned int steal_inner(T* elements)
+			{
+				unsigned int count;
+				unsigned int num = *threadNum;
+
+				for (unsigned int i = 0; i < num; ++i)
+				{
+					unsigned int now = (index + i) % num;
+					TPBlockQueue<T>* queue = queues + now;
+
+					if (queue != ignore && queue->get_size() >= threshold)
+					{
+						if (count = queue->dequeue_bulk(elements, batchSize))
+						{
+							if (count == batchSize)
+								index = now;
+							else
+								index = (now + 1) % num;
+
+							return count;
+						}
+					}
+				}
+				return 0;
+			}
+		};
+	}
 
 	/**
 	 * @brief Thread pool implementation with multiple queues for task distribution
@@ -2590,7 +2622,7 @@ namespace HSLL
 	template <class T = TaskStack<>>
 	class ThreadPool
 	{
-		static_assert(is_TaskStack<T>::value, "TYPE must be a TaskStack type");
+		static_assert(DETAILS::is_TaskStack<T>::value, "TYPE must be a TaskStack type");
 
 	private:
 
@@ -2603,22 +2635,22 @@ namespace HSLL
 
 
 		bool enableMonitor;
-		Semaphore monitorSem;
+		DETAILS::Semaphore monitorSem;
 		std::atomic<bool> adjustFlag;
 		std::chrono::milliseconds adjustMillis;
 
 		T* containers;
-		Semaphore* stoppedSem;
-		Semaphore* restartSem;
-		SpinReadWriteLock rwLock;
 		std::atomic<bool> exitFlag;
 		std::atomic<bool> shutdownPolicy;
+		DETAILS::Semaphore* stoppedSem;
+		DETAILS::Semaphore* restartSem;
+		DETAILS::SpinReadWriteLock rwLock;
 
 		std::thread monitor;
 		TPBlockQueue<T>* queues;
 		std::atomic<unsigned int> index;
 		std::vector<std::thread> workers;
-		TPGroupAllocator<T> groupAllocator;
+		DETAILS::TPGroupAllocator<T> groupAllocator;
 
 	public:
 
@@ -2652,7 +2684,7 @@ namespace HSLL
 			this->threadNum = maxThreadNum;
 			this->batchSize = std::min(batchSize, capacity / 2);
 			this->capacity = capacity;
-			this->fullThreshold = capacity * HSLL_QUEUE_FULL_FACTOR_OTHER;
+			this->fullThreshold = capacity * CONST_VALUE::HSLL_QUEUE_FULL_FACTOR_OTHER;
 			this->adjustMillis = adjustMillis;
 			workers.reserve(maxThreadNum);
 			groupAllocator.initialize(queues, maxThreadNum, capacity, capacity * 0.01 > 1 ? capacity * 0.01 : 1);
@@ -2694,7 +2726,7 @@ namespace HSLL
 			this->threadNum = maxThreadNum;
 			this->batchSize = std::min(batchSize, capacity / 2);
 			this->capacity = capacity;
-			this->fullThreshold = capacity * HSLL_QUEUE_FULL_FACTOR_OTHER;
+			this->fullThreshold = capacity * CONST_VALUE::HSLL_QUEUE_FULL_FACTOR_OTHER;
 			this->adjustMillis = std::chrono::milliseconds(adjustMillis);
 			workers.reserve(maxThreadNum);
 			groupAllocator.initialize(queues, maxThreadNum, capacity, capacity * 0.05 > 1 ? capacity * 0.05 : 1);
@@ -2708,71 +2740,71 @@ namespace HSLL
 			return true;
 		}
 
-#define HSLL_ENQUEUE_HELPER(exp1,exp2)							\
-																\
-		assert(queues);											\
-																\
-		if (maxThreadNum == 1)									\
-			return exp1;										\
-																\
-		ReadLockGuard lock(rwLock);								\
-																\
-		if (threadNum == 1)										\
-			return exp1;										\
-																\
-		unsigned int size;										\
-		TPBlockQueue<T>* queue;									\
-		std::thread::id id = std::this_thread::get_id();		\
-		RoundRobinGroup<T>* group = groupAllocator.find(id);	\
-																\
-		if(!group)												\
-		{														\
-			queue = select_queue();								\
-			size = exp2;										\
-																\
-			if(size)											\
-			{													\
-				return size;									\
-			}													\
-			else											    \
-			{													\
-				queue = available_queue(queue);					\
-																\
-					if (queue)									\
-						return exp2;							\
-			}													\
-																\
-			return size;										\
-		}														\
-																\
-		queue = group->current_queue();							\
-																\
-		if (queue)												\
-			size = exp2;										\
-		else													\
-			size = 0;											\
-																\
-		if (size)												\
-		{														\
-			group->record(size);								\
-			return size;										\
-		}														\
-		else													\
-		{														\
-			if ((queue = group->available_queue()))				\
-			{													\
-				size = exp2;									\
-				group->record(size);							\
-			}													\
-			else												\
-			{													\
-				queue = groupAllocator.available_queue(group);	\
-																\
-				if(queue)										\
-				return exp2;									\
-			}													\
-		}														\
-																\
+#define HSLL_ENQUEUE_HELPER(exp1,exp2)									\
+																		\
+		assert(queues);													\
+																		\
+		if (maxThreadNum == 1)											\
+			return exp1;												\
+																		\
+		DETAILS::ReadLockGuard lock(rwLock);							\
+																		\
+		if (threadNum == 1)												\
+			return exp1;												\
+																		\
+		unsigned int size;												\
+		TPBlockQueue<T>* queue;											\
+		std::thread::id id = std::this_thread::get_id();				\
+		DETAILS::RoundRobinGroup<T>* group = groupAllocator.find(id);	\
+																		\
+		if(!group)														\
+		{																\
+			queue = select_queue();										\
+			size = exp2;												\
+																		\
+			if(size)													\
+			{															\
+				return size;											\
+			}															\
+			else														\
+			{															\
+				queue = available_queue(queue);							\
+																		\
+					if (queue)											\
+						return exp2;									\
+			}															\
+																		\
+			return size;												\
+		}																\
+																		\
+		queue = group->current_queue();									\
+																		\
+		if (queue)														\
+			size = exp2;												\
+		else															\
+			size = 0;													\
+																		\
+		if (size)														\
+		{																\
+			group->record(size);										\
+			return size;												\
+		}																\
+		else															\
+		{																\
+			if ((queue = group->available_queue()))						\
+			{															\
+				size = exp2;											\
+				group->record(size);									\
+			}															\
+			else														\
+			{															\
+				queue = groupAllocator.available_queue(group);			\
+																		\
+				if(queue)												\
+				return exp2;											\
+			}															\
+		}																\
+																		\
 		return size;											
 
 		/**
@@ -3026,14 +3058,14 @@ namespace HSLL
 		void register_this_thread()
 		{
 			std::thread::id id = std::this_thread::get_id();
-			WriteLockGuard lock(rwLock);
+			DETAILS::WriteLockGuard lock(rwLock);
 			groupAllocator.register_thread(id);
 		}
 
 		void unregister_this_thread()
 		{
 			std::thread::id id = std::this_thread::get_id();
-			WriteLockGuard lock(rwLock);
+			DETAILS::WriteLockGuard lock(rwLock);
 			groupAllocator.unregister_thread(id);
 		}
 
@@ -3101,7 +3133,7 @@ namespace HSLL
 				for (int i = 0; i < threadNum; ++i)
 					totalSize += queues[i].get_size();
 
-				if (totalSize < allSize * HSLL_THREADPOOL_SHRINK_FACTOR && threadNum > minThreadNum)
+				if (totalSize < allSize * CONST_VALUE::HSLL_THREADPOOL_SHRINK_FACTOR && threadNum > minThreadNum)
 				{
 					count++;
 
@@ -3119,7 +3151,7 @@ namespace HSLL
 				}
 				else
 				{
-					if (totalSize > allSize * HSLL_THREADPOOL_EXPAND_FACTOR && threadNum < maxThreadNum)
+					if (totalSize > allSize * CONST_VALUE::HSLL_THREADPOOL_EXPAND_FACTOR && threadNum < maxThreadNum)
 					{
 						unsigned int newThreads = std::max(1u, (maxThreadNum - threadNum) / 2);
 						unsigned int succeed = 0;
@@ -3167,7 +3199,7 @@ namespace HSLL
 		{
 			bool enableSteal = (maxThreadNum != 1);
 			T* task = containers + index * batchSize;
-			SingleStealer<T> stealer(&rwLock, queues, queue, capacity, &threadNum, maxThreadNum, enableMonitor);
+			DETAILS::SingleStealer<T> stealer(&rwLock, queues, queue, capacity, &threadNum, maxThreadNum, enableMonitor);
 
 			while (true)
 			{
@@ -3186,7 +3218,7 @@ namespace HSLL
 						goto cheak;
 					}
 
-					if (queue->wait_dequeue(*task, std::chrono::milliseconds(HSLL_THREADPOOL_TIMEOUT_MILLISECONDS)))
+					if (queue->wait_dequeue(*task, std::chrono::milliseconds(CONST_VALUE::HSLL_THREADPOOL_TIMEOUT_MILLISECONDS)))
 					{
 						task->execute();
 						task->~T();
@@ -3219,7 +3251,7 @@ namespace HSLL
 		{
 			bool enableSteal = (maxThreadNum != 1);
 			T* tasks = containers + index * batchSize;
-			BulkStealer<T> stealer(&rwLock, queues, queue, capacity, &threadNum, maxThreadNum, batchSize, enableMonitor);
+			DETAILS::BulkStealer<T> stealer(&rwLock, queues, queue, capacity, &threadNum, maxThreadNum, batchSize, enableMonitor);
 
 			while (true)
 			{
@@ -3252,7 +3284,7 @@ namespace HSLL
 					}
 
 					if (count = queue->wait_dequeue_bulk(tasks, batchSize,
-						std::chrono::milliseconds(HSLL_THREADPOOL_TIMEOUT_MILLISECONDS)))
+						std::chrono::milliseconds(CONST_VALUE::HSLL_THREADPOOL_TIMEOUT_MILLISECONDS)))
 						execute_tasks(tasks, count);
 
 				cheak:
@@ -3279,15 +3311,15 @@ namespace HSLL
 		{
 			unsigned int succeed = 0;
 
-			if (!(restartSem = new(std::nothrow) Semaphore[2 * maxThreadNum]))
+			if (!(restartSem = new(std::nothrow) DETAILS::Semaphore[2 * maxThreadNum]))
 				goto clean_1;
 
 			stoppedSem = restartSem + maxThreadNum;
 
-			if (!(containers = (T*)ALIGNED_MALLOC(sizeof(T) * batchSize * maxThreadNum, alignof(T))))
+			if (!(containers = (T*)HSLL_ALIGNED_MALLOC(sizeof(T) * batchSize * maxThreadNum, alignof(T))))
 				goto clean_2;
 
-			if (!(queues = (TPBlockQueue<T>*)ALIGNED_MALLOC(maxThreadNum * sizeof(TPBlockQueue<T>), alignof(TPBlockQueue<T>))))
+			if (!(queues = (TPBlockQueue<T>*)HSLL_ALIGNED_MALLOC(maxThreadNum * sizeof(TPBlockQueue<T>), alignof(TPBlockQueue<T>))))
 				goto clean_3;
 
 			for (unsigned i = 0; i < maxThreadNum; ++i)
@@ -3309,12 +3341,12 @@ namespace HSLL
 
 		clean_3:
 
-			ALIGNED_FREE(queues);
+			HSLL_ALIGNED_FREE(queues);
 			queues = nullptr;
 
 		clean_2:
 
-			ALIGNED_FREE(containers);
+			HSLL_ALIGNED_FREE(containers);
 
 		clean_1:
 
@@ -3328,8 +3360,8 @@ namespace HSLL
 			for (unsigned i = 0; i < maxThreadNum; ++i)
 				queues[i].~TPBlockQueue<T>();
 
-			ALIGNED_FREE(queues);
-			ALIGNED_FREE(containers);
+			HSLL_ALIGNED_FREE(queues);
+			HSLL_ALIGNED_FREE(containers);
 			delete[] restartSem;
 			queues = nullptr;
 			workers.clear();
@@ -3341,7 +3373,7 @@ namespace HSLL
 	template <class T, unsigned int BATCH, INSERT_POS POS = TAIL>
 	class BatchSubmitter
 	{
-		static_assert(is_TaskStack<T>::value, "T must be a TaskStack type");
+		static_assert(DETAILS::is_TaskStack<T>::value, "T must be a TaskStack type");
 		static_assert(BATCH > 0, "BATCH > 0");
 		alignas(alignof(T)) unsigned char buf[BATCH * sizeof(T)];
 

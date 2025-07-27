@@ -10,9 +10,6 @@ namespace HSLL
 	template <unsigned int TSIZE, unsigned int ALIGN>
 	class TaskStack;
 
-	template <class... Args>
-	struct TaskImpl;
-
 	template <class F, class... Args>
 	class HeapCallable;
 
@@ -22,207 +19,371 @@ namespace HSLL
 	template <class F, class... Args>
 	class HeapCallable_Cancelable;
 
-	//helper1_sfinae
-	template <typename T>
-	struct is_TaskImpl : std::false_type {};
-
-	template <class... Args>
-	struct is_TaskImpl<TaskImpl<Args...>> : std::true_type {};
-
-	template <typename T>
-	struct is_TaskStack : std::false_type {};
-
-	template <unsigned int S, unsigned int A>
-	struct is_TaskStack<TaskStack<S, A>> : std::true_type {};
-
-	template <typename T>
-	struct is_HeapCallable : std::false_type {};
-
-	template <class F, class... Args>
-	struct is_HeapCallable<HeapCallable<F, Args...>> : std::true_type {};
-
-	template <typename T>
-	struct is_HeapCallable_Async : std::false_type {};
-
-	template <class F, class... Args>
-	struct is_HeapCallable_Async<HeapCallable_Async<F, Args...>> : std::true_type {};
-
-	template <typename T>
-	struct is_HeapCallable_Cancelable : std::false_type {};
-
-	template <class F, class... Args>
-	struct is_HeapCallable_Cancelable<HeapCallable_Cancelable<F, Args...>> : std::true_type {};
-
-	//helper2_is_moveable_copyable
-	template <typename T>
-	struct is_move_constructible
+	namespace DETAILS
 	{
-	private:
-		template <typename U, typename = decltype(U(std::declval<U&&>()))>
-		static constexpr std::true_type test_move(int);
+		//extern
+		template <class... Args>
+		struct TaskImpl;
 
-		template <typename>
-		static constexpr std::false_type test_move(...);
+		//helper1_sfinae
+		template <typename T>
+		struct is_TaskImpl : std::false_type {};
 
-	public:
-		static constexpr bool value = decltype(test_move<T>(true))::value;
-	};
+		template <class... Args>
+		struct is_TaskImpl<TaskImpl<Args...>> : std::true_type {};
 
-	template <typename T>
-	struct is_copy_constructible
-	{
-	private:
-		template <typename U, typename = decltype(U{ std::declval<U&>() }) >
-		static constexpr std::true_type test_copy(bool);
+		template <typename T>
+		struct is_TaskStack : std::false_type {};
 
-		template <typename>
-		static constexpr std::false_type test_copy(...);
+		template <unsigned int S, unsigned int A>
+		struct is_TaskStack<TaskStack<S, A>> : std::true_type {};
 
-	public:
-		static constexpr bool value = decltype(test_copy<T>(true))::value;
-	};
+		template <typename T>
+		struct is_HeapCallable : std::false_type {};
 
-	//helper3_index_sequence
-	template <size_t... Is>
-	struct index_sequence {};
+		template <class F, class... Args>
+		struct is_HeapCallable<HeapCallable<F, Args...>> : std::true_type {};
 
-	template <size_t N, size_t... Is>
-	struct make_index_sequence_impl : make_index_sequence_impl<N - 1, N - 1, Is...> {};
+		template <typename T>
+		struct is_HeapCallable_Async : std::false_type {};
 
-	template <size_t... Is>
-	struct make_index_sequence_impl<0, Is...>
-	{
-		using type = index_sequence<Is...>;
-	};
+		template <class F, class... Args>
+		struct is_HeapCallable_Async<HeapCallable_Async<F, Args...>> : std::true_type {};
 
-	template <size_t N>
-	struct make_index_sequence
-	{
-		using type = typename make_index_sequence_impl<N>::type;
-	};
+		template <typename T>
+		struct is_HeapCallable_Cancelable : std::false_type {};
 
-	//helper4_all_true
-	template <bool...>
-	struct bool_pack;
+		template <class F, class... Args>
+		struct is_HeapCallable_Cancelable<HeapCallable_Cancelable<F, Args...>> : std::true_type {};
 
-	template <bool... Bs>
-	using all_true = std::is_same<bool_pack<true, Bs...>, bool_pack<Bs..., true>>;
-
-	template <typename... Ts>
-	using are_all_copy_constructible = all_true<is_copy_constructible<Ts>::value...>;
-
-	//helper5_invoke
-	enum TASK_TUPLE_TYPE
-	{
-		TASK_TUPLE_TYPE_NORMAL,
-		TASK_TUPLE_TYPE_ASYNC,
-		TASK_TUPLE_TYPE_CANCELABLE
-	};
-
-	template<TASK_TUPLE_TYPE TYPE>
-	struct Invoker {};
-
-	template<>
-	struct Invoker<TASK_TUPLE_TYPE_NORMAL>
-	{
-		template <class ResultType, typename Callable, typename... Ts>
-		static void invoke(Callable& callable, Ts &...args)
+		//helper2_is_moveable_copyable
+		template <typename T>
+		struct is_move_constructible
 		{
-			callable(args...);
-		}
-	};
+		private:
+			template <typename U, typename = decltype(U(std::declval<U&&>()))>
+			static constexpr std::true_type test_move(int);
 
-	template<>
-	struct Invoker<TASK_TUPLE_TYPE_ASYNC>
-	{
-		template <class ResultType, typename std::enable_if<std::is_void<ResultType>::value, bool>::type = true,
-			typename Promise, typename Callable, typename... Ts>
-		static void invoke(Promise& promise, Callable& callable, Ts &...args)
+			template <typename>
+			static constexpr std::false_type test_move(...);
+
+		public:
+			static constexpr bool value = decltype(test_move<T>(true))::value;
+		};
+
+		template <typename T>
+		struct is_copy_constructible
 		{
-			callable(args...);
-		}
+		private:
+			template <typename U, typename = decltype(U{ std::declval<U&>() }) >
+			static constexpr std::true_type test_copy(bool);
 
-		template <class ResultType, typename std::enable_if<!std::is_void<ResultType>::value, bool>::type = true,
-			typename Promise, typename Callable, typename... Ts>
-		static ResultType invoke(Promise& promise, Callable& callable, Ts &...args)
+			template <typename>
+			static constexpr std::false_type test_copy(...);
+
+		public:
+			static constexpr bool value = decltype(test_copy<T>(true))::value;
+		};
+
+		//helper3_index_sequence
+		template <size_t... Is>
+		struct index_sequence {};
+
+		template <size_t N, size_t... Is>
+		struct make_index_sequence_impl : make_index_sequence_impl<N - 1, N - 1, Is...> {};
+
+		template <size_t... Is>
+		struct make_index_sequence_impl<0, Is...>
 		{
-			return callable(args...);
-		}
-	};
+			using type = index_sequence<Is...>;
+		};
 
-	template<>
-	struct Invoker<TASK_TUPLE_TYPE_CANCELABLE>
-	{
-		template <class ResultType, typename std::enable_if<std::is_void<ResultType>::value, bool>::type = true,
-			typename Promise, typename Flag, typename Callable, typename... Ts>
-		static void invoke(Promise& promise, Flag& flag, Callable& callable, Ts &...args)
+		template <size_t N>
+		struct make_index_sequence
 		{
-			callable(args...);
-		}
+			using type = typename make_index_sequence_impl<N>::type;
+		};
 
-		template <class ResultType, typename std::enable_if<!std::is_void<ResultType>::value, bool>::type = true,
-			typename Promise, typename Flag, typename Callable, typename... Ts>
-		static ResultType invoke(Promise& promise, Flag& flag, Callable& callable, Ts &...args)
+		//helper4_all_true
+		template <bool...>
+		struct bool_pack;
+
+		template <bool... Bs>
+		using all_true = std::is_same<bool_pack<true, Bs...>, bool_pack<Bs..., true>>;
+
+		template <typename... Ts>
+		using are_all_copy_constructible = all_true<is_copy_constructible<Ts>::value...>;
+
+		//helper5_invoke
+		enum TASK_TUPLE_TYPE
 		{
-			return callable(args...);
+			TASK_TUPLE_TYPE_NORMAL,
+			TASK_TUPLE_TYPE_ASYNC,
+			TASK_TUPLE_TYPE_CANCELABLE
+		};
+
+		template<TASK_TUPLE_TYPE TYPE>
+		struct Invoker {};
+
+		template<>
+		struct Invoker<TASK_TUPLE_TYPE_NORMAL>
+		{
+			template <class ResultType, typename Callable, typename... Ts>
+			static void invoke(Callable& callable, Ts &...args)
+			{
+				callable(args...);
+			}
+		};
+
+		template<>
+		struct Invoker<TASK_TUPLE_TYPE_ASYNC>
+		{
+			template <class ResultType, typename std::enable_if<std::is_void<ResultType>::value, bool>::type = true,
+				typename Promise, typename Callable, typename... Ts>
+			static void invoke(Promise& promise, Callable& callable, Ts &...args)
+			{
+				callable(args...);
+			}
+
+			template <class ResultType, typename std::enable_if<!std::is_void<ResultType>::value, bool>::type = true,
+				typename Promise, typename Callable, typename... Ts>
+			static ResultType invoke(Promise& promise, Callable& callable, Ts &...args)
+			{
+				return callable(args...);
+			}
+		};
+
+		template<>
+		struct Invoker<TASK_TUPLE_TYPE_CANCELABLE>
+		{
+			template <class ResultType, typename std::enable_if<std::is_void<ResultType>::value, bool>::type = true,
+				typename Promise, typename Flag, typename Callable, typename... Ts>
+			static void invoke(Promise& promise, Flag& flag, Callable& callable, Ts &...args)
+			{
+				callable(args...);
+			}
+
+			template <class ResultType, typename std::enable_if<!std::is_void<ResultType>::value, bool>::type = true,
+				typename Promise, typename Flag, typename Callable, typename... Ts>
+			static ResultType invoke(Promise& promise, Flag& flag, Callable& callable, Ts &...args)
+			{
+				return callable(args...);
+			}
+		};
+
+		//helper6_apply
+		template <TASK_TUPLE_TYPE TYPE, class ResultType, typename std::enable_if<std::is_void<ResultType>::value, bool>::type = true,
+			typename Tuple, size_t... Is>
+		void apply_impl(Tuple& tup, index_sequence<Is...>)
+		{
+			Invoker<TYPE>::template invoke<ResultType>(std::get<Is>(tup)...);
 		}
-	};
 
-	//helper6_apply
-	template <TASK_TUPLE_TYPE TYPE, class ResultType, typename std::enable_if<std::is_void<ResultType>::value, bool>::type = true,
-		typename Tuple, size_t... Is>
-	void apply_impl(Tuple& tup, index_sequence<Is...>)
-	{
-		Invoker<TYPE>::template invoke<ResultType>(std::get<Is>(tup)...);
+		template <TASK_TUPLE_TYPE TYPE, class ResultType, typename std::enable_if<!std::is_void<ResultType>::value, bool>::type = true,
+			typename Tuple, size_t... Is>
+		ResultType apply_impl(Tuple& tup, index_sequence<Is...>)
+		{
+			return Invoker<TYPE>::template invoke<ResultType>(std::get<Is>(tup)...);
+		}
+
+		template <TASK_TUPLE_TYPE TYPE = TASK_TUPLE_TYPE_NORMAL, class ResultType = void,
+			typename std::enable_if<std::is_void<ResultType>::value, bool>::type = true, typename Tuple>
+		void tuple_apply(Tuple& tup)
+		{
+			apply_impl<TYPE, ResultType>(tup, typename make_index_sequence<std::tuple_size<Tuple>::value>::type{});
+		}
+
+		template <TASK_TUPLE_TYPE TYPE = TASK_TUPLE_TYPE_NORMAL, class ResultType = void,
+			typename std::enable_if<!std::is_void<ResultType>::value, bool>::type = true, typename Tuple>
+		ResultType tuple_apply(Tuple& tup)
+		{
+			return apply_impl<TYPE, ResultType>(tup, typename make_index_sequence<std::tuple_size<Tuple>::value>::type{});
+		}
+
+		//helper7_make_unique
+		template <typename T, typename... Args>
+		typename std::enable_if<!std::is_array<T>::value, std::unique_ptr<T>>::type
+			make_unique(Args&&... args) {
+			return std::unique_ptr<T>(new T(std::forward<Args>(args)...));
+		}
+
+		template <typename T>
+		typename std::enable_if<std::is_array<T>::value&& std::extent<T>::value == 0, std::unique_ptr<T>>::type
+			make_unique(std::size_t size) {
+			using U = typename std::remove_extent<T>::type;
+			return std::unique_ptr<T>(new U[size]());
+		}
+
+		template <typename T, typename... Args>
+		typename std::enable_if<std::extent<T>::value != 0, void>::type
+			make_unique(Args&&...) = delete;
+
+		//helper8_result_infer
+		template <class F, class... Args>
+		struct result_type_infer
+		{
+			using type = decltype(
+				std::declval<typename std::decay<F>::type>()
+				(std::declval<typename std::decay<Args>::type&>()...));
+		};
+
+		class CancelableFlag
+		{
+			std::atomic<bool> flag;
+
+		public:
+
+			CancelableFlag(bool ignore = false) : flag(false) {};
+
+			bool cancel()
+			{
+				bool expected = false;
+
+				if (flag.compare_exchange_strong(expected, true))
+					return true;
+
+				return false;
+			}
+
+			/**
+			 * @brief Enters a critical section making the task non-cancelable
+			 * @return true Successfully entered critical section
+			 * @return false Entry failed (task was already canceled, or critical section was already entered successfully)
+			 */
+			bool enter()
+			{
+				bool expected = false;
+
+				if (flag.compare_exchange_strong(expected, true))
+					return true;
+
+				return false;
+			}
+		};
+
+		/**
+		 * @brief Base interface for type-erased task objects
+		 * @details Provides virtual methods for task execution and storage management
+		 */
+		struct TaskBase
+		{
+			virtual ~TaskBase() = default;
+			virtual void execute() noexcept = 0;
+			virtual void copyTo(void* memory) const noexcept = 0;
+			virtual void moveTo(void* memory) noexcept = 0;
+			virtual bool is_copyable() const noexcept = 0;
+		};
+
+		/**
+		 * @brief Concrete task implementation storing function and arguments
+		 * @details Stores decayed copies of function and arguments in a tuple
+		 */
+		template <class... Args>
+		struct TaskImpl : TaskBase
+		{
+			template <typename T, bool Copyable>
+			struct CopyHelper;
+
+			template <typename T>
+			struct CopyHelper<T, true>
+			{
+				static void copyTo(const T* self, void* dst) noexcept
+				{
+					new (dst) T(*self);
+				}
+			};
+
+			template <typename T>
+			struct CopyHelper<T, false>
+			{
+				static void copyTo(const T*, void*) noexcept
+				{
+					printf("\nTaskImpl must be copy constructible for cloneTo()");
+					std::abort();
+				}
+			};
+
+			template <typename T, bool Movable>
+			struct MoveHelper;
+
+			template <typename T>
+			struct MoveHelper<T, true>
+			{
+				static T&& apply(T& obj) noexcept
+				{
+					return std::move(obj);
+				}
+			};
+
+			template <typename T>
+			struct MoveHelper<T, false>
+			{
+				static T& apply(T& obj) noexcept
+				{
+					return obj;
+				}
+			};
+
+			using Tuple = std::tuple<typename std::decay<Args>::type...>;
+			Tuple storage;
+
+			void tuple_move(void* dst)
+			{
+				move_impl(dst, typename make_index_sequence<std::tuple_size<Tuple>::value>::type{});
+			}
+
+			template <size_t... Is>
+			void move_impl(void* dst, index_sequence<Is...>)
+			{
+				tmove(dst, std::get<Is>(storage)...);
+			}
+
+			template <typename... Ts>
+			void tmove(void* dst, Ts &...args)
+			{
+				new (dst) TaskImpl(MoveHelper<Ts, is_move_constructible<Ts>::value>::apply(args)...);
+			}
+
+			template <class Func, class... Params,
+				typename std::enable_if<!is_TaskImpl<typename std::decay<Func>::type>::value, int>::type = 0>
+			TaskImpl(Func&& func, Params &&...args)
+				: storage(std::forward<Func>(func), std::forward<Params>(args)...) {}
+
+
+			template <bool Condition>
+			typename std::enable_if<!Condition, void>::type invoke()
+			{
+				tuple_apply(storage);
+			}
+
+			template <bool Condition>
+			typename std::enable_if<Condition, void>::type invoke()
+			{
+				std::get<0>(storage)();
+			}
+
+			void execute() noexcept override
+			{
+				invoke<sizeof...(Args) == 1>();
+			}
+
+			void copyTo(void* dst) const noexcept override
+			{
+				CopyHelper<TaskImpl,
+					are_all_copy_constructible<typename std::decay<Args>::type...>::value>::copyTo(this, dst);
+			}
+
+			void moveTo(void* dst) noexcept override
+			{
+				tuple_move(dst);
+			}
+
+			bool is_copyable() const noexcept override
+			{
+				return are_all_copy_constructible<typename std::decay<Args>::type...>::value;
+			}
+		};
 	}
-
-	template <TASK_TUPLE_TYPE TYPE, class ResultType, typename std::enable_if<!std::is_void<ResultType>::value, bool>::type = true,
-		typename Tuple, size_t... Is>
-	ResultType apply_impl(Tuple& tup, index_sequence<Is...>)
-	{
-		return Invoker<TYPE>::template invoke<ResultType>(std::get<Is>(tup)...);
-	}
-
-	template <TASK_TUPLE_TYPE TYPE = TASK_TUPLE_TYPE_NORMAL, class ResultType = void,
-		typename std::enable_if<std::is_void<ResultType>::value, bool>::type = true, typename Tuple>
-	void tuple_apply(Tuple& tup)
-	{
-		apply_impl<TYPE, ResultType>(tup, typename make_index_sequence<std::tuple_size<Tuple>::value>::type{});
-	}
-
-	template <TASK_TUPLE_TYPE TYPE = TASK_TUPLE_TYPE_NORMAL, class ResultType = void,
-		typename std::enable_if<!std::is_void<ResultType>::value, bool>::type = true, typename Tuple>
-	ResultType tuple_apply(Tuple& tup)
-	{
-		return apply_impl<TYPE, ResultType>(tup, typename make_index_sequence<std::tuple_size<Tuple>::value>::type{});
-	}
-
-	//helper7_make_unique
-	template <typename T, typename... Args>
-	typename std::enable_if<!std::is_array<T>::value, std::unique_ptr<T>>::type
-		make_unique(Args&&... args) {
-		return std::unique_ptr<T>(new T(std::forward<Args>(args)...));
-	}
-
-	template <typename T>
-	typename std::enable_if<std::is_array<T>::value&& std::extent<T>::value == 0, std::unique_ptr<T>>::type
-		make_unique(std::size_t size) {
-		using U = typename std::remove_extent<T>::type;
-		return std::unique_ptr<T>(new U[size]());
-	}
-
-	template <typename T, typename... Args>
-	typename std::enable_if<std::extent<T>::value != 0, void>::type
-		make_unique(Args&&...) = delete;
-
-	//helper8_result_infer
-	template <class F, class... Args>
-	struct result_type_infer
-	{
-		using type = decltype(
-			std::declval<typename std::decay<F>::type>()
-			(std::declval<typename std::decay<Args>::type&>()...));
-	};
 
 	/**
 	 * @class HeapCallable
@@ -244,9 +405,9 @@ namespace HSLL
 		 * @param func Callable object to store
 		 * @param args Arguments to bind to the callable
 		 */
-		template<class Func, typename std::enable_if<!is_HeapCallable<typename std::decay<Func>::type>::value, int>::type = 0 >
+		template<class Func, typename std::enable_if<!DETAILS::is_HeapCallable<typename std::decay<Func>::type>::value, int>::type = 0 >
 		HeapCallable(Func&& func, Args &&...args) HSLL_MAY_THROW
-			: storage(HSLL::make_unique<Package>(std::forward<Func>(func), std::forward<Args>(args)...)) {}
+			: storage(HSLL::DETAILS::make_unique<Package>(std::forward<Func>(func), std::forward<Args>(args)...)) {}
 
 		/**
 		 * @brief Invokes the stored callable with bound arguments
@@ -254,7 +415,7 @@ namespace HSLL
 		 */
 		void operator()()
 		{
-			tuple_apply(*storage);
+			DETAILS::tuple_apply(*storage);
 		}
 	};
 
@@ -268,7 +429,7 @@ namespace HSLL
 	template <class F, class... Args>
 	class HeapCallable_Async
 	{
-		using ResultType = typename result_type_infer<F, Args...>::type;
+		using ResultType = typename DETAILS::result_type_infer<F, Args...>::type;
 		using Package = std::tuple<std::promise<ResultType>, typename std::decay<F>::type, typename std::decay<Args>::type...>;
 
 	protected:
@@ -280,7 +441,7 @@ namespace HSLL
 			auto& promise = std::get<0>(*storage);
 			try
 			{
-				tuple_apply<TASK_TUPLE_TYPE_ASYNC, ResultType>(*storage);
+				DETAILS::tuple_apply<DETAILS::TASK_TUPLE_TYPE_ASYNC, ResultType>(*storage);
 				promise.set_value();
 			}
 			catch (...)
@@ -295,7 +456,7 @@ namespace HSLL
 			auto& promise = std::get<0>(*storage);
 			try
 			{
-				promise.set_value(tuple_apply<TASK_TUPLE_TYPE_ASYNC, ResultType>(*storage));
+				promise.set_value(DETAILS::tuple_apply<DETAILS::TASK_TUPLE_TYPE_ASYNC, ResultType>(*storage));
 			}
 			catch (...)
 			{
@@ -309,9 +470,9 @@ namespace HSLL
 		 * @param func Callable object to store
 		 * @param args Arguments to bind to the callable
 		 */
-		template<class Func, typename std::enable_if<!is_HeapCallable_Async<typename std::decay<Func>::type>::value, int>::type = 0 >
+		template<class Func, typename std::enable_if<!DETAILS::is_HeapCallable_Async<typename std::decay<Func>::type>::value, int>::type = 0 >
 		HeapCallable_Async(Func&& func, Args &&...args) HSLL_MAY_THROW
-			: storage(HSLL::make_unique<Package>(std::promise<ResultType>(), std::forward<Func>(func), std::forward<Args>(args)...)) {}
+			: storage(HSLL::DETAILS::make_unique<Package>(std::promise<ResultType>(), std::forward<Func>(func), std::forward<Args>(args)...)) {}
 
 		/**
 		 * @brief Executes the callable and sets promise value/exception
@@ -333,50 +494,6 @@ namespace HSLL
 		}
 	};
 
-	class CancelableFlag
-	{
-		std::atomic<bool> flag;
-
-	public:
-
-		CancelableFlag(bool ignore = false) : flag(false) {};
-
-		bool cancel()
-		{
-			bool expected = false;
-
-			if (flag.compare_exchange_strong(expected, true))
-				return true;
-
-			return false;
-		}
-
-		/**
-		 * @brief Enters a critical section making the task non-cancelable
-		 * @return true Successfully entered critical section
-		 * @return false Entry failed (task was already canceled, or critical section was already entered successfully)
-		 */
-		bool enter()
-		{
-			bool expected = false;
-
-			if (flag.compare_exchange_strong(expected, true))
-				return true;
-
-			return false;
-		}
-
-		CancelableFlag& operator=(CancelableFlag&& other)
-		{
-			if (this != &other)
-				flag = other.flag.load();
-
-			return *this;
-		}
-
-		CancelableFlag(CancelableFlag&& other) :flag(other.flag.load()) {}
-	};
-
 	/**
 	 * @class Cancelable
 	 * @brief Manages cancellation state and result propagation for asynchronous tasks.
@@ -387,7 +504,7 @@ namespace HSLL
 	{
 	private:
 
-		CancelableFlag flag;
+		DETAILS::CancelableFlag flag;
 		std::promise<ResultType> promise;
 		std::future<ResultType> future;
 
@@ -520,8 +637,8 @@ namespace HSLL
 	template <class F, class... Args>
 	class HeapCallable_Cancelable
 	{
-		using ResultType = typename result_type_infer<F, Args...>::type;
-		using Package = std::tuple<std::promise<ResultType>, CancelableFlag,
+		using ResultType = typename DETAILS::result_type_infer<F, Args...>::type;
+		using Package = std::tuple<std::promise<ResultType>, DETAILS::CancelableFlag,
 			typename std::decay<F>::type, typename std::decay<Args>::type...>;
 
 	private:
@@ -533,7 +650,7 @@ namespace HSLL
 			auto& promise = std::get<0>(*storage);
 			try
 			{
-				tuple_apply<TASK_TUPLE_TYPE_CANCELABLE, ResultType>(*storage);
+				DETAILS::tuple_apply<DETAILS::TASK_TUPLE_TYPE_CANCELABLE, ResultType>(*storage);
 				promise.set_value();
 			}
 			catch (...)
@@ -548,7 +665,7 @@ namespace HSLL
 			auto& promise = std::get<0>(*storage);
 			try
 			{
-				promise.set_value(tuple_apply<TASK_TUPLE_TYPE_CANCELABLE, ResultType>(*storage));
+				promise.set_value(DETAILS::tuple_apply<DETAILS::TASK_TUPLE_TYPE_CANCELABLE, ResultType>(*storage));
 			}
 			catch (...)
 			{
@@ -634,7 +751,7 @@ namespace HSLL
 		 * @param func Callable object to store
 		 * @param args Arguments to bind to the callable
 		 */
-		template<class Func, typename std::enable_if<!is_HeapCallable_Cancelable<typename std::decay<Func>::type>::value, int>::type = 0 >
+		template<class Func, typename std::enable_if<!DETAILS::is_HeapCallable_Cancelable<typename std::decay<Func>::type>::value, int>::type = 0 >
 		HeapCallable_Cancelable(Func&& func, Args &&...args) HSLL_MAY_THROW
 			: storage(std::make_shared<Package>(std::promise<ResultType>(), false, std::forward<Func>(func), std::forward<Args>(args)...)) {}
 
@@ -706,129 +823,6 @@ namespace HSLL
 	}
 
 	/**
-	 * @brief Base interface for type-erased task objects
-	 * @details Provides virtual methods for task execution and storage management
-	 */
-	struct TaskBase
-	{
-		virtual ~TaskBase() = default;
-		virtual void execute() noexcept = 0;
-		virtual void copyTo(void* memory) const noexcept = 0;
-		virtual void moveTo(void* memory) noexcept = 0;
-		virtual bool is_copyable() const noexcept = 0;
-	};
-
-	/**
-	 * @brief Concrete task implementation storing function and arguments
-	 * @details Stores decayed copies of function and arguments in a tuple
-	 */
-	template <class... Args>
-	struct TaskImpl : TaskBase
-	{
-		template <typename T, bool Copyable>
-		struct CopyHelper;
-
-		template <typename T>
-		struct CopyHelper<T, true>
-		{
-			static void copyTo(const T* self, void* dst) noexcept
-			{
-				new (dst) T(*self);
-			}
-		};
-
-		template <typename T>
-		struct CopyHelper<T, false>
-		{
-			static void copyTo(const T*, void*) noexcept
-			{
-				printf("\nTaskImpl must be copy constructible for cloneTo()");
-				std::abort();
-			}
-		};
-
-		template <typename T, bool Movable>
-		struct MoveHelper;
-
-		template <typename T>
-		struct MoveHelper<T, true>
-		{
-			static T&& apply(T& obj) noexcept
-			{
-				return std::move(obj);
-			}
-		};
-
-		template <typename T>
-		struct MoveHelper<T, false>
-		{
-			static T& apply(T& obj) noexcept
-			{
-				return obj;
-			}
-		};
-
-		using Tuple = std::tuple<typename std::decay<Args>::type...>;
-		Tuple storage;
-
-		void tuple_move(void* dst)
-		{
-			move_impl(dst, typename make_index_sequence<std::tuple_size<Tuple>::value>::type{});
-		}
-
-		template <size_t... Is>
-		void move_impl(void* dst, index_sequence<Is...>)
-		{
-			tmove(dst, std::get<Is>(storage)...);
-		}
-
-		template <typename... Ts>
-		void tmove(void* dst, Ts &...args)
-		{
-			new (dst) TaskImpl(MoveHelper<Ts, is_move_constructible<Ts>::value>::apply(args)...);
-		}
-
-		template <class Func, class... Params,
-			typename std::enable_if<!is_TaskImpl<typename std::decay<Func>::type>::value, int>::type = 0>
-		TaskImpl(Func&& func, Params &&...args)
-			: storage(std::forward<Func>(func), std::forward<Params>(args)...) {}
-
-
-		template <bool Condition>
-		typename std::enable_if<!Condition, void>::type invoke()
-		{
-			tuple_apply(storage);
-		}
-
-		template <bool Condition>
-		typename std::enable_if<Condition, void>::type invoke()
-		{
-			std::get<0>(storage)();
-		}
-
-		void execute() noexcept override
-		{
-			invoke<sizeof...(Args) == 1>();
-		}
-
-		void copyTo(void* dst) const noexcept override
-		{
-			CopyHelper<TaskImpl,
-				are_all_copy_constructible<typename std::decay<Args>::type...>::value>::copyTo(this, dst);
-		}
-
-		void moveTo(void* dst) noexcept override
-		{
-			tuple_move(dst);
-		}
-
-		bool is_copyable() const noexcept override
-		{
-			return are_all_copy_constructible<typename std::decay<Args>::type...>::value;
-		}
-	};
-
-	/**
 	 * @brief Metafunction to compute the task implementation type and its size
 	 * @tparam F Type of callable object
 	 * @tparam Args Types of bound arguments
@@ -839,7 +833,7 @@ namespace HSLL
 	template <class F, class... Args>
 	struct task_stack
 	{
-		using type = TaskImpl<F, Args...>;
+		using type = DETAILS::TaskImpl<F, Args...>;
 		static constexpr unsigned int size = sizeof(type);
 	};
 
@@ -914,7 +908,7 @@ namespace HSLL
 		 * @param args Arguments to bind to function call
 		 */
 		template <class F, class... Args,
-			typename std::enable_if<!is_TaskStack<typename std::decay<F>::type>::value, int>::type = 0>
+			typename std::enable_if<!DETAILS::is_TaskStack<typename std::decay<F>::type>::value, int>::type = 0>
 		TaskStack(F&& func, Args &&...args) HSLL_MAY_THROW
 		{
 			using ImplType = typename task_stack<F, Args...>::type;
@@ -966,14 +960,14 @@ namespace HSLL
 		TaskStack& operator=(TaskStack&& other) = delete;
 
 	private:
-		TaskBase* getBase() noexcept
+		DETAILS::TaskBase* getBase() noexcept
 		{
-			return (TaskBase*)storage;
+			return (DETAILS::TaskBase*)storage;
 		}
 
-		const TaskBase* getBase() const noexcept
+		const DETAILS::TaskBase* getBase() const noexcept
 		{
-			return (const TaskBase*)storage;
+			return (const DETAILS::TaskBase*)storage;
 		}
 	};
 }
