@@ -1,15 +1,16 @@
 #ifndef HSLL_TPGROUPALLOCATOR
 #define HSLL_TPGROUPALLOCATOR
 
-#include<map>
-#include<vector>
-#include"TPBlockQueue.hpp"
-
-#define HSLL_QUEUE_FULL_FACTOR_MAIN 0.999
-#define HSLL_QUEUE_FULL_FACTOR_OTHER 0.995
+#include "TPBlockQueue.hpp"
 
 namespace HSLL
 {
+	constexpr float HSLL_QUEUE_FULL_FACTOR_MAIN = 0.999;
+	constexpr float HSLL_QUEUE_FULL_FACTOR_OTHER = 0.995;
+
+	static_assert(HSLL_QUEUE_FULL_FACTOR_MAIN > 0 && HSLL_QUEUE_FULL_FACTOR_MAIN <= 1, "Invalid factors.");
+	static_assert(HSLL_QUEUE_FULL_FACTOR_OTHER > 0 && HSLL_QUEUE_FULL_FACTOR_OTHER <= 1, "Invalid factors.");
+
 	template<class T>
 	class RoundRobinGroup
 	{

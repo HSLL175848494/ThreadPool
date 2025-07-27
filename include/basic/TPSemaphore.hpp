@@ -1,10 +1,6 @@
 #ifndef HSLL_TPSEMAPHORE
 #define HSLL_TPSEMAPHORE
 
-#include <chrono>
-#include <cerrno>
-#include <system_error>
-
 #if defined(_WIN32)
 #define NOMINMAX
 #include <windows.h>
@@ -55,9 +51,9 @@ namespace HSLL
 				throw std::system_error(GetLastError(), std::system_category());
 		}
 
-		void release(unsigned int count = 1)
+		void release()
 		{
-			if (!ReleaseSemaphore(m_sem, static_cast<LONG>(count), nullptr))
+			if (!ReleaseSemaphore(m_sem, 1, nullptr))
 				throw std::system_error(GetLastError(), std::system_category());
 		}
 
@@ -68,15 +64,63 @@ namespace HSLL
 
 	private:
 		HANDLE m_sem = nullptr;
-		static constexpr DWORD MAX_WAIT_MS = 0xFFFFFFF;
+		static constexpr DWORD MAX_WAIT_MS = INFINITE - 1;
 	};
 }
 
-#elif defined(__linux__) || defined(__unix__) || \
-      defined(__APPLE__) || defined(__FreeBSD__) || \
+#elif defined(__APPLE__)
+#include <dispatch/dispatch.h>
+
+namespace HSLL
+{
+	class Semaphore
+	{
+	public:
+		explicit Semaphore(unsigned int initial_count = 0)
+		{
+			m_sem = dispatch_semaphore_create(static_cast<long>(initial_count));
+			if (!m_sem)
+				throw std::system_error(errno, std::system_category());
+		}
+
+		~Semaphore() noexcept
+		{
+			dispatch_release(m_sem);
+		}
+
+		void acquire()
+		{
+			dispatch_semaphore_wait(m_sem, DISPATCH_TIME_FOREVER);
+		}
+
+		template<typename Rep, typename Period>
+		bool try_acquire_for(const std::chrono::duration<Rep, Period>& timeout)
+		{
+			auto ns = std::chrono::duration_cast<std::chrono::nanoseconds>(timeout);
+			return dispatch_semaphore_wait(m_sem,
+				dispatch_time(DISPATCH_TIME_NOW, ns.count())) == 0;
+		}
+
+		void release()
+		{
+			dispatch_semaphore_signal(m_sem);
+		}
+
+		Semaphore(const Semaphore&) = delete;
+		Semaphore& operator=(const Semaphore&) = delete;
+		Semaphore(Semaphore&&) = delete;
+		Semaphore& operator=(Semaphore&&) = delete;
+
+	private:
+		dispatch_semaphore_t m_sem;
+	};
+}
+
+#elif defined(__linux__) || defined(__FreeBSD__) || \
       defined(__OpenBSD__) || defined(__NetBSD__)
 
 #include <semaphore.h>
+#include <time.h>
 
 namespace HSLL
 {
@@ -109,11 +153,13 @@ namespace HSLL
 		bool try_acquire_for(const std::chrono::duration<Rep, Period>& timeout)
 		{
 			auto abs_time = std::chrono::system_clock::now() + timeout;
-			struct timespec ts;
-			auto s = std::chrono::time_point_cast<std::chrono::seconds>(abs_time);
-			auto ns = std::chrono::duration_cast<std::chrono::nanoseconds>(abs_time - s);
+			auto since_epoch = abs_time.time_since_epoch();
 
-			ts.tv_sec = s.time_since_epoch().count();
+			auto secs = std::chrono::duration_cast<std::chrono::seconds>(since_epoch);
+			auto ns = std::chrono::duration_cast<std::chrono::nanoseconds>(since_epoch - secs);
+
+			struct timespec ts;
+			ts.tv_sec = secs.count();
 			ts.tv_nsec = ns.count();
 
 			while (true) {
@@ -129,13 +175,10 @@ namespace HSLL
 			}
 		}
 
-		void release(unsigned int count = 1)
+		void release()
 		{
-			for (unsigned int i = 0; i < count; ++i) {
-				if (sem_post(&m_sem) != 0) {
-					throw std::system_error(errno, std::system_category());
-				}
-			}
+			if (sem_post(&m_sem) != 0)
+				throw std::system_error(errno, std::system_category());
 		}
 
 		Semaphore(const Semaphore&) = delete;
@@ -148,8 +191,55 @@ namespace HSLL
 	};
 }
 
-#else
-#error "Unsupported platform: no Semaphore implementation available"
+#else // Generic fallback for other platforms
+#include <mutex>
+#include <condition_variable>
+
+namespace HSLL
+{
+	class Semaphore
+	{
+	public:
+		explicit Semaphore(unsigned int initial_count = 0)
+			: m_count(initial_count) {}
+
+		void acquire()
+		{
+			std::unique_lock<std::mutex> lock(m_mutex);
+			m_cv.wait(lock, [this] { return m_count > 0; });
+			--m_count;
+		}
+
+		template<typename Rep, typename Period>
+		bool try_acquire_for(const std::chrono::duration<Rep, Period>& timeout)
+		{
+			std::unique_lock<std::mutex> lock(m_mutex);
+			if (!m_cv.wait_for(lock, timeout, [this] { return m_count > 0; }))
+				return false;
+			--m_count;
+			return true;
+		}
+
+		void release()
+		{
+			{
+				std::lock_guard<std::mutex> lock(m_mutex);
+				++m_count;
+			}
+			m_cv.notify_one();
+		}
+
+		Semaphore(const Semaphore&) = delete;
+		Semaphore& operator=(const Semaphore&) = delete;
+		Semaphore(Semaphore&&) = delete;
+		Semaphore& operator=(Semaphore&&) = delete;
+
+	private:
+		std::mutex m_mutex;
+		std::condition_variable m_cv;
+		unsigned int m_count = 0;
+	};
+}
 #endif
 
 #endif // !HSLL_TPSEMAPHORE

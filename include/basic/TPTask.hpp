@@ -1,10 +1,8 @@
 #ifndef HSLL_TPTASK
 #define HSLL_TPTASK
 
-#include<future>
-#include<assert.h>
-
-#define HSLL_ALLOW_THROW
+// The current function may throw exceptions, including std::bad_alloc
+#define HSLL_MAY_THROW
 
 namespace HSLL
 {
@@ -247,7 +245,7 @@ namespace HSLL
 		 * @param args Arguments to bind to the callable
 		 */
 		template<class Func, typename std::enable_if<!is_HeapCallable<typename std::decay<Func>::type>::value, int>::type = 0 >
-		HeapCallable(Func&& func, Args &&...args) HSLL_ALLOW_THROW
+		HeapCallable(Func&& func, Args &&...args) HSLL_MAY_THROW
 			: storage(HSLL::make_unique<Package>(std::forward<Func>(func), std::forward<Args>(args)...)) {}
 
 		/**
@@ -312,7 +310,7 @@ namespace HSLL
 		 * @param args Arguments to bind to the callable
 		 */
 		template<class Func, typename std::enable_if<!is_HeapCallable_Async<typename std::decay<Func>::type>::value, int>::type = 0 >
-		HeapCallable_Async(Func&& func, Args &&...args) HSLL_ALLOW_THROW
+		HeapCallable_Async(Func&& func, Args &&...args) HSLL_MAY_THROW
 			: storage(HSLL::make_unique<Package>(std::promise<ResultType>(), std::forward<Func>(func), std::forward<Args>(args)...)) {}
 
 		/**
@@ -637,7 +635,7 @@ namespace HSLL
 		 * @param args Arguments to bind to the callable
 		 */
 		template<class Func, typename std::enable_if<!is_HeapCallable_Cancelable<typename std::decay<Func>::type>::value, int>::type = 0 >
-		HeapCallable_Cancelable(Func&& func, Args &&...args) HSLL_ALLOW_THROW
+		HeapCallable_Cancelable(Func&& func, Args &&...args) HSLL_MAY_THROW
 			: storage(std::make_shared<Package>(std::promise<ResultType>(), false, std::forward<Func>(func), std::forward<Args>(args)...)) {}
 
 		/**
@@ -673,7 +671,7 @@ namespace HSLL
 	 * @return HeapCallable instance
 	 */
 	template <typename F, typename... Args>
-	HeapCallable<F, Args...> make_callable(F&& func, Args &&...args) HSLL_ALLOW_THROW
+	HeapCallable<F, Args...> make_callable(F&& func, Args &&...args) HSLL_MAY_THROW
 	{
 		return HeapCallable<F, Args...>(std::forward<F>(func), std::forward<Args>(args)...);
 	}
@@ -687,7 +685,7 @@ namespace HSLL
 	 * @return HeapCallable_Async instance
 	 */
 	template <typename F, typename... Args>
-	HeapCallable_Async<F, Args...> make_callable_async(F&& func, Args &&...args) HSLL_ALLOW_THROW
+	HeapCallable_Async<F, Args...> make_callable_async(F&& func, Args &&...args) HSLL_MAY_THROW
 	{
 		return HeapCallable_Async<F, Args...>(std::forward<F>(func), std::forward<Args>(args)...);
 	}
@@ -701,7 +699,7 @@ namespace HSLL
 	 * @return HeapCallable_Cancelable instance
 	 */
 	template <typename F, typename... Args>
-	HeapCallable_Cancelable<F, Args...> make_callable_cancelable(F&& func, Args &&...args) HSLL_ALLOW_THROW
+	HeapCallable_Cancelable<F, Args...> make_callable_cancelable(F&& func, Args &&...args) HSLL_MAY_THROW
 	{
 		return HeapCallable_Cancelable<F, Args...>
 			(std::forward<F>(func), std::forward<Args>(args)...);
@@ -917,7 +915,7 @@ namespace HSLL
 		 */
 		template <class F, class... Args,
 			typename std::enable_if<!is_TaskStack<typename std::decay<F>::type>::value, int>::type = 0>
-		TaskStack(F&& func, Args &&...args) HSLL_ALLOW_THROW
+		TaskStack(F&& func, Args &&...args) HSLL_MAY_THROW
 		{
 			using ImplType = typename task_stack<F, Args...>::type;
 			constexpr bool can_store = sizeof(ImplType) <= TSIZE && alignof(ImplType) <= ALIGN;

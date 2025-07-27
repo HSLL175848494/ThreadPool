@@ -1,9 +1,14 @@
-#ifndef TPRWLOCK
-#define TPRWLOCK
+#ifndef TPSRWLOCK
+#define TPSRWLOCK
 
 namespace HSLL
 {
+	constexpr int HSLL_SPINREADWRITELOCK_MAXSLOTS = 128;
 	constexpr long long HSLL_SPINREADWRITELOCK_MAXREADER = (1LL << 62);
+
+	static_assert(HSLL_SPINREADWRITELOCK_MAXSLOTS > 0,"HSLL_SPINREADWRITELOCK_MAXSLOTS must be > 0");
+	static_assert(HSLL_SPINREADWRITELOCK_MAXREADER > 0 && HSLL_SPINREADWRITELOCK_MAXREADER <= (1LL << 62),
+		"HSLL_SPINREADWRITELOCK_MAXREADER must be > 0 and <= 2^62");
 
 	/**
 	 * @brief Efficient spin lock based on atomic variables, suitable for scenarios where reads significantly outnumber writes
@@ -94,10 +99,10 @@ namespace HSLL
 			}
 		};
 
-		PeerLock counter[256];
 		std::atomic<bool> flag;
 		thread_local static int local_index;
-		static std::atomic<unsigned char> index;
+		static std::atomic<unsigned int> index;
+		PeerLock counter[HSLL_SPINREADWRITELOCK_MAXSLOTS];
 
 	public:
 
@@ -106,7 +111,7 @@ namespace HSLL
 		unsigned int get_local_index()
 		{
 			if (local_index == -1)
-				local_index = index.fetch_add(1, std::memory_order_relaxed); // unsigned char auto-wraps, no modulo needed
+				local_index = index.fetch_add(1, std::memory_order_relaxed)% HSLL_SPINREADWRITELOCK_MAXSLOTS;
 
 			return local_index;
 		}
@@ -132,14 +137,14 @@ namespace HSLL
 				old = true;
 			}
 
-			for (int i = 0; i < 256; ++i) // Mark writer waiting to prevent new readers
+			for (int i = 0; i < HSLL_SPINREADWRITELOCK_MAXSLOTS; ++i) // Mark writer waiting to prevent new readers
 				counter[i].mark_write();
 
 			while (true)
 			{
 				bool allReady = true;
 
-				for (int i = 0; i < 256; ++i) // Lock successful when all write locks acquired
+				for (int i = 0; i < HSLL_SPINREADWRITELOCK_MAXSLOTS; ++i) // Lock successful when all write locks acquired
 				{
 					if (!counter[i].is_write_ready())
 					{
@@ -153,12 +158,11 @@ namespace HSLL
 
 				std::this_thread::yield();
 			}
-			int a = 5;
 		}
 
 		void unlock_write()
 		{
-			for (int i = 0; i < 256; ++i) // Release all read-write locks and propagate to readers
+			for (int i = 0; i < HSLL_SPINREADWRITELOCK_MAXSLOTS; ++i) // Release all read-write locks and propagate to readers
 				counter[i].unlock_write();
 
 			flag.store(true, std::memory_order_release); // Allow new writers and propagate result
@@ -168,8 +172,8 @@ namespace HSLL
 		SpinReadWriteLock& operator=(const SpinReadWriteLock&) = delete;
 	};
 
-	thread_local int SpinReadWriteLock::local_index = -1;
-	std::atomic<unsigned char> SpinReadWriteLock::index = 0;
+	thread_local int SpinReadWriteLock::local_index{-1};
+	std::atomic<unsigned int> SpinReadWriteLock::index{0};
 
 	class ReadLockGuard
 	{
@@ -216,4 +220,4 @@ namespace HSLL
 	};
 }
 
-#endif // !TPRWLOCK
+#endif // !STPRWLOCK
