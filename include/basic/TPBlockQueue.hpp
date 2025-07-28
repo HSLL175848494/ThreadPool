@@ -37,6 +37,7 @@ namespace HSLL
 
 #define HSLL_ALIGNED_MALLOC(size, align) HSLL::INNER::hsll_aligned_alloc(align, size)
 #else
+
 namespace HSLL
 {
 	namespace INNER

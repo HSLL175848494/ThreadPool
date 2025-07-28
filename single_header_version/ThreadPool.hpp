@@ -7,6 +7,12 @@
 #include <thread>
 #include <assert.h>
 
+// The current function may throw exceptions, including std::bad_alloc.
+#define HSLL_MAY_THROW
+
+//For a valid object, the current function can only be called once.
+#define HSLL_CALL_ONCE
+
 //Branch Prediction
 #if defined(__GNUC__) || defined(__clang__)
 #define HSLL_LIKELY(x) __builtin_expect(!!(x), 1)
@@ -43,6 +49,7 @@ namespace HSLL
 
 #define HSLL_ALIGNED_MALLOC(size, align) HSLL::INNER::hsll_aligned_alloc(align, size)
 #else
+
 namespace HSLL
 {
 	namespace INNER
@@ -59,9 +66,6 @@ namespace HSLL
 #endif
 #define HSLL_ALIGNED_FREE(ptr) free(ptr)
 #endif
-
-// The current function may throw exceptions, including std::bad_alloc
-#define HSLL_MAY_THROW
 
 //TPTaskStack
 namespace HSLL
@@ -389,7 +393,7 @@ namespace HSLL
 			 * @return std::future<ResultType> Future object for the call result
 			 * @pre Object must be in a valid state
 			 */
-			std::future<ResultType> get_future()
+			std::future<ResultType> get_future() HSLL_CALL_ONCE
 			{
 				return std::get<0>(*storage).get_future();
 			}
@@ -403,6 +407,13 @@ namespace HSLL
 
 			CancelableFlag(bool ignore = false) : flag(false) {};
 
+			/**
+			 * @brief Requests cancellation of the associated task
+			 * @return true if cancellation succeeded (state was active), false if already canceled/completed
+			 * @note On success:
+			 * - Sets promise exception with "Task canceled" error
+			 * - Transitions state to canceled
+			 */
 			bool cancel()
 			{
 				bool expected = false;
@@ -418,7 +429,7 @@ namespace HSLL
 			 * @return true Successfully entered critical section
 			 * @return false Entry failed (task was already canceled, or critical section was already entered successfully)
 			 */
-			bool enter()
+			bool enter() HSLL_CALL_ONCE
 			{
 				bool expected = false;
 
@@ -427,16 +438,6 @@ namespace HSLL
 
 				return false;
 			}
-
-			CancelableFlag& operator=(CancelableFlag&& other)
-			{
-				if (this != &other)
-					flag = other.flag.load();
-
-				return *this;
-			}
-
-			CancelableFlag(CancelableFlag&& other) :flag(other.flag.load()) {}
 		};
 
 		/**
@@ -481,7 +482,7 @@ namespace HSLL
 			 * @throws std::runtime_error("Task canceled") if canceled
 			 */
 			template <typename U = ResultType>
-			typename std::enable_if<!std::is_void<U>::value, U>::type get()
+			typename std::enable_if<!std::is_void<U>::value, U>::type get() HSLL_CALL_ONCE
 			{
 				return future.get();
 			}
@@ -492,7 +493,7 @@ namespace HSLL
 			 * @throws std::runtime_error("Task canceled") if canceled
 			 */
 			template <typename U = ResultType>
-			typename std::enable_if<std::is_void<U>::value>::type get()
+			typename std::enable_if<std::is_void<U>::value>::type get() HSLL_CALL_ONCE
 			{
 				future.get();
 			}
@@ -543,7 +544,7 @@ namespace HSLL
 			 * @throws std::future_error if result already set or not in critical section
 			 */
 			template <class T = ResultType, typename std::enable_if<std::is_void<T>::value, bool>::type = true>
-			void set_value()
+			void set_value() HSLL_CALL_ONCE
 			{
 				promise.set_value();
 			}
@@ -555,7 +556,7 @@ namespace HSLL
 			 * @throws std::future_error if result already set or not in critical section
 			 */
 			template <class U, class T = ResultType, typename std::enable_if<!std::is_void<T>::value, bool>::type = true>
-			void set_value(U&& value)
+			void set_value(U&& value) HSLL_CALL_ONCE
 			{
 				promise.set_value(std::forward<T>(value));
 			}
@@ -566,7 +567,7 @@ namespace HSLL
 			 * @pre Must be in critical section (via successful enter())
 			 * @throws std::future_error if exception already set or not in critical section
 			 */
-			void set_exception(std::exception_ptr e)
+			void set_exception(std::exception_ptr e) HSLL_CALL_ONCE
 			{
 				promise.set_exception(e);
 			}
@@ -656,7 +657,7 @@ namespace HSLL
 				 * @throws std::runtime_error("Task canceled") if canceled
 				 */
 				template <typename U = ResultType>
-				typename std::enable_if<!std::is_void<U>::value, U>::type get()
+				typename std::enable_if<!std::is_void<U>::value, U>::type get() HSLL_CALL_ONCE
 				{
 					return future.get();
 				}
@@ -667,7 +668,7 @@ namespace HSLL
 				 * @throws std::runtime_error("Task canceled") if canceled
 				 */
 				template <typename U = ResultType>
-				typename std::enable_if<std::is_void<U>::value>::type get()
+				typename std::enable_if<std::is_void<U>::value>::type get() HSLL_CALL_ONCE
 				{
 					future.get();
 				}
@@ -688,6 +689,16 @@ namespace HSLL
 				std::future_status wait_for(const std::chrono::duration<Rep, Period>& timeout_duration) const
 				{
 					return future.wait_for(timeout_duration);
+				}
+
+				/**
+				 * @brief Blocks until specified time point
+				 * @return Status of future after waiting
+				 */
+				template <class Clock, class Duration>
+				std::future_status wait_until(const std::chrono::time_point<Clock, Duration>& timeout_time) const
+				{
+					return future.wait_until(timeout_time);
 				}
 			};
 
@@ -712,7 +723,7 @@ namespace HSLL
 					invoke();
 			}
 
-			Controller get_controller()
+			Controller get_controller() HSLL_CALL_ONCE
 			{
 				assert(storage);
 				return Controller(storage);
