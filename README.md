@@ -169,9 +169,11 @@ graph LR
 将异常传播到调用者，因此严格的异常保证是出于将任务存储在栈上的必要妥协**
 
 ## 平台支持
-- Linux (aligned_alloc)
-- Windows (aligned_malloc)
-- C++11 或更新标准
+- Windows 系统
+- 类 Unix 系统
+
+## 编译要求
+- 需支持 C++11 或更新标准的编译器
 
 ## 项目结构
 
