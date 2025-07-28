@@ -43,8 +43,8 @@ namespace HSLL
 				nowIndex = 0;
 				this->assignedQueues = queues;
 				this->taskThreshold = threshold;
-				this->mainFullThreshold = capacity * HSLL_QUEUE_FULL_FACTOR_MAIN;
-				this->otherFullThreshold = capacity * HSLL_QUEUE_FULL_FACTOR_OTHER;
+				this->mainFullThreshold = std::max(2u, (unsigned int)(capacity * HSLL_QUEUE_FULL_FACTOR_MAIN));
+				this->otherFullThreshold = std::max(2u, (unsigned int)(capacity * HSLL_QUEUE_FULL_FACTOR_OTHER));
 			}
 
 			TPBlockQueue<T>* current_queue()
@@ -265,7 +265,7 @@ namespace HSLL
 				this->capacity = capacity;
 				this->queueCount = queueCount;
 				this->moveThreshold = threshold;
-				this->fullThreshold = capacity * HSLL_QUEUE_FULL_FACTOR_OTHER;
+				this->fullThreshold = std::max(2u, (unsigned int)(capacity * HSLL_QUEUE_FULL_FACTOR_MAIN));
 			}
 
 			RoundRobinGroup<T>* find(std::thread::id threadId)
@@ -285,19 +285,12 @@ namespace HSLL
 				if (size == queueCount)
 					return nullptr;
 
-				unsigned int start = std::rand() % queueCount;
 				std::vector <TPBlockQueue<T>*>& assignedQueues = *group->assignedQueues;
-				TPBlockQueue<T>* lowBounds = assignedQueues[0];
+				long long start = (assignedQueues[0] - queues + size) % queueCount;
 
-				for (unsigned int i = 0; i < queueCount; ++i)
+				for (unsigned int i = 0; i < queueCount - size; ++i)
 				{
 					TPBlockQueue<T>* queue = queues + (start + i) % queueCount;
-
-					if (queues == lowBounds)
-					{
-						i += size - 1;
-						continue;
-					}
 
 					if (queue->get_size() <= fullThreshold)
 						return queue;
