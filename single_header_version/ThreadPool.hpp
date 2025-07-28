@@ -2212,8 +2212,8 @@ namespace HSLL
 				nowIndex = 0;
 				this->assignedQueues = queues;
 				this->taskThreshold = threshold;
-				this->mainFullThreshold = capacity * HSLL_QUEUE_FULL_FACTOR_MAIN;
-				this->otherFullThreshold = capacity * HSLL_QUEUE_FULL_FACTOR_OTHER;
+				this->mainFullThreshold = std::max(2u, (unsigned int)(capacity * HSLL_QUEUE_FULL_FACTOR_MAIN));
+				this->otherFullThreshold = std::max(2u, (unsigned int)(capacity * HSLL_QUEUE_FULL_FACTOR_OTHER));
 			}
 
 			TPBlockQueue<T>* current_queue()
@@ -2434,7 +2434,7 @@ namespace HSLL
 				this->capacity = capacity;
 				this->queueCount = queueCount;
 				this->moveThreshold = threshold;
-				this->fullThreshold = capacity * HSLL_QUEUE_FULL_FACTOR_OTHER;
+				this->fullThreshold = std::max(2u, (unsigned int)(capacity * HSLL_QUEUE_FULL_FACTOR_MAIN));
 			}
 
 			RoundRobinGroup<T>* find(std::thread::id threadId)
@@ -2454,19 +2454,12 @@ namespace HSLL
 				if (size == queueCount)
 					return nullptr;
 
-				unsigned int start = std::rand() % queueCount;
 				std::vector <TPBlockQueue<T>*>& assignedQueues = *group->assignedQueues;
-				TPBlockQueue<T>* lowBounds = assignedQueues[0];
+				long long start = (assignedQueues[0] - queues + size) % queueCount;
 
-				for (unsigned int i = 0; i < queueCount; ++i)
+				for (unsigned int i = 0; i < queueCount - size; ++i)
 				{
 					TPBlockQueue<T>* queue = queues + (start + i) % queueCount;
-
-					if (queues == lowBounds)
-					{
-						i += size - 1;
-						continue;
-					}
 
 					if (queue->get_size() <= fullThreshold)
 						return queue;
@@ -2663,8 +2656,8 @@ namespace HSLL
 			unsigned int threadNum;
 			unsigned int minThreadNum;
 			unsigned int maxThreadNum;
-			unsigned int fullThreshold;
-
+			unsigned int mainFullThreshold;
+			unsigned int otherFullThreshold;
 
 			bool enableMonitor;
 			Semaphore monitorSem;
@@ -2706,18 +2699,19 @@ namespace HSLL
 				if (!initResourse(capacity, threadNum, batchSize))
 					return false;
 
-				this->index = 0;
-				this->exitFlag = false;
-				this->adjustFlag = false;
-				this->enableMonitor = false;
-				this->shutdownPolicy = true;
+				this->capacity = capacity;
+				this->batchSize = std::min(batchSize, capacity / 2);
+				this->threadNum = threadNum;
 				this->minThreadNum = threadNum;
 				this->maxThreadNum = threadNum;
-				this->threadNum = maxThreadNum;
-				this->batchSize = std::min(batchSize, capacity / 2);
-				this->capacity = capacity;
-				this->fullThreshold = capacity * HSLL_QUEUE_FULL_FACTOR_OTHER;
-				this->adjustMillis = adjustMillis;
+				this->mainFullThreshold = std::max(2u, (unsigned int)(capacity * HSLL_QUEUE_FULL_FACTOR_MAIN));
+				this->otherFullThreshold = std::max(2u, (unsigned int)(capacity * HSLL_QUEUE_FULL_FACTOR_OTHER));
+				this->enableMonitor = false;
+				this->adjustFlag = false;
+				this->exitFlag = false;
+				this->shutdownPolicy = true;
+				this->index = 0;
+
 				workers.reserve(maxThreadNum);
 				groupAllocator.initialize(queues, maxThreadNum, capacity, capacity * 0.01 > 1 ? capacity * 0.01 : 1);
 
@@ -2748,18 +2742,19 @@ namespace HSLL
 				if (!initResourse(capacity, maxThreadNum, batchSize))
 					return false;
 
-				this->index = 0;
-				this->exitFlag = false;
-				this->adjustFlag = false;
-				this->enableMonitor = (minThreadNum != maxThreadNum) ? true : false;
-				this->shutdownPolicy = true;
+				this->capacity = capacity;
+				this->batchSize = std::min(batchSize, capacity / 2);
+				this->threadNum = maxThreadNum;
 				this->minThreadNum = minThreadNum;
 				this->maxThreadNum = maxThreadNum;
-				this->threadNum = maxThreadNum;
-				this->batchSize = std::min(batchSize, capacity / 2);
-				this->capacity = capacity;
-				this->fullThreshold = capacity * HSLL_QUEUE_FULL_FACTOR_OTHER;
+				this->mainFullThreshold = std::max(2u, (unsigned int)(capacity * HSLL_QUEUE_FULL_FACTOR_MAIN));
+				this->otherFullThreshold = std::max(2u, (unsigned int)(capacity * HSLL_QUEUE_FULL_FACTOR_OTHER));
+				this->adjustFlag = false;
 				this->adjustMillis = std::chrono::milliseconds(adjustMillis);
+				this->enableMonitor = (minThreadNum != maxThreadNum) ? true : false;
+				this->exitFlag = false;
+				this->shutdownPolicy = true;
+				this->index = 0;
 				workers.reserve(maxThreadNum);
 				groupAllocator.initialize(queues, maxThreadNum, capacity, capacity * 0.05 > 1 ? capacity * 0.05 : 1);
 
@@ -2792,21 +2787,11 @@ namespace HSLL
 		if(!group)												\
 		{														\
 			queue = select_queue();								\
-			size = exp2;										\
 																\
-			if(size)											\
-			{													\
-				return size;									\
-			}													\
-			else											    \
-			{													\
-				queue = available_queue(queue);					\
+			if (queue)											\
+				return exp2;									\
 																\
-					if (queue)									\
-						return exp2;							\
-			}													\
-																\
-			return size;										\
+			return 0;											\
 		}														\
 																\
 		queue = group->current_queue();							\
@@ -3121,22 +3106,20 @@ namespace HSLL
 
 			TPBlockQueue<T>* select_queue() noexcept
 			{
-				return queues + next_index();
-			}
+				unsigned int now = next_index();
+				TPBlockQueue<T>* queue = queues + now;
 
-			TPBlockQueue<T>* available_queue(TPBlockQueue<T>* ignore) noexcept
-			{
-				unsigned int start = std::rand() % threadNum;
+				if (queue->get_size() <= mainFullThreshold)
+					return queue;
 
-				for (unsigned int i = 0; i < threadNum; ++i)
+				for (unsigned int i = 1; i <= threadNum - 1; ++i)
 				{
-					TPBlockQueue<T>* queue = queues + (i + start) % threadNum;
-					if (ignore != queue)
-					{
-						if (queue->get_size() <= fullThreshold)
-							return queue;
-					}
+					queue = queues + ((now + i) % threadNum);
+
+					if (queue->get_size() <= otherFullThreshold)
+						return queue;
 				}
+
 				return nullptr;
 			}
 
