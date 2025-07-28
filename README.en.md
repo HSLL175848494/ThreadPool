@@ -165,10 +165,12 @@ graph LR
 
 **Unlike heap-allocated tasks, copying stack-based tasks can fail. Asynchronous execution prevents propagating exceptions to the caller. Strict exception guarantees are a necessary compromise for stack-stored tasks.**
 
-## Platform Support
-- Linux (aligned_alloc)
-- Windows (_aligned_malloc)
-- C++11 or newer
+## Platform Support  
+- Windows systems  
+- Unix-like systems  
+
+## Compilation Requirements  
+- Requires a compiler supporting C++11 or newer standards  
 
 ## Project Structure
 
