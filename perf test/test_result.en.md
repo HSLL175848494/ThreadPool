@@ -28,21 +28,14 @@ void C() { }
 ---
 
 #### 2. Test Results (Throughput: Million Tasks/Sec)  
-- **sp_tp**: [Simple open-source thread pool](https://github.com/progschj/ThreadPool.git)  
-- **boost_tp**: `boost::asio::thread_pool`  
+
 - **hsll_tp**: `HSLL::ThreadPool`  
   - Queue Length: 8192  
   - Container: `TaskStack<24,8>`  
-  - Dynamic Threads: Disabled  
+  - queue partitioning： enabled
 
 | Thread Pool Type                     | Threads | Task A (M/s) | Task B (M/s) | Task C (M/s) |  
 |--------------------------------------|---------|--------------|--------------|--------------|  
-| **sp_tp**                            | 1       | 0.36         | 2.36         | 1.75         |  
-|                                      | 4       | 1.10         | 0.95         | 0.93         |  
-|                                      | 8       | 0.65         | 0.62         | 0.61         |  
-| **boost_tp**                         | 1       | 0.40         | 2.87         | 2.70         |  
-|                                      | 4       | 1.31         | 0.94         | 0.90         |  
-|                                      | 8       | 0.80         | 0.65         | 0.64         |  
 | **hsll_tp**                          | 1       | 0.40         | 6.42         | 13.68        |  
 |                                      | 4       | 1.41         | 6.60         | 7.23         |  
 |                                      | 8       | 2.50         | 6.08         | 7.61         |  
