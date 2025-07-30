@@ -1002,20 +1002,26 @@ namespace HSLL
 			};
 
 			/**
-			 * @brief Constructs task in internal storage
-			 * Constructs a task by storing the callable and bound arguments in the internal buffer if possible.
+			 * @brief Constructs a task in internal storage
 			 *
-			 * The storage location is determined by:
-			 *   - If the task's total size <= TSIZE AND alignment <= ALIGN:
-			 *        Directly constructs the task in the internal stack buffer
-			 *   - Else:
-			 *        Allocates the task on the heap and stores a pointer in the internal buffer
-			 *        (using HeapCallable wrapper)
+			 * Creates a task by storing the callable object and bound arguments. The storage location is determined automatically:
+			 *   - If the total size of the task implementation <= TSIZE and its alignment <= ALIGN:
+			 *        Stores directly in the internal stack buffer
+			 *   - Otherwise:
+			 *        Allocates the task on the heap and stores a pointer in the buffer (using HeapCallable wrapper)
 			 *
-			 * @tparam F Type of callable object
-			 * @tparam Args Types of bound arguments
-			 * @param func Callable target function
-			 * @param args Arguments to bind to function call
+			 * @tparam F Type of callable object (automatically deduced)
+			 * @tparam Args Types of bound arguments (automatically deduced)
+			 * @param func Callable target function (function object/lambda/etc)
+			 * @param args Arguments to bind to the function call
+			 *
+			 * @note Important usage considerations:
+			 * 1. Arguments are stored as decayed types. Use `std::ref` to preserve references.
+			 * 2. Stored argument types need not match the function signature exactly, but must be convertible.
+			 *    Example: `void func(std::atomic<bool> , float)` can be called with `(bool, double)` arguments.
+			 * 3. Beware of implicit conversions that may cause precision loss or narrowing (e.g., double->float,
+			 *    long long->int). Explicitly specify argument types (e.g., `5.0f`, `6ULL`) to avoid unintended conversions.
+
 			 */
 			template <class F, class... Args,
 				typename std::enable_if<!is_TaskStack<typename std::decay<F>::type>::value, int>::type = 0>
