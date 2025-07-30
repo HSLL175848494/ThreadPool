@@ -24,8 +24,8 @@ constexpr const char* taskType[] = { "A","B","C" };
 
 #define WORKER 8
 #define PRODUCER 8
-#define SUBMIT_BATCH 32
-#define PROCESS_BATCH 32
+#define SUBMIT_BATCH 1
+#define PROCESS_BATCH 1
 #define PEER 10000000/PRODUCER
 #define TSIZE 24
 #define CAPACITY 8192
@@ -48,7 +48,7 @@ void bulk_submit_worker()
 	while (remaining > 0)
 	{
 		std::future<void> f;
-		if (submitter.emplace(FUNC))
+		if (submitter.add(FUNC))
 			remaining--;
 		else
 			std::this_thread::yield();
@@ -72,7 +72,7 @@ void single_submit_worker()
 
 	while (remaining > 0)
 	{
-		if (pool.emplace(FUNC))
+		if (pool.submit(FUNC))
 			remaining--;
 		else
 			std::this_thread::yield();
@@ -122,11 +122,10 @@ double test_single_submit()
 	return duration.count();
 }
 
-
 int main()
 {
 	pool.init(CAPACITY, 1, WORKER, PROCESS_BATCH);
-	
+
 	//std::this_thread::sleep_for(std::chrono::seconds(15));
 
 	long long total_tasks = (long long)(PEER * PRODUCER);

@@ -75,9 +75,8 @@ void exit(bool shutdownPolicy = true)
 
 | 方法类型      | 非阻塞      | 阻塞等待    | 超时等待      |
 |-------------|------------|------------|--------------|
-| 单任务提交    | emplace    | wait_emplace| wait_emplace |
-| 预构建任务   | enqueue     | wait_enqueue| wait_enqueue  |
-| 批量任务     | enqueue_bulk| wait_enqueue_bulk | wait_enqueue_bulk |
+| 单任务提交    | submit    | wait_submit| wait_submit |
+| 批量任务     | submit_bulk| wait_submit_bulk | wait_submit_bulk |
 
 
 ## 基本使用
@@ -86,31 +85,24 @@ void exit(bool shutdownPolicy = true)
 #include "ThreadPool.hpp"
 
 using namespace HSLL;
-using Type = TaskStack<64,8>;//最大容量为64字节,最大对齐值为8的任务容器
+using ContainerType = TaskStack<64,8>;//最大容量为64字节,最大对齐值为8的任务容器
 
 void Func(int a, double b) { /*...*/ }
 
 int main()
 {
     //创建线程池实例,任务容器使用Type类型
-    ThreadPool<Type> pool;
+    ThreadPool<ContainerType> pool;
 
     // 初始化线程池: 队列容量1000，最小活跃线程数1，最大线程数4，批处理大小为1（default）
     pool.init(1000,1,4); 
 
     //添加任务_基本示例
-    Type task(Func, 42, 3.14);
-    pool.enqueue(task);
+    ContainerType task(Func, 42, 3.14);
+    pool.submit(task);
 
-    //添加任务_就地构造
-    pool.emplace(Func, 42, 3.14);//相比于enqueue减少了一次临时对象的构造
-
-    //添加任务_std::function
-    std::function<void(int,int)> func(Func);
-    pool.emplace(func,42,3.14);
-
-    //添加任务_lambda
-    pool.enqueue([](int a,int b){});
+    //也可以直接传入参数进行就地构造
+    pool.submit(Func, 42, 3.14);
 
     //线程池析构时自动调用exit(false), 但仍然建议手动调用以控制退出行为
     pool.exit(true); // 优雅关闭。调用后可通过init重新初始化队列
@@ -124,15 +116,11 @@ int main()
 ```mermaid
 graph TD
     A[任务提交] --> B{提交方式}
-    B -->|emplace| C[在队列中直接构造任务]
-    B -->|enqueue/enqueue_bulk| D[将已构造的任务对象后拷贝/移动到队列中]
-    
-    C --> E[以移动的形式取出任务]
-    D --> E
-    
-    E --> F[执行execute方法]
-    F --> G[显式调用析构函数]
-    G --> H[清理执行内存]
+    B -->|submit/submit_bulk| C[将任务对象移动到队列中]
+    C --> D[以移动的形式取出任务]
+    D --> E[执行execute方法]
+    E --> F[显式调用析构函数]
+    F --> G[清理执行内存]
 ```
 
 ## 参数传递过程
@@ -162,7 +150,7 @@ graph LR
 1. **类型匹配**：提交任务类型必须严格匹配队列任务类型
 2. **异常安全**：
    - 任何入队列行为不允许抛出异常
-   - 调用emplace系列接口需要保证任务（参数/拷贝/移动构造）不抛出异常，其它类型接口需要保证任务(拷贝/移动构造)不抛出异常
+   - 需要保证任务(拷贝/移动构造)不抛出异常
    - execute()方法不允许抛出异常，需要在任务内部捕获并处理所有可能的异常
      
 **不同于申请在堆上的任务，栈上任务的拷贝可能发生异常。由于异步执行的栈上任务无法
