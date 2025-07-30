@@ -32,7 +32,7 @@ void heapExample()
 		});
 
 	//Callable隐式转化为TaskStack
-	globalPool.enqueue(std::move(callable));
+	globalPool.submit(std::move(callable));
 }
 
 // 异步任务示例
@@ -41,8 +41,7 @@ void asyncExample()
 	auto task = make_callable_async(calculateSum, 333, 333);
 	auto future = task.get_future();
 
-	//task隐式转化为TaskType类型(构造函数)
-	globalPool.enqueue(std::move(task));
+	globalPool.submit(std::move(task));
 
 	auto result = future.get();
 	std::cout << "Async result1: " << result << std::endl;
@@ -53,7 +52,7 @@ void asyncExample2()
 {
 	std::promise<int> promise;
 
-	globalPool.enqueue([&]() {
+	globalPool.submit([&]() {
 		promise.set_value(777);
 		});
 
@@ -64,13 +63,13 @@ void asyncExample2()
 // 可取消任务示例
 void cancelableExample1()
 {
-	auto task = make_callable_cancelable([]() {
+	auto callable = make_callable_cancelable([]() {
 		std::cout << "Cancelable task completed." << std::endl;
 		return;
 		});
 
-	auto controller = task.get_controller();
-	globalPool.enqueue(std::move(task));
+	auto controller = callable.get_controller();
+	globalPool.submit(std::move(callable));
 	std::this_thread::sleep_for(std::chrono::nanoseconds(150));
 
 	if (controller.cancel())
@@ -106,7 +105,7 @@ void cancelableExample2()
 {
 	Cancelable<void> cancelable;
 
-	globalPool.enqueue([&]() {
+	globalPool.submit([&]() {
 
 		if (cancelable.enter())//尝试进入临界区
 		{
@@ -160,7 +159,7 @@ void batchExample()
 
 	//BatchSubmitter会在容量已满时自动提交,即第10次
 	for (int i = 0; i < 10; ++i) {
-		batch.emplace([i] {
+		batch.add([i] {
 			std::cout << "Batch task " << i << std::endl;
 			});
 	}
@@ -172,12 +171,12 @@ void batchExample()
 void positionControlExample()
 {
 	// 尾部插入（低优先级,默认）
-	globalPool.enqueue<INSERT_POS::TAIL>([] {
+	globalPool.submit<INSERT_POS::TAIL>([] {
 		std::cout << "Low priority task (tail)" << std::endl;
 		});
 
 	// 头部插入（高优先级）
-	globalPool.enqueue<INSERT_POS::HEAD>([] {
+	globalPool.submit<INSERT_POS::HEAD>([] {
 		std::cout << "High priority task (head)" << std::endl;
 		});
 }
@@ -201,11 +200,12 @@ void storageStrategyExample()
 	TaskType bigTask(lambda_big, "Large", " parameters", " require", " heap allocation.");
 
 	//if (TaskType::is_stored_on_stack<decltype(lambda_small)>::value)
-	globalPool.enqueue(std::move(smallTask));
+	globalPool.submit(std::move(smallTask));
 
 	//if (!TaskType::is_stored_on_stack<decltype(lambda_big), std::string, std::string, std::string, std::string>::value)
-	globalPool.enqueue(std::move(bigTask));
+	globalPool.submit(std::move(bigTask));
 }
+
 
 // 任务属性检查
 void taskPropertiesExample()
@@ -217,8 +217,6 @@ void taskPropertiesExample()
 	std::cout << "Task properties:\n"
 		<< "Storage size: " << sizeof(task) << " bytes\n"
 		<< "Actual size:" << TaskImplTraits<decltype(lambda), int>::size << "\n"
-		<< "Copyable: " << (task.is_copyable() ? "Yes" : "No") << "\n"
-		<< "Moveable: " << (task.is_moveable() ? "Yes" : "No") << "\n"
 		<< "Is stored on stack: " << (TaskType::is_stored_on_stack<decltype(lambda), int>::value ? "Yes" : "No") << "\n";
 }
 
@@ -228,32 +226,41 @@ void threadRegisterExample()
 	/*
 	* 注册线程到线程池的分组分配器
 	* 每个注册线程会被动态分配一个专属队列组（RoundRobinGroup）
-	* 队列组包含一个或多个任务队列（TPBlockQueue），分配策略：
-	*   - 队列数 >= 线程数：每个线程分配 (总队列数/线程数) 个队列
-	*   - 队列数 < 线程数：每个队列被 (线程数/队列数) 个线程共享
+	* 队列组包含一个或多个任务队列（TPBlockQueue）
 	*
 	* 示例：3个队列(1,2,3)，4个生产线程(A,B,C,D)
-	* 未注册时队列分配可能(进行轮询):
 	*
-	*   A->1, A->2, A->3, A->1
-	*	B->1, B->2, B->3, B->1
-	* 	C->1, C->2, C->3, C->1
-	*	D->1, D->2, D->3, D->1
+	* ---------------------------------------------------------------------
+	* 未注册时队列分配是根据内部index原子变量进行全局轮询
 	*
-	*	(频繁切换导致缓存失效)
+	* 队列分配	1	 2      3     1     2     3    ...
+	* 提交记录 A提交 B提交 C提交 A提交 B提交 C提交 ...
 	*
-	* 注册后动态分配：
+	* 该方案会导致缓存频繁地失效,单个index原子变量也会性能瓶颈
+	*----------------------------------------------------------------------
+	* 注册后队列分配:
+	*
 	*   A: 专属队列组[1]
 	*   B: 专属队列组[2]
 	*   C: 专属队列组[3]
 	*   D: 专属队列组[1,2,3] (多队列组)
+	*
+	* 对于内包含多个队列的队列组，其在提交任务数量达到阈值时会切换到另一个队列（轮询）
+	* 对于不同的生产者，其生产速率可能不同，因此这种方案的负载均衡能力会若于全局轮询方案。
+	* 但任务窃取机制和多级队列选取缓解了这一点。
+	*
+	* 三级队列选取策略(队列已满则选取下级队列):
+	* 一级:队列组内当前轮询队列
+	* 二级:队列组内其他队列
+	* 三级:不包括在队列组的其它队列
+	* ---------------------------------------------------------------------
 	*/
 
 	globalPool.register_this_thread(); // 注册当前线程
 
 	/* 添加任务操作 */
 
-	// 注意:不再使用线程池时需及时注销
+	// 注意:当前线程不再使用线程池时需及时注销以重新调整线程池的队列组分配
 	globalPool.unregister_this_thread();
 	std::cout << "Thread register example" << std::endl;
 }
@@ -265,7 +272,7 @@ int main()
 
 	std::cout << "==== Simple Task Example ====" << std::endl;
 	TaskType task(simpleTask, "Hello, World.");
-	globalPool.enqueue(std::move(task));
+	globalPool.submit(std::move(task));
 	std::this_thread::sleep_for(std::chrono::milliseconds(10));
 
 	std::cout << "\n==== Heap Task Example ====" << std::endl;

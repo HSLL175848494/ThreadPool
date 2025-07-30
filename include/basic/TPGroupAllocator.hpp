@@ -7,8 +7,8 @@ namespace HSLL
 {
 	namespace INNER
 	{
-		constexpr float HSLL_QUEUE_FULL_FACTOR_MAIN = 0.999;
-		constexpr float HSLL_QUEUE_FULL_FACTOR_OTHER = 0.995;
+		constexpr float HSLL_QUEUE_FULL_FACTOR_MAIN = 0.999f;
+		constexpr float HSLL_QUEUE_FULL_FACTOR_OTHER = 0.995f;
 
 		static_assert(HSLL_QUEUE_FULL_FACTOR_MAIN > 0 && HSLL_QUEUE_FULL_FACTOR_MAIN <= 1, "Invalid factors.");
 		static_assert(HSLL_QUEUE_FULL_FACTOR_OTHER > 0 && HSLL_QUEUE_FULL_FACTOR_OTHER <= 1, "Invalid factors.");
@@ -26,7 +26,7 @@ namespace HSLL
 			unsigned int otherFullThreshold;
 			std::vector<TPBlockQueue<T>*>* assignedQueues;
 
-			void advance_index()
+			void advance_index() noexcept
 			{
 				if (nowCount >= taskThreshold)
 				{
@@ -37,7 +37,7 @@ namespace HSLL
 
 		public:
 
-			void resetAndInit(std::vector<TPBlockQueue<T>*>* queues, unsigned int capacity, unsigned int threshold)
+			void resetAndInit(std::vector<TPBlockQueue<T>*>* queues, unsigned int capacity, unsigned int threshold) noexcept
 			{
 				nowCount = 0;
 				nowIndex = 0;
@@ -47,7 +47,7 @@ namespace HSLL
 				this->otherFullThreshold = std::max(2u, (unsigned int)(capacity * HSLL_QUEUE_FULL_FACTOR_OTHER));
 			}
 
-			TPBlockQueue<T>* current_queue()
+			TPBlockQueue<T>* current_queue() noexcept
 			{
 				TPBlockQueue<T>* queue = (*assignedQueues)[nowIndex];
 
@@ -57,7 +57,7 @@ namespace HSLL
 					return nullptr;
 			}
 
-			TPBlockQueue<T>* available_queue()
+			TPBlockQueue<T>* available_queue() noexcept
 			{
 				TPBlockQueue<T>* candidateQueue;
 
@@ -76,7 +76,7 @@ namespace HSLL
 				return nullptr;
 			}
 
-			void record(unsigned int count)
+			void record(unsigned int count) noexcept
 			{
 				if (assignedQueues->size() == 1)
 					return;
@@ -107,7 +107,7 @@ namespace HSLL
 			std::vector<std::vector<TPBlockQueue<T>*>> threadSlots;
 			std::map<std::thread::id, RoundRobinGroup<T>> threadGroups;
 
-			void manage_thread_entry(bool addThread, std::thread::id threadId)
+			void manage_thread_entry(bool addThread, std::thread::id threadId) noexcept
 			{
 				if (addThread)
 				{
@@ -134,7 +134,7 @@ namespace HSLL
 				rebuild_slot_assignments();
 			}
 
-			void rebuild_slot_assignments()
+			void rebuild_slot_assignments() noexcept
 			{
 				if (threadSlots.size())
 				{
@@ -146,7 +146,7 @@ namespace HSLL
 				}
 			}
 
-			void reinitialize_groups()
+			void reinitialize_groups() noexcept
 			{
 				if (threadSlots.size())
 				{
@@ -159,7 +159,7 @@ namespace HSLL
 				}
 			}
 
-			static unsigned int calculate_balanced_thread_count(unsigned int queueCount, unsigned int threadCount)
+			static unsigned int calculate_balanced_thread_count(unsigned int queueCount, unsigned int threadCount) noexcept
 			{
 				if (threadCount > queueCount)
 				{
@@ -185,7 +185,7 @@ namespace HSLL
 				return threadCount;
 			}
 
-			void populate_slot(bool forwardOrder, std::vector<TPBlockQueue<T>*>& slot)
+			void populate_slot(bool forwardOrder, std::vector<TPBlockQueue<T>*>& slot) noexcept
 			{
 				if (forwardOrder)
 				{
@@ -199,7 +199,7 @@ namespace HSLL
 				}
 			}
 
-			void handle_remainder_case(unsigned int threadCount)
+			void handle_remainder_case(unsigned int threadCount) noexcept
 			{
 				bool fillDirection = false;
 				unsigned int balancedCount = calculate_balanced_thread_count(queueCount, threadCount - 1);
@@ -212,7 +212,7 @@ namespace HSLL
 				}
 			}
 
-			void distribute_queues_to_threads(unsigned int threadCount)
+			void distribute_queues_to_threads(unsigned int threadCount) noexcept
 			{
 				if (!threadCount)
 					return;
@@ -253,13 +253,13 @@ namespace HSLL
 
 		public:
 
-			void reset()
+			void reset() noexcept
 			{
 				std::vector<std::vector<TPBlockQueue<T>*>>().swap(threadSlots);
 				std::map<std::thread::id, RoundRobinGroup<T>>().swap(threadGroups);
 			}
 
-			void initialize(TPBlockQueue<T>* queues, unsigned int queueCount, unsigned int capacity, unsigned int threshold)
+			void initialize(TPBlockQueue<T>* queues, unsigned int queueCount, unsigned int capacity, unsigned int threshold) noexcept
 			{
 				this->queues = queues;
 				this->capacity = capacity;
@@ -268,7 +268,7 @@ namespace HSLL
 				this->fullThreshold = std::max(2u, (unsigned int)(capacity * HSLL_QUEUE_FULL_FACTOR_MAIN));
 			}
 
-			RoundRobinGroup<T>* find(std::thread::id threadId)
+			RoundRobinGroup<T>* find(std::thread::id threadId) noexcept
 			{
 				auto it = threadGroups.find(threadId);
 
@@ -278,7 +278,7 @@ namespace HSLL
 				return nullptr;
 			}
 
-			TPBlockQueue<T>* available_queue(RoundRobinGroup<T>* group)
+			TPBlockQueue<T>* available_queue(RoundRobinGroup<T>* group) noexcept
 			{
 				unsigned int size = group->assignedQueues->size();
 
@@ -299,17 +299,17 @@ namespace HSLL
 				return nullptr;
 			}
 
-			void register_thread(std::thread::id threadId)
+			void register_thread(std::thread::id threadId) noexcept
 			{
 				manage_thread_entry(true, threadId);
 			}
 
-			void unregister_thread(std::thread::id threadId)
+			void unregister_thread(std::thread::id threadId) noexcept
 			{
 				manage_thread_entry(false, threadId);
 			}
 
-			void update(unsigned int newQueueCount)
+			void update(unsigned int newQueueCount) noexcept
 			{
 				if (this->queueCount != newQueueCount)
 				{

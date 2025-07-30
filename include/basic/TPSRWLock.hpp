@@ -26,10 +26,10 @@ namespace HSLL
 
 			public:
 
-				InnerRWLock() :count(0) {}
+				InnerRWLock()noexcept :count(0) {}
 
 				// Optimistic locking since reads greatly outnumber writes: increment first then handle rollback if needed
-				void lock_read()
+				void lock_read() noexcept
 				{
 					long long old = count.fetch_add(1, std::memory_order_acquire); // Acquire semantics to get write results
 
@@ -45,13 +45,13 @@ namespace HSLL
 				}
 
 				// Relaxed semantics sufficient since read operations don't modify shared state
-				void unlock_read()
+				void unlock_read() noexcept
 				{
 					count.fetch_sub(1, std::memory_order_relaxed);
 				}
 
 				// Add write flag to prevent new read locks
-				void mark_write()
+				void mark_write() noexcept
 				{
 					long long old = count.load(std::memory_order_relaxed);
 
@@ -59,13 +59,13 @@ namespace HSLL
 				}
 
 				// Must call mark_write() before this function, otherwise will never succeed
-				bool is_write_ready()
+				bool is_write_ready() noexcept
 				{
 					return count.load(std::memory_order_relaxed) == -HSLL_SPINREADWRITELOCK_MAXREADER;
 				}
 
 				// Release semantics to propagate write results
-				void unlock_write()
+				void unlock_write() noexcept
 				{
 					count.fetch_add(HSLL_SPINREADWRITELOCK_MAXREADER, std::memory_order_release);
 				}
@@ -75,27 +75,27 @@ namespace HSLL
 			{
 				InnerRWLock lock;
 
-				void lock_read()
+				void lock_read() noexcept
 				{
 					lock.lock_read();
 				}
 
-				void unlock_read()
+				void unlock_read() noexcept
 				{
 					lock.unlock_read();
 				}
 
-				void mark_write()
+				void mark_write() noexcept
 				{
 					lock.mark_write();
 				}
 
-				bool is_write_ready()
+				bool is_write_ready() noexcept
 				{
 					return lock.is_write_ready();
 				}
 
-				void unlock_write()
+				void unlock_write() noexcept
 				{
 					lock.unlock_write();
 				}
@@ -108,9 +108,9 @@ namespace HSLL
 
 		public:
 
-			SpinReadWriteLock() :flag(true) {}
+			SpinReadWriteLock() noexcept :flag(true) {}
 
-			unsigned int get_local_index()
+			unsigned int get_local_index() noexcept
 			{
 				if (local_index == -1)
 					local_index = index.fetch_add(1, std::memory_order_relaxed) % HSLL_SPINREADWRITELOCK_MAXSLOTS;
@@ -118,17 +118,17 @@ namespace HSLL
 				return local_index;
 			}
 
-			void lock_read()
+			void lock_read() noexcept
 			{
 				counter[get_local_index()].lock_read();
 			}
 
-			void unlock_read()
+			void unlock_read() noexcept
 			{
 				counter[get_local_index()].unlock_read();
 			}
 
-			void lock_write()
+			void lock_write() noexcept
 			{
 				bool old = true;
 
@@ -162,7 +162,60 @@ namespace HSLL
 				}
 			}
 
-			void unlock_write()
+			bool try_lock_write_until(const std::chrono::steady_clock::time_point& timestamp) noexcept
+			{
+				bool old = true;
+
+				// Set write flag to block new writers and acquire write permission
+				while (!flag.compare_exchange_weak(old, false, std::memory_order_acquire, std::memory_order_relaxed))
+				{
+					old = true;
+
+					auto now = std::chrono::steady_clock::now();
+
+					if (now >= timestamp)
+						return false;
+
+					std::this_thread::yield();
+				}
+
+				for (int i = 0; i < HSLL_SPINREADWRITELOCK_MAXSLOTS; ++i) // Mark writer waiting to prevent new readers
+					counter[i].mark_write();
+
+				while (true)
+				{
+					bool allReady = true;
+
+					for (int i = 0; i < HSLL_SPINREADWRITELOCK_MAXSLOTS; ++i) // Lock successful when all write locks acquired
+					{
+						if (!counter[i].is_write_ready())
+						{
+							allReady = false;
+							break;
+						}
+					}
+
+					if (allReady)
+						break;
+
+					auto now = std::chrono::steady_clock::now();
+
+					if (now >= timestamp)//rollback
+					{
+						for (int i = 0; i < HSLL_SPINREADWRITELOCK_MAXSLOTS; ++i)
+							counter[i].unlock_write();
+
+						flag.store(true, std::memory_order_relaxed);
+						return false;
+					}
+
+					std::this_thread::yield();
+				}
+
+				return true;
+			}
+
+			void unlock_write() noexcept
 			{
 				for (int i = 0; i < HSLL_SPINREADWRITELOCK_MAXSLOTS; ++i) // Release all read-write locks and propagate to readers
 					counter[i].unlock_write();
@@ -185,12 +238,12 @@ namespace HSLL
 
 		public:
 
-			explicit ReadLockGuard(SpinReadWriteLock& lock) : lock(lock)
+			explicit ReadLockGuard(SpinReadWriteLock& lock) noexcept : lock(lock)
 			{
 				lock.lock_read();
 			}
 
-			~ReadLockGuard()
+			~ReadLockGuard() noexcept
 			{
 				lock.unlock_read();
 			}
@@ -207,12 +260,12 @@ namespace HSLL
 
 		public:
 
-			explicit WriteLockGuard(SpinReadWriteLock& lock) : lock(lock)
+			explicit WriteLockGuard(SpinReadWriteLock& lock)noexcept : lock(lock)
 			{
 				lock.lock_write();
 			}
 
-			~WriteLockGuard()
+			~WriteLockGuard() noexcept
 			{
 				lock.unlock_write();
 			}

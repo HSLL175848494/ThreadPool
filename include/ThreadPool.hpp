@@ -18,9 +18,17 @@ namespace HSLL
 	{
 		constexpr float HSLL_THREADPOOL_SHRINK_FACTOR = 0.25f;
 		constexpr float HSLL_THREADPOOL_EXPAND_FACTOR = 0.75f;
-		constexpr unsigned int HSLL_THREADPOOL_TIMEOUT_MILLISECONDS = 1;
+		constexpr float HSLL_THREADPOOL_SHRINK_THRESHOLD_RATIO = 0.95f;
+		constexpr float	HSLL_THREADPOOL_EXPAND_THRESHOLD_RATIO = 0.40f;
+		constexpr unsigned int HSLL_THREADPOOL_LOCK_TIMEOUT_MILLISECONDS = 1u;
+		constexpr unsigned int HSLL_THREADPOOL_DEQUEUE_TIMEOUT_MILLISECONDS = 1u;
 
-		static_assert(HSLL_THREADPOOL_TIMEOUT_MILLISECONDS > 0, "Invalid timeout value.");
+		static_assert(HSLL_THREADPOOL_LOCK_TIMEOUT_MILLISECONDS > 0, "Invalid lock timeout value.");
+		static_assert(HSLL_THREADPOOL_DEQUEUE_TIMEOUT_MILLISECONDS > 0, "Invalid dequeue timeout value.");
+		static_assert(HSLL_THREADPOOL_SHRINK_THRESHOLD_RATIO > 0.0f && HSLL_THREADPOOL_SHRINK_THRESHOLD_RATIO < 1.0f,
+			"Invalid shrink threshold ratio.");
+		static_assert(HSLL_THREADPOOL_EXPAND_THRESHOLD_RATIO > 0.0f && HSLL_THREADPOOL_EXPAND_THRESHOLD_RATIO < 1.0f,
+			"Invalid expand threshold ratio.");
 		static_assert(HSLL_THREADPOOL_SHRINK_FACTOR < HSLL_THREADPOOL_EXPAND_FACTOR&& HSLL_THREADPOOL_EXPAND_FACTOR < 1.0
 			&& HSLL_THREADPOOL_SHRINK_FACTOR > 0.0, "Invalid factors.");
 
@@ -169,6 +177,9 @@ namespace HSLL
 		class ThreadPool
 		{
 			static_assert(is_TaskStack<T>::value, "TYPE must be a TaskStack type");
+
+			template <class TYPE, unsigned int, INSERT_POS POS>
+			friend class BatchSubmitter;
 
 		private:
 
@@ -346,15 +357,17 @@ namespace HSLL
 		return size;											
 
 			/**
-			 * @brief Non-blocking task emplacement with perfect forwarding
-			 * @tparam POS Insertion position (HEAD or TAIL, default TAIL)
-			 * @tparam Args Types of arguments for task constructor
+			 * @brief Non-blocking task submission to the thread pool
+			 * @tparam POS Insertion position (HEAD or TAIL, default: TAIL)
 			 * @param args Arguments forwarded to task constructor
-			 * @return true if task was enqueued, false if queue was full
-			 * @details Constructs task in-place at selected position without blocking
+			 * @return true if task was successfully added, false otherwise
+			 * @note
+			 * Supports two argument structures:
+			 * 1. TaskStack object (must be passed by rvalue reference, using move semantics)
+			 * 2. Callable object (function pointer/lambda/functor...) + bound arguments
 			 */
 			template <INSERT_POS POS = TAIL, typename... Args>
-			bool emplace(Args &&...args) noexcept
+			bool submit(Args &&...args) noexcept
 			{
 				HSLL_ENQUEUE_HELPER(
 					(queues-> template emplace<POS>(std::forward<Args>(args)...)),
@@ -363,15 +376,17 @@ namespace HSLL
 			}
 
 			/**
-			 * @brief Blocking task emplacement with indefinite wait
-			 * @tparam POS Insertion position (HEAD or TAIL, default TAIL)
-			 * @tparam Args Types of arguments for task constructor
+			 * @brief Blocking task submission with indefinite wait
+			 * @tparam POS Insertion position (HEAD or TAIL, default: TAIL)
 			 * @param args Arguments forwarded to task constructor
-			 * @return true if task was added, false if thread pool was stopped
-			 * @details Waits indefinitely for queue space, constructs task at selected position
+			 * @return true if task was added successfully, false if thread pool was stopped
+			 * @note
+			 * Supports two argument structures:
+			 * 1. TaskStack object (must be passed by rvalue reference, using move semantics)
+			 * 2. Callable object (function pointer/lambda/functor...) + bound arguments
 			 */
 			template <INSERT_POS POS = TAIL, typename... Args>
-			bool wait_emplace(Args &&...args) noexcept
+			bool wait_submit(Args &&...args) noexcept
 			{
 				HSLL_ENQUEUE_HELPER(
 					(queues-> template wait_emplace<POS>(std::forward<Args>(args)...)),
@@ -380,17 +395,18 @@ namespace HSLL
 			}
 
 			/**
-			 * @brief Blocking task emplacement with timeout
-			 * @tparam POS Insertion position (HEAD or TAIL, default TAIL)
-			 * @tparam Rep Chrono duration representation type
-			 * @tparam Period Chrono duration period type
-			 * @tparam Args Types of arguments for task constructor
+			 * @brief Blocking task submission with timeout
+			 * @tparam POS Insertion position (HEAD or TAIL, default: TAIL)
 			 * @param timeout Maximum duration to wait for space
 			 * @param args Arguments forwarded to task constructor
-			 * @return true if task was added, false on timeout or thread pool stop
+			 * @return true if task was added successfully, false on timeout or thread pool stop
+			 * @note
+			 * Supports two argument structures:
+			 * 1. TaskStack object (must be passed by rvalue reference, using move semantics)
+			 * 2. Callable object (function pointer/lambda/functor...) + bound arguments
 			 */
 			template <INSERT_POS POS = TAIL, class Rep, class Period, typename... Args>
-			bool wait_emplace(const std::chrono::duration<Rep, Period>& timeout, Args &&...args) noexcept
+			bool wait_submit(const std::chrono::duration<Rep, Period>& timeout, Args &&...args) noexcept
 			{
 				HSLL_ENQUEUE_HELPER(
 					(queues-> template wait_emplace<POS>(timeout, std::forward<Args>(args)...)),
@@ -399,127 +415,51 @@ namespace HSLL
 			}
 
 			/**
-			 * @brief Non-blocking push for preconstructed task
-			 * @tparam POS Insertion position (HEAD or TAIL, default TAIL)
-			 * @tparam U Deduced task type (supports perfect forwarding)
-			 * @param task Task object to enqueue
-			 * @return true if task was enqueued, false if queue was full
-			 */
-			template <INSERT_POS POS = TAIL, class U>
-			bool enqueue(U&& task) noexcept
-			{
-				HSLL_ENQUEUE_HELPER(
-					(queues-> template enqueue<POS>(std::forward<U>(task))),
-					(queue-> template enqueue<POS>(std::forward<U>(task)))
-				)
-			}
-
-			/**
-			 * @brief Blocking push for preconstructed task with indefinite wait
-			 * @tparam POS Insertion position (HEAD or TAIL, default TAIL)
-			 * @tparam U Deduced task type
-			 * @param task Task object to add
-			 * @return true if task was added, false if thread pool was stopped
-			 */
-			template <INSERT_POS POS = TAIL, class U>
-			bool wait_enqueue(U&& task) noexcept
-			{
-				HSLL_ENQUEUE_HELPER(
-					(queues-> template wait_push<POS>(std::forward<U>(task))),
-					(queue-> template wait_push<POS>(std::forward<U>(task)))
-				)
-			}
-
-			/**
-			 * @brief Blocking push for preconstructed task with timeout
-			 * @tparam POS Insertion position (HEAD or TAIL, default TAIL)
-			 * @tparam U Deduced task type
-			 * @tparam Rep Chrono duration representation type
-			 * @tparam Period Chrono duration period type
-			 * @param task Task object to add
-			 * @param timeout Maximum duration to wait for space
-			 * @return true if task was added, false on timeout or thread pool stop
-			 */
-			template <INSERT_POS POS = TAIL, class U, class Rep, class Period>
-			bool wait_enqueue(U&& task, const std::chrono::duration<Rep, Period>& timeout) noexcept
-			{
-				HSLL_ENQUEUE_HELPER(
-					(queues-> template wait_push<POS>(std::forward<U>(task), timeout)),
-					(queue-> template wait_push<POS>(std::forward<U>(task), timeout))
-				)
-			}
-
-			/**
-			 * @brief Non-blocking bulk push for multiple tasks
-			 * @tparam METHOD Bulk construction method (COPY or MOVE, default COPY)
-			 * @tparam POS Insertion position (HEAD or TAIL, default TAIL)
+			 * @brief Non-blocking bulk task submission (using move semantics)
+			 * @tparam POS Insertion position (HEAD or TAIL, default: TAIL)
 			 * @param tasks Array of tasks to enqueue
-			 * @param count Number of tasks in array
-			 * @return Actual number of tasks enqueued
-			 */
-			template <BULK_CMETHOD METHOD = COPY, INSERT_POS POS = TAIL>
-			unsigned int enqueue_bulk(T* tasks, unsigned int count) noexcept
-			{
-				HSLL_ENQUEUE_HELPER(
-					(queues-> template enqueue_bulk<METHOD, POS>(tasks, count)),
-					(queue-> template enqueue_bulk<METHOD, POS>(tasks, count))
-				)
-			}
-
-			/**
-			 * @brief Non-blocking bulk push for multiple tasks (dual-part version)
-			 * @tparam METHOD Bulk construction method (COPY or MOVE, default COPY)
-			 * @tparam POS Insertion position (HEAD or TAIL, default TAIL)
-			 * @param part1 First array segment of tasks to enqueue
-			 * @param count1 Number of tasks in first segment
-			 * @param part2 Second array segment of tasks to enqueue
-			 * @param count2 Number of tasks in second segment
-			 * @return Actual number of tasks successfully enqueued (sum of both segments minus failures)
-			 * @note Designed for ring buffers that benefit from batched two-part insertion.
-			 */
-			template <BULK_CMETHOD METHOD = COPY, INSERT_POS POS = TAIL>
-			unsigned int enqueue_bulk(T* part1, unsigned int count1, T* part2, unsigned int count2) noexcept
-			{
-				HSLL_ENQUEUE_HELPER(
-					(queues-> template enqueue_bulk<METHOD, POS>(part1, count1, part2, count2)),
-					(queue-> template enqueue_bulk<METHOD, POS>(part1, count1, part2, count2))
-				)
-			}
-
-			/**
-			 * @brief Blocking bulk push with indefinite wait
-			 * @tparam METHOD Bulk construction method (COPY or MOVE, default COPY)
-			 * @tparam POS Insertion position (HEAD or TAIL, default TAIL)
-			 * @param tasks Array of tasks to add
-			 * @param count Number of tasks to add
-			 * @return Actual number of tasks added before stop
-			 */
-			template <BULK_CMETHOD METHOD = COPY, INSERT_POS POS = TAIL>
-			unsigned int wait_enqueue_bulk(T* tasks, unsigned int count) noexcept
-			{
-				HSLL_ENQUEUE_HELPER(
-					(queues-> template wait_pushBulk<METHOD, POS>(tasks, count)),
-					(queue-> template wait_pushBulk<METHOD, POS>(tasks, count))
-				)
-			}
-
-			/**
-			 * @brief Blocking bulk push with timeout
-			 * @tparam METHOD Bulk construction method (COPY or MOVE, default COPY)
-			 * @tparam POS Insertion position (HEAD or TAIL, default TAIL)
-			 * @tparam Rep Chrono duration representation type
-			 * @tparam Period Chrono duration period type
-			 * @param tasks Array of tasks to add
-			 * @param count Number of tasks to add
-			 * @param timeout Maximum duration to wait for space
+			 * @param count Number of tasks in array (must be > 0)
 			 * @return Actual number of tasks added (may be less than count)
 			 */
-			template <BULK_CMETHOD METHOD = COPY, INSERT_POS POS = TAIL, class Rep, class Period>
-			unsigned int wait_enqueue_bulk(T* tasks, unsigned int count, const std::chrono::duration<Rep, Period>& timeout) noexcept
+			template <INSERT_POS POS = TAIL>
+			unsigned int submit_bulk(T* tasks, unsigned int count) noexcept
 			{
 				HSLL_ENQUEUE_HELPER(
-					(queues-> template wait_pushBulk<METHOD, POS>(tasks, count, timeout)),
-					(queue-> template wait_pushBulk<METHOD, POS>(tasks, count, timeout))
+					(queues-> template enqueue_bulk<MOVE, POS>(tasks, count)),
+					(queue-> template enqueue_bulk<MOVE, POS>(tasks, count))
+				)
+			}
+
+			/**
+			 * @brief Blocking bulk submission with indefinite wait (using move semantics)
+			 * @tparam POS Insertion position (HEAD or TAIL, default: TAIL)
+			 * @param tasks Array of tasks to add
+			 * @param count Number of tasks to add (must be > 0)
+			 * @return Actual number of tasks added (may be less than count)
+			 */
+			template <INSERT_POS POS = TAIL>
+			unsigned int wait_submit_bulk(T* tasks, unsigned int count) noexcept
+			{
+				HSLL_ENQUEUE_HELPER(
+					(queues-> template wait_enqueue_bulk<MOVE, POS>(tasks, count)),
+					(queue-> template wait_enqueue_bulk<MOVE, POS>(tasks, count))
+				)
+			}
+
+			/**
+			 * @brief Blocking bulk submission with timeout (using move semantics)
+			 * @tparam POS Insertion position (HEAD or TAIL, default: TAIL)
+			 * @param timeout Maximum duration to wait for space
+			 * @param tasks Array of tasks to add
+			 * @param count Number of tasks to add (must be > 0)
+			 * @return Actual number of tasks added (may be less than count)
+			 */
+			template <INSERT_POS POS = TAIL, class Rep, class Period>
+			unsigned int wait_submit_bulk(const std::chrono::duration<Rep, Period>& timeout, T* tasks, unsigned int count) noexcept
+			{
+				HSLL_ENQUEUE_HELPER(
+					(queues-> template wait_enqueue_bulk<MOVE, POS>(timeout, tasks, count)),
+					(queue-> template wait_enqueue_bulk<MOVE, POS>(timeout, tasks, count))
 				)
 			}
 
@@ -530,7 +470,7 @@ namespace HSLL
 			 *  2. This function is not thread-safe.
 			 *	3. This function does not clean up resources. After the call, the queue can be used normally.
 			 */
-			void drain()
+			void drain() noexcept
 			{
 				assert(queues);
 
@@ -593,14 +533,14 @@ namespace HSLL
 				rleaseResourse();
 			}
 
-			void register_this_thread()
+			void register_this_thread() noexcept
 			{
 				std::thread::id id = std::this_thread::get_id();
 				WriteLockGuard lock(rwLock);
 				groupAllocator.register_thread(id);
 			}
 
-			void unregister_this_thread()
+			void unregister_this_thread() noexcept
 			{
 				std::thread::id id = std::this_thread::get_id();
 				WriteLockGuard lock(rwLock);
@@ -619,6 +559,29 @@ namespace HSLL
 			ThreadPool& operator=(ThreadPool&&) = delete;
 
 		private:
+
+			static bool try_wait_empty_until(const std::chrono::steady_clock::time_point& timestamp, TPBlockQueue<T>* queue) noexcept
+			{
+				while (queue->get_size())
+				{
+					std::this_thread::yield();
+					auto now = std::chrono::steady_clock::now();
+
+					if (now >= timestamp)
+						return false;
+				}
+
+				return true;
+			}
+
+			template <INSERT_POS POS = TAIL>
+			unsigned int submit_bulk(T* part1, unsigned int count1, T* part2, unsigned int count2) noexcept
+			{
+				HSLL_ENQUEUE_HELPER(
+					(queues-> template enqueue_bulk<MOVE, POS>(part1, count1, part2, count2)),
+					(queue-> template enqueue_bulk<MOVE, POS>(part1, count1, part2, count2))
+				)
+			}
 
 			unsigned int next_index() noexcept
 			{
@@ -646,16 +609,22 @@ namespace HSLL
 
 			void load_monitor() noexcept
 			{
-				unsigned int count = 0;
+				unsigned int shrink = 0;
+				unsigned int expand = 0;
+				unsigned int nowCount = 0;
+				auto timestamp = std::chrono::steady_clock::now() + adjustMillis;
 
 				while (true)
 				{
-					if (monitorSem.try_acquire_for(adjustMillis))
+					if (monitorSem.try_acquire_for(std::chrono::milliseconds(HSLL_THREADPOOL_LOCK_TIMEOUT_MILLISECONDS)))
 					{
 						if (adjustFlag)
 						{
 							adjustFlag = false;
 							monitorSem.acquire();
+							shrink = 0;
+							expand = 0;
+							nowCount = 0;
 						}
 						else
 						{
@@ -666,51 +635,87 @@ namespace HSLL
 					unsigned int allSize = capacity * threadNum;
 					unsigned int totalSize = 0;
 
-					for (int i = 0; i < threadNum; ++i)
+					for (unsigned int i = 0; i < threadNum; ++i)
 						totalSize += queues[i].get_size();
 
-					if (totalSize < allSize * HSLL_THREADPOOL_SHRINK_FACTOR && threadNum > minThreadNum)
-					{
-						count++;
+					if (totalSize < allSize * HSLL_THREADPOOL_SHRINK_FACTOR)
+						shrink++;
+					else if (totalSize > allSize * HSLL_THREADPOOL_EXPAND_FACTOR)
+						expand++;
 
-						if (count >= 3)
+					nowCount++;
+
+					if (std::chrono::steady_clock::now() < timestamp)
+						continue;
+
+					unsigned int shrinkThreshold = nowCount * HSLL_THREADPOOL_SHRINK_THRESHOLD_RATIO;
+					unsigned int expandThreshold = nowCount * HSLL_THREADPOOL_EXPAND_THRESHOLD_RATIO;
+
+					if (threadNum > minThreadNum && shrink >= shrinkThreshold)
+					{
+						auto timestamp = std::chrono::steady_clock::now() + std::chrono::milliseconds(HSLL_THREADPOOL_LOCK_TIMEOUT_MILLISECONDS);
+
+						if (rwLock.try_lock_write_until(timestamp))
 						{
-							rwLock.lock_write();
 							threadNum--;
 							groupAllocator.update(threadNum);
 							rwLock.unlock_write();
-							queues[threadNum].stopWait();
-							stoppedSem[threadNum].acquire();
-							queues[threadNum].release();
-							count = 0;
-						}
-					}
-					else
-					{
-						if (totalSize > allSize * HSLL_THREADPOOL_EXPAND_FACTOR && threadNum < maxThreadNum)
-						{
-							unsigned int newThreads = std::max(1u, (maxThreadNum - threadNum) / 2);
-							unsigned int succeed = 0;
-							for (int i = threadNum; i < threadNum + newThreads; ++i)
+
+							if (try_wait_empty_until(timestamp, queues + threadNum))
 							{
-								if (!queues[i].init(capacity))
-									break;
-
-								restartSem[i].release();
-								succeed++;
+								queues[threadNum].stopWait();
+								stoppedSem[threadNum].acquire();
+								queues[threadNum].release();
 							}
-
-							if (succeed > 0)
+							else //rollback
 							{
 								rwLock.lock_write();
-								threadNum += succeed;
+								threadNum++;
 								groupAllocator.update(threadNum);
 								rwLock.unlock_write();
 							}
 						}
-
-						count = 0;
 					}
+					else if (threadNum < maxThreadNum && expand >= expandThreshold)
+					{
+
+						unsigned int newThreads = std::max(1u, (maxThreadNum - threadNum) / 2);
+						unsigned int succeed = 0;
+						for (unsigned int i = threadNum; i < threadNum + newThreads; ++i)
+						{
+							if (!queues[i].init(capacity))
+								break;
+
+							restartSem[i].release();
+							succeed++;
+						}
+
+						if (succeed > 0)
+						{
+							auto timestamp = std::chrono::steady_clock::now() + std::chrono::milliseconds(HSLL_THREADPOOL_LOCK_TIMEOUT_MILLISECONDS);
+
+							if (rwLock.try_lock_write_until(timestamp))
+							{
+								threadNum += succeed;
+								groupAllocator.update(threadNum);
+								rwLock.unlock_write();
+							}
+							else//rollback
+							{
+								for (unsigned int i = threadNum; i < threadNum + succeed; ++i)
+								{
+									queues[i].stopWait();
+									stoppedSem[i].acquire();
+									queues[i].release();
+								}
+							}
+						}
+					}
+
+					shrink = 0;
+					expand = 0;
+					nowCount = 0;
+					timestamp = std::chrono::steady_clock::now() + adjustMillis;
 				}
 			}
 
@@ -754,7 +759,7 @@ namespace HSLL
 							goto cheak;
 						}
 
-						if (queue->wait_dequeue(*task, std::chrono::milliseconds(HSLL_THREADPOOL_TIMEOUT_MILLISECONDS)))
+						if (queue->wait_dequeue(std::chrono::milliseconds(HSLL_THREADPOOL_DEQUEUE_TIMEOUT_MILLISECONDS), *task))
 						{
 							task->execute();
 							task->~T();
@@ -819,8 +824,8 @@ namespace HSLL
 							goto cheak;
 						}
 
-						if (count = queue->wait_dequeue_bulk(tasks, batchSize,
-							std::chrono::milliseconds(HSLL_THREADPOOL_TIMEOUT_MILLISECONDS)))
+						if (count = queue->wait_dequeue_bulk(std::chrono::milliseconds(HSLL_THREADPOOL_DEQUEUE_TIMEOUT_MILLISECONDS),
+							tasks, batchSize))
 							execute_tasks(tasks, count);
 
 					cheak:
@@ -843,7 +848,7 @@ namespace HSLL
 				}
 			}
 
-			bool initResourse(unsigned int capacity, unsigned int maxThreadNum, unsigned int batchSize)
+			bool initResourse(unsigned int capacity, unsigned int maxThreadNum, unsigned int batchSize) noexcept
 			{
 				unsigned int succeed = 0;
 
@@ -891,7 +896,7 @@ namespace HSLL
 				return false;
 			}
 
-			void rleaseResourse()
+			void rleaseResourse() noexcept
 			{
 				for (unsigned i = 0; i < maxThreadNum; ++i)
 					queues[i].~TPBlockQueue<T>();
@@ -931,7 +936,7 @@ namespace HSLL
 			* @brief Constructs a batch submitter associated with a thread pool
 			* @param pool Pointer to the thread pool for batch task submission
 			*/
-			BatchSubmitter(ThreadPool<T>& pool) : size(0), index(0), elements((T*)buf), pool(pool) {
+			BatchSubmitter(ThreadPool<T>& pool) noexcept : size(0), index(0), elements((T*)buf), pool(pool) {
 			}
 
 			/**
@@ -963,39 +968,28 @@ namespace HSLL
 
 			/**
 			 * @brief Constructs task in-place in batch buffer
-			 * @tparam Args Types of arguments for task constructor
 			 * @param args Arguments forwarded to task constructor
-			 * @return true if task was added to buffer or submitted successfully,
-			 *         false if submission failed due to full thread pool queues
-			 * @details Automatically submits batch if buffer becomes full during emplace
+			 * @return true if task was added to buffer (or submitted successfully when buffer full),
+			 *         false if buffer was full and submission failed (task not added)
+			 * @note
+			 * Supports two argument structures:
+			 * 1. TaskStack object (must be passed by rvalue reference, using move semantics)
+			 * 2. Callable object (function pointer/lambda/functor...) + bound arguments
+			 *
+			 * @details
+			 *   - If buffer not full: adds task to buffer
+			 *   - If buffer full:
+			 *       1. First attempts to submit full batch
+			 *       2. Only if submission succeeds, adds new task to buffer
+			 *   - Returns false only when submission of full batch fails
 			 */
 			template <typename... Args>
-			bool emplace(Args &&...args) noexcept
+			bool add(Args &&...args) noexcept
 			{
 				if (!check_and_submit())
 					return false;
 
 				new (elements + index) T(std::forward<Args>(args)...);
-				index = (index + 1) % BATCH;
-				size++;
-				return true;
-			}
-
-			/**
-			 * @brief Adds preconstructed task to batch buffer
-			 * @tparam U Deduced task type
-			 * @param task Task object to buffer
-			 * @return true if task was added to buffer or submitted successfully,
-			 *         false if submission failed due to full thread pool queues
-			 * @details Automatically submits batch if buffer becomes full during add
-			 */
-			template <class U>
-			bool add(U&& task) noexcept
-			{
-				if (!check_and_submit())
-					return false;
-
-				new (elements + index) T(std::forward<U>(task));
 				index = (index + 1) % BATCH;
 				size++;
 				return true;
@@ -1019,13 +1013,13 @@ namespace HSLL
 				if (!len2)
 				{
 					if (len1 == 1)
-						submitted = pool.template enqueue<POS>(std::move(*(elements + start))) ? 1 : 0;
+						submitted = pool.template submit<POS>(std::move(*(elements + start))) ? 1 : 0;
 					else
-						submitted = pool.template enqueue_bulk<MOVE, POS>(elements + start, len1);
+						submitted = pool.template submit_bulk<POS>(elements + start, len1);
 				}
 				else
 				{
-					submitted = pool.template enqueue_bulk<MOVE, POS>(
+					submitted = pool.template submit_bulk<POS>(
 						elements + start, len1,
 						elements, len2
 					);
