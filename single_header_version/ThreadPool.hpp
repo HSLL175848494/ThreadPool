@@ -1176,6 +1176,19 @@ namespace HSLL
 
 				InnerRWLock()noexcept :count(0) {}
 
+				bool try_lock_read() noexcept
+				{
+					long long old = count.fetch_add(1, std::memory_order_acquire);
+
+					if (old < 0)
+					{
+						count.fetch_sub(1, std::memory_order_relaxed);
+						return false;
+					}
+
+					return true;
+				}
+
 				// Optimistic locking since reads greatly outnumber writes: increment first then handle rollback if needed
 				void lock_read() noexcept
 				{
@@ -1226,6 +1239,11 @@ namespace HSLL
 				void lock_read() noexcept
 				{
 					lock.lock_read();
+				}
+
+				bool try_lock_read() noexcept
+				{
+					return lock.try_lock_read();
 				}
 
 				void unlock_read() noexcept
@@ -1310,6 +1328,19 @@ namespace HSLL
 				}
 			}
 
+			void unlock_write() noexcept
+			{
+				for (int i = 0; i < HSLL_SPINREADWRITELOCK_MAXSLOTS; ++i) // Release all read-write locks and propagate to readers
+					counter[i].unlock_write();
+
+				flag.store(true, std::memory_order_release); // Allow new writers and propagate result
+			}
+
+			bool try_lock_read()
+			{
+				return counter[get_local_index()].try_lock_read();
+			}
+
 			bool try_lock_write_until(const std::chrono::steady_clock::time_point& timestamp) noexcept
 			{
 				bool old = true;
@@ -1361,14 +1392,6 @@ namespace HSLL
 				}
 
 				return true;
-			}
-
-			void unlock_write() noexcept
-			{
-				for (int i = 0; i < HSLL_SPINREADWRITELOCK_MAXSLOTS; ++i) // Release all read-write locks and propagate to readers
-					counter[i].unlock_write();
-
-				flag.store(true, std::memory_order_release); // Allow new writers and propagate result
 			}
 
 			SpinReadWriteLock(const SpinReadWriteLock&) = delete;
@@ -2566,7 +2589,8 @@ namespace HSLL
 		constexpr float HSLL_THREADPOOL_EXPAND_FACTOR = 0.75f;
 		constexpr float HSLL_THREADPOOL_SHRINK_THRESHOLD_RATIO = 0.95f;
 		constexpr float	HSLL_THREADPOOL_EXPAND_THRESHOLD_RATIO = 0.40f;
-		constexpr unsigned int HSLL_THREADPOOL_LOCK_TIMEOUT_MILLISECONDS = 1u;
+		constexpr unsigned int HSLL_THREADPOOL_LOCK_TIMEOUT_MILLISECONDS = 50u;
+		constexpr unsigned int HSLL_THREADPOOL_SEM_TIMEOUT_MILLISECONDS = 10u;
 		constexpr unsigned int HSLL_THREADPOOL_DEQUEUE_TIMEOUT_MILLISECONDS = 1u;
 
 		static_assert(HSLL_THREADPOOL_LOCK_TIMEOUT_MILLISECONDS > 0, "Invalid lock timeout value.");
@@ -2610,15 +2634,26 @@ namespace HSLL
 
 			unsigned int steal(T& element)
 			{
+				bool result;
+
 				if (monitor)
 				{
-					ReadLockGuard lock(*rwLock);
-					return steal_inner(element);
+					if (rwLock->try_lock_read())
+					{
+						result = steal_inner(element);
+						rwLock->unlock_read();
+					}
+					else
+					{
+						result = false;
+					}
 				}
 				else
 				{
-					return steal_inner(element);
+					result = steal_inner(element);
 				}
+
+				return result;
 			}
 
 			bool steal_inner(T& element)
@@ -2678,15 +2713,26 @@ namespace HSLL
 
 			unsigned int steal(T* elements)
 			{
+				unsigned int result;
+
 				if (monitor)
 				{
-					ReadLockGuard lock(*rwLock);
-					return steal_inner(elements);
+					if (rwLock->try_lock_read())
+					{
+						result = steal_inner(elements);
+						rwLock->unlock_read();
+					}
+					else
+					{
+						result = 0;
+					}
 				}
 				else
 				{
-					return steal_inner(elements);
+					result = steal_inner(elements);
 				}
+
+				return result;
 			}
 
 			unsigned int steal_inner(T* elements)
@@ -2739,7 +2785,7 @@ namespace HSLL
 
 			bool enableMonitor;
 			Semaphore monitorSem;
-			std::atomic<bool> adjustFlag;
+			std::atomic<bool> drainFlag;
 			std::chrono::milliseconds adjustMillis;
 
 			T* containers;
@@ -2785,7 +2831,7 @@ namespace HSLL
 				this->mainFullThreshold = std::max(2u, (unsigned int)(capacity * HSLL_QUEUE_FULL_FACTOR_MAIN));
 				this->otherFullThreshold = std::max(2u, (unsigned int)(capacity * HSLL_QUEUE_FULL_FACTOR_OTHER));
 				this->enableMonitor = false;
-				this->adjustFlag = false;
+				this->drainFlag = false;
 				this->exitFlag = false;
 				this->shutdownPolicy = true;
 				this->index = 0;
@@ -2827,7 +2873,7 @@ namespace HSLL
 				this->maxThreadNum = maxThreadNum;
 				this->mainFullThreshold = std::max(2u, (unsigned int)(capacity * HSLL_QUEUE_FULL_FACTOR_MAIN));
 				this->otherFullThreshold = std::max(2u, (unsigned int)(capacity * HSLL_QUEUE_FULL_FACTOR_OTHER));
-				this->adjustFlag = false;
+				this->drainFlag = false;
 				this->adjustMillis = std::chrono::milliseconds(adjustMillis);
 				this->enableMonitor = (minThreadNum != maxThreadNum) ? true : false;
 				this->exitFlag = false;
@@ -3022,10 +3068,10 @@ namespace HSLL
 
 				if (enableMonitor)
 				{
-					adjustFlag = true;
+					drainFlag = true;
 					monitorSem.release();
 
-					while (adjustFlag)
+					while (drainFlag)
 						std::this_thread::yield();
 				}
 
@@ -3153,24 +3199,94 @@ namespace HSLL
 				return nullptr;
 			}
 
+			bool try_shrink()
+			{
+				auto timestamp = std::chrono::steady_clock::now() + std::chrono::milliseconds(HSLL_THREADPOOL_LOCK_TIMEOUT_MILLISECONDS);
+
+				if (rwLock.try_lock_write_until(timestamp))
+				{
+					threadNum--;
+					groupAllocator.update(threadNum);
+					rwLock.unlock_write();
+
+					if (try_wait_empty_until(timestamp, queues + threadNum))
+					{
+						queues[threadNum].stopWait();
+						stoppedSem[threadNum].acquire();
+						queues[threadNum].release();
+
+						return true;
+					}
+
+					//rollback
+					rwLock.lock_write();
+					threadNum++;
+					groupAllocator.update(threadNum);
+					rwLock.unlock_write();
+				}
+
+				return false;
+			}
+
+			bool try_expand()
+			{
+				unsigned int newThreads = std::max(1u, (maxThreadNum - threadNum) / 2);
+				unsigned int succeed = 0;
+				for (unsigned int i = threadNum; i < threadNum + newThreads; ++i)
+				{
+					if (!queues[i].init(capacity))
+						break;
+
+					restartSem[i].release();
+					succeed++;
+				}
+
+				if (succeed > 0)
+				{
+					auto timestamp = std::chrono::steady_clock::now() + std::chrono::milliseconds(HSLL_THREADPOOL_LOCK_TIMEOUT_MILLISECONDS);
+
+					if (rwLock.try_lock_write_until(timestamp))
+					{
+						threadNum += succeed;
+						groupAllocator.update(threadNum);
+						rwLock.unlock_write();
+
+						return true;
+					}
+
+					//rollback
+					for (unsigned int i = threadNum; i < threadNum + succeed; ++i)
+					{
+						queues[i].stopWait();
+						stoppedSem[i].acquire();
+						queues[i].release();
+					}
+				}
+
+				return false;
+			}
+
 			void load_monitor() noexcept
 			{
 				unsigned int shrink = 0;
 				unsigned int expand = 0;
 				unsigned int nowCount = 0;
 				auto timestamp = std::chrono::steady_clock::now() + adjustMillis;
+				auto retryMillis = std::chrono::milliseconds(50 * HSLL_THREADPOOL_SEM_TIMEOUT_MILLISECONDS);
 
 				while (true)
 				{
-					if (monitorSem.try_acquire_for(std::chrono::milliseconds(HSLL_THREADPOOL_LOCK_TIMEOUT_MILLISECONDS)))
+					if (monitorSem.try_acquire_for(std::chrono::milliseconds(HSLL_THREADPOOL_SEM_TIMEOUT_MILLISECONDS)))
 					{
-						if (adjustFlag)
+						if (drainFlag)
 						{
-							adjustFlag = false;
+							drainFlag = false;
 							monitorSem.acquire();
+
 							shrink = 0;
 							expand = 0;
 							nowCount = 0;
+							timestamp = std::chrono::steady_clock::now() + adjustMillis;
 						}
 						else
 						{
@@ -3197,71 +3313,27 @@ namespace HSLL
 					unsigned int shrinkThreshold = nowCount * HSLL_THREADPOOL_SHRINK_THRESHOLD_RATIO;
 					unsigned int expandThreshold = nowCount * HSLL_THREADPOOL_EXPAND_THRESHOLD_RATIO;
 
+					bool result = true;
+
 					if (threadNum > minThreadNum && shrink >= shrinkThreshold)
 					{
-						auto timestamp = std::chrono::steady_clock::now() + std::chrono::milliseconds(HSLL_THREADPOOL_LOCK_TIMEOUT_MILLISECONDS);
-
-						if (rwLock.try_lock_write_until(timestamp))
-						{
-							threadNum--;
-							groupAllocator.update(threadNum);
-							rwLock.unlock_write();
-
-							if (try_wait_empty_until(timestamp, queues + threadNum))
-							{
-								queues[threadNum].stopWait();
-								stoppedSem[threadNum].acquire();
-								queues[threadNum].release();
-							}
-							else //rollback
-							{
-								rwLock.lock_write();
-								threadNum++;
-								groupAllocator.update(threadNum);
-								rwLock.unlock_write();
-							}
-						}
+						if (!try_shrink())
+							result = false;
 					}
 					else if (threadNum < maxThreadNum && expand >= expandThreshold)
 					{
-
-						unsigned int newThreads = std::max(1u, (maxThreadNum - threadNum) / 2);
-						unsigned int succeed = 0;
-						for (unsigned int i = threadNum; i < threadNum + newThreads; ++i)
-						{
-							if (!queues[i].init(capacity))
-								break;
-
-							restartSem[i].release();
-							succeed++;
-						}
-
-						if (succeed > 0)
-						{
-							auto timestamp = std::chrono::steady_clock::now() + std::chrono::milliseconds(HSLL_THREADPOOL_LOCK_TIMEOUT_MILLISECONDS);
-
-							if (rwLock.try_lock_write_until(timestamp))
-							{
-								threadNum += succeed;
-								groupAllocator.update(threadNum);
-								rwLock.unlock_write();
-							}
-							else//rollback
-							{
-								for (unsigned int i = threadNum; i < threadNum + succeed; ++i)
-								{
-									queues[i].stopWait();
-									stoppedSem[i].acquire();
-									queues[i].release();
-								}
-							}
-						}
+						if (!try_expand())
+							result = false;
 					}
+
+					if (result)
+						timestamp = std::chrono::steady_clock::now() + adjustMillis;
+					else
+						timestamp = std::chrono::steady_clock::now() + retryMillis;
 
 					shrink = 0;
 					expand = 0;
 					nowCount = 0;
-					timestamp = std::chrono::steady_clock::now() + adjustMillis;
 				}
 			}
 
