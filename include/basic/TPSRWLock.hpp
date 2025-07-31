@@ -28,6 +28,19 @@ namespace HSLL
 
 				InnerRWLock()noexcept :count(0) {}
 
+				bool try_lock_read() noexcept
+				{
+					long long old = count.fetch_add(1, std::memory_order_acquire);
+
+					if (old < 0)
+					{
+						count.fetch_sub(1, std::memory_order_relaxed);
+						return false;
+					}
+
+					return true;
+				}
+
 				// Optimistic locking since reads greatly outnumber writes: increment first then handle rollback if needed
 				void lock_read() noexcept
 				{
@@ -78,6 +91,11 @@ namespace HSLL
 				void lock_read() noexcept
 				{
 					lock.lock_read();
+				}
+
+				bool try_lock_read() noexcept
+				{
+					return lock.try_lock_read();
 				}
 
 				void unlock_read() noexcept
@@ -162,6 +180,19 @@ namespace HSLL
 				}
 			}
 
+			void unlock_write() noexcept
+			{
+				for (int i = 0; i < HSLL_SPINREADWRITELOCK_MAXSLOTS; ++i) // Release all read-write locks and propagate to readers
+					counter[i].unlock_write();
+
+				flag.store(true, std::memory_order_release); // Allow new writers and propagate result
+			}
+
+			bool try_lock_read()
+			{
+				return counter[get_local_index()].try_lock_read();
+			}
+
 			bool try_lock_write_until(const std::chrono::steady_clock::time_point& timestamp) noexcept
 			{
 				bool old = true;
@@ -213,14 +244,6 @@ namespace HSLL
 				}
 
 				return true;
-			}
-
-			void unlock_write() noexcept
-			{
-				for (int i = 0; i < HSLL_SPINREADWRITELOCK_MAXSLOTS; ++i) // Release all read-write locks and propagate to readers
-					counter[i].unlock_write();
-
-				flag.store(true, std::memory_order_release); // Allow new writers and propagate result
 			}
 
 			SpinReadWriteLock(const SpinReadWriteLock&) = delete;
