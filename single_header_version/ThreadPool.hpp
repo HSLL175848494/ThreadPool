@@ -140,20 +140,6 @@ namespace HSLL
 			static constexpr bool value = decltype(test_move<T>(true))::value;
 		};
 
-		template <typename T>
-		struct is_copy_constructible
-		{
-		private:
-			template <typename U, typename = decltype(U{ std::declval<U&>() }) >
-			static constexpr std::true_type test_copy(bool);
-
-			template <typename>
-			static constexpr std::false_type test_copy(...);
-
-		public:
-			static constexpr bool value = decltype(test_copy<T>(true))::value;
-		};
-
 		//helper3_index_sequence
 		template <size_t... Is>
 		struct index_sequence {};
@@ -173,17 +159,7 @@ namespace HSLL
 			using type = typename make_index_sequence_impl<N>::type;
 		};
 
-		//helper4_all_true
-		template <bool...>
-		struct bool_pack;
-
-		template <bool... Bs>
-		using all_true = std::is_same<bool_pack<true, Bs...>, bool_pack<Bs..., true>>;
-
-		template <typename... Ts>
-		using are_all_copy_constructible = all_true<is_copy_constructible<Ts>::value...>;
-
-		//helper5_function_traits
+		//helper4_function_traits
 		template <typename T>
 		struct function_traits;
 
@@ -191,7 +167,6 @@ namespace HSLL
 		struct function_traits<Ret(*)(Args...)>
 		{
 			using return_type = Ret;
-			using args_tuple = std::tuple<typename std::decay<Args>::type...>;
 			static constexpr bool is_member_function = false;
 		};
 
@@ -199,7 +174,6 @@ namespace HSLL
 		struct function_traits<Ret(&)(Args...)>
 		{
 			using return_type = Ret;
-			using args_tuple = std::tuple<typename std::decay<Args>::type...>;
 			static constexpr bool is_member_function = false;
 		};
 
@@ -207,7 +181,6 @@ namespace HSLL
 		struct function_traits<Ret(Class::*)(Args...)>
 		{
 			using return_type = Ret;
-			using args_tuple = std::tuple<typename std::decay<Args>::type...>;
 			static constexpr bool is_member_function = true;
 		};
 
@@ -215,7 +188,6 @@ namespace HSLL
 		struct function_traits<Ret(Class::*)(Args...) const>
 		{
 			using return_type = Ret;
-			using args_tuple = std::tuple<typename std::decay<Args>::type...>;
 			static constexpr bool is_member_function = true;
 		};
 
@@ -226,17 +198,13 @@ namespace HSLL
 			using call_type = function_traits<decltype(&Functor::operator())>;
 		public:
 			using return_type = typename call_type::return_type;
-			using args_tuple = typename call_type::args_tuple;
 			static constexpr bool is_member_function = false;
 		};
 
 		template <typename Callable>
-		using function_args = typename function_traits<typename std::decay<Callable>::type>::args_tuple;
-
-		template <typename Callable>
 		using function_rtype = typename function_traits<typename std::decay<Callable>::type>::return_type;
 
-		//helper6_invoke
+		//helper5_invoke
 		enum TASK_TUPLE_TYPE
 		{
 			TASK_TUPLE_TYPE_BASE,
@@ -382,7 +350,7 @@ namespace HSLL
 			}
 		};
 
-		//helper7_apply
+		//helper6_apply
 		template <TASK_TUPLE_TYPE TYPE, class ResultType, typename std::enable_if<std::is_void<ResultType>::value, bool>::type = true,
 			typename Tuple, size_t... Is>
 		void apply_impl(Tuple& tup, index_sequence<Is...>)
@@ -411,24 +379,6 @@ namespace HSLL
 			return apply_impl<TYPE, ResultType>(tup, typename make_index_sequence<std::tuple_size<Tuple>::value>::type{});
 		}
 
-		//helper8_make_unique
-		template <typename T, typename... Args>
-		typename std::enable_if<!std::is_array<T>::value, std::unique_ptr<T>>::type
-			make_unique(Args&&... args) {
-			return std::unique_ptr<T>(new T(std::forward<Args>(args)...));
-		}
-
-		template <typename T>
-		typename std::enable_if<std::is_array<T>::value&& std::extent<T>::value == 0, std::unique_ptr<T>>::type
-			make_unique(std::size_t size) {
-			using U = typename std::remove_extent<T>::type;
-			return std::unique_ptr<T>(new U[size]());
-		}
-
-		template <typename T, typename... Args>
-		typename std::enable_if<std::extent<T>::value != 0, void>::type
-			make_unique(Args&&...) = delete;
-
 		/**
 		 * @class HeapCallable
 		 * @brief Encapsulates a callable object and its arguments, storing them on the heap.
@@ -451,7 +401,7 @@ namespace HSLL
 			 */
 			template<class Func, typename std::enable_if<!is_HeapCallable<typename std::decay<Func>::type>::value, int>::type = 0 >
 			HeapCallable(Func&& func, Args &&...args) HSLL_MAY_THROW
-				: storage(HSLL::INNER::make_unique<Package>(std::forward<Func>(func), std::forward<Args>(args)...)) {}
+				: storage(new Package(std::forward<Func>(func), std::forward<Args>(args)...)) {}
 
 			/**
 			 * @brief Invokes the stored callable with bound arguments
@@ -516,7 +466,7 @@ namespace HSLL
 			 */
 			template<class Func, typename std::enable_if<!is_HeapCallable_Async<typename std::decay<Func>::type>::value, int>::type = 0 >
 			HeapCallable_Async(Func&& func, Args &&...args) HSLL_MAY_THROW
-				: storage(HSLL::INNER::make_unique<Package>(std::promise<ReturnType>(), std::forward<Func>(func), std::forward<Args>(args)...)) {}
+				: storage(new Package(std::promise<ReturnType>(), std::forward<Func>(func), std::forward<Args>(args)...)) {}
 
 			/**
 			 * @brief Executes the callable and sets promise value/exception
@@ -864,7 +814,6 @@ namespace HSLL
 
 			Controller get_controller() HSLL_CALL_ONCE
 			{
-				assert(storage);
 				return Controller(storage);
 			}
 
@@ -2837,7 +2786,7 @@ namespace HSLL
 				this->index = 0;
 
 				workers.reserve(maxThreadNum);
-				groupAllocator.initialize(queues, maxThreadNum, capacity, capacity * 0.01 > 1 ? capacity * 0.01 : 1);
+				groupAllocator.initialize(queues, maxThreadNum, capacity, capacity * 0.05 > 1 ? capacity * 0.05 : 1);
 
 				for (unsigned i = 0; i < maxThreadNum; ++i)
 					workers.emplace_back(&ThreadPool::worker, this, i);
@@ -3125,6 +3074,14 @@ namespace HSLL
 				rleaseResourse();
 			}
 
+			/**
+			 * @brief Registers the current thread. Registered threads participate in queue grouping and obtain a dedicated queue group.
+			 * @note
+			 *   1. The registered thread must be a producer thread
+			 *   2. Production capacity between registered threads should not vary significantly
+			 *   3. If the thread pool will continue to be used after this thread exits, you MUST unregister
+			 *      the thread before exit to allow queue reallocation
+			 */
 			void register_this_thread() noexcept
 			{
 				std::thread::id id = std::this_thread::get_id();
@@ -3132,6 +3089,9 @@ namespace HSLL
 				groupAllocator.register_thread(id);
 			}
 
+			/**
+			 * @brief Unregisters the current thread. It will no longer participate in queue grouping.
+			 */
 			void unregister_this_thread() noexcept
 			{
 				std::thread::id id = std::this_thread::get_id();
@@ -3151,20 +3111,6 @@ namespace HSLL
 			ThreadPool& operator=(ThreadPool&&) = delete;
 
 		private:
-
-			static bool try_wait_empty_until(const std::chrono::steady_clock::time_point& timestamp, TPBlockQueue<T>* queue) noexcept
-			{
-				while (queue->get_size())
-				{
-					std::this_thread::yield();
-					auto now = std::chrono::steady_clock::now();
-
-					if (now >= timestamp)
-						return false;
-				}
-
-				return true;
-			}
 
 			template <INSERT_POS POS = TAIL>
 			unsigned int submit_bulk(T* part1, unsigned int count1, T* part2, unsigned int count2) noexcept
@@ -3197,6 +3143,20 @@ namespace HSLL
 				}
 
 				return nullptr;
+			}
+
+			static bool try_wait_empty_until(const std::chrono::steady_clock::time_point& timestamp, TPBlockQueue<T>* queue) noexcept
+			{
+				while (queue->get_size())
+				{
+					std::this_thread::yield();
+					auto now = std::chrono::steady_clock::now();
+
+					if (now >= timestamp)
+						return false;
+				}
+
+				return true;
 			}
 
 			bool try_shrink()
@@ -3345,7 +3305,7 @@ namespace HSLL
 					process_bulk(queues + index, index);
 			}
 
-			static inline void execute_tasks(T* tasks, unsigned int count)
+			static void execute_tasks(T* tasks, unsigned int count)
 			{
 				for (unsigned int i = 0; i < count; ++i)
 				{

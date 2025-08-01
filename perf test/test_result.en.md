@@ -26,7 +26,7 @@ void C() { }  // Empty task (extreme scenario)
 ### Thread Pool Parameters  
 - **Thread Pool**: HSLL::ThreadPool  
   - Queue capacity: 8,192  
-  - Task container: `TaskStack<24,8>`  
+  - Task container: `TaskStack<24,8>`  (with sufficient space to store tasks on the stack without falling back to heap storage)
   - Queue grouping: Enabled  
 - **Batch Processing Modes**:  
   - **32-Batch Processing**: Worker threads attempt to fetch 32 tasks per batch  
