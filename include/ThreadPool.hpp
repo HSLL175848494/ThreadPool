@@ -268,7 +268,7 @@ namespace HSLL
 				this->index = 0;
 
 				workers.reserve(maxThreadNum);
-				groupAllocator.initialize(queues, maxThreadNum, capacity, capacity * 0.01 > 1 ? capacity * 0.01 : 1);
+				groupAllocator.initialize(queues, maxThreadNum, capacity, capacity * 0.05 > 1 ? capacity * 0.05 : 1);
 
 				for (unsigned i = 0; i < maxThreadNum; ++i)
 					workers.emplace_back(&ThreadPool::worker, this, i);
@@ -556,6 +556,14 @@ namespace HSLL
 				rleaseResourse();
 			}
 
+			/**
+			 * @brief Registers the current thread. Registered threads participate in queue grouping and obtain a dedicated queue group.
+			 * @note
+			 *   1. The registered thread must be a producer thread
+			 *   2. Production capacity between registered threads should not vary significantly
+			 *   3. If the thread pool will continue to be used after this thread exits, you MUST unregister
+			 *      the thread before exit to allow queue reallocation
+			 */
 			void register_this_thread() noexcept
 			{
 				std::thread::id id = std::this_thread::get_id();
@@ -563,6 +571,9 @@ namespace HSLL
 				groupAllocator.register_thread(id);
 			}
 
+			/**
+			 * @brief Unregisters the current thread. It will no longer participate in queue grouping.
+			 */
 			void unregister_this_thread() noexcept
 			{
 				std::thread::id id = std::this_thread::get_id();
@@ -582,20 +593,6 @@ namespace HSLL
 			ThreadPool& operator=(ThreadPool&&) = delete;
 
 		private:
-
-			static bool try_wait_empty_until(const std::chrono::steady_clock::time_point& timestamp, TPBlockQueue<T>* queue) noexcept
-			{
-				while (queue->get_size())
-				{
-					std::this_thread::yield();
-					auto now = std::chrono::steady_clock::now();
-
-					if (now >= timestamp)
-						return false;
-				}
-
-				return true;
-			}
 
 			template <INSERT_POS POS = TAIL>
 			unsigned int submit_bulk(T* part1, unsigned int count1, T* part2, unsigned int count2) noexcept
@@ -628,6 +625,20 @@ namespace HSLL
 				}
 
 				return nullptr;
+			}
+
+			static bool try_wait_empty_until(const std::chrono::steady_clock::time_point& timestamp, TPBlockQueue<T>* queue) noexcept
+			{
+				while (queue->get_size())
+				{
+					std::this_thread::yield();
+					auto now = std::chrono::steady_clock::now();
+
+					if (now >= timestamp)
+						return false;
+				}
+
+				return true;
 			}
 
 			bool try_shrink()
@@ -776,7 +787,7 @@ namespace HSLL
 					process_bulk(queues + index, index);
 			}
 
-			static inline void execute_tasks(T* tasks, unsigned int count)
+			static void execute_tasks(T* tasks, unsigned int count)
 			{
 				for (unsigned int i = 0; i < count; ++i)
 				{
