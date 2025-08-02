@@ -31,7 +31,6 @@ void heapExample()
 		std::cout << "Heap task1 completed." << std::endl;
 		});
 
-	//Callable隐式转化为TaskStack
 	globalPool.submit(std::move(callable));
 }
 
@@ -47,21 +46,8 @@ void asyncExample()
 	std::cout << "Async result1: " << result << std::endl;
 }
 
-// 异步任务示例1(效率高于堆上任务,但需要确保任务返回前promise有效)
-void asyncExample2()
-{
-	std::promise<int> promise;
-
-	globalPool.submit([&]() {
-		promise.set_value(777);
-		});
-
-	std::future<int> future = promise.get_future();
-	std::cout << "Async result3: " << future.get() << std::endl;
-}
-
 // 可取消任务示例
-void cancelableExample1()
+void cancelableExample()
 {
 	auto callable = make_callable_cancelable([]() {
 		std::cout << "Cancelable task completed." << std::endl;
@@ -92,58 +78,6 @@ void cancelableExample1()
 		try
 		{
 			controller.get();
-			std::cout << "Task finished normally." << std::endl;
-		}
-		catch (const std::exception& e) {
-			std::cerr << "Task exception: " << e.what() << std::endl;
-		}
-	}
-}
-
-// 可取消任务示例2(效率高于堆上任务,但需要确保任务执行前Cancelable有效)
-void cancelableExample2()
-{
-	Cancelable<void> cancelable;
-
-	globalPool.submit([&]() {
-
-		if (cancelable.enter())//尝试进入临界区
-		{
-			try
-			{
-				std::cout << "Cancelable task completed." << std::endl;
-				cancelable.set_value();
-			}
-			catch (const std::exception&)
-			{
-				cancelable.set_exception(std::make_exception_ptr(std::current_exception()));
-			}
-		}
-		return;
-		});
-
-	std::this_thread::sleep_for(std::chrono::nanoseconds(150));
-
-	if (cancelable.cancel())
-	{
-		std::cout << "Task canceled successfully." << std::endl;
-
-		try
-		{
-			cancelable.get();
-			std::cout << "Task finished normally." << std::endl;
-		}
-		catch (const std::exception& e) {
-			std::cerr << "Task exception: " << e.what() << std::endl;
-		}
-	}
-	else
-	{
-		std::cout << "Task already started." << std::endl;
-
-		try
-		{
-			cancelable.get();
 			std::cout << "Task finished normally." << std::endl;
 		}
 		catch (const std::exception& e) {
@@ -246,13 +180,6 @@ void threadRegisterExample()
 	*   D: 专属队列组[1,2,3] (多队列组)
 	*
 	* 对于内包含多个队列的队列组，其在提交任务数量达到阈值时会切换到另一个队列（轮询）
-	* 对于不同的生产者，其生产速率可能不同，因此这种方案的负载均衡能力会若于全局轮询方案。
-	* 但任务窃取机制和多级队列选取缓解了这一点。
-	*
-	* 三级队列选取策略(队列已满则选取下级队列):
-	* 一级:队列组内当前轮询队列
-	* 二级:队列组内其他队列
-	* 三级:不包括在队列组的其它队列
 	* ---------------------------------------------------------------------
 	*/
 
@@ -263,6 +190,14 @@ void threadRegisterExample()
 	// 注意:当前线程不再使用线程池时需及时注销以重新调整线程池的队列组分配
 	globalPool.unregister_this_thread();
 	std::cout << "Thread register example" << std::endl;
+}
+
+//自定义内存申请释放器（HeapCallable依赖于tp_smart_ptr）
+void customAllocatorExample()
+{
+	//参数:传入一个实现了AllocatorBase虚函数的子类
+	//为空时用默认内存申请释放器(malloc/free)
+	set_tp_smart_ptr_allocator();
 }
 
 int main()
@@ -283,16 +218,8 @@ int main()
 	asyncExample();
 	std::this_thread::sleep_for(std::chrono::milliseconds(10));
 
-	std::cout << "\n==== Async Result Example2 ====" << std::endl;
-	asyncExample2();
-	std::this_thread::sleep_for(std::chrono::milliseconds(10));
-
 	std::cout << "\n==== Cancelable Task Example ====" << std::endl;
-	cancelableExample1();
-	std::this_thread::sleep_for(std::chrono::milliseconds(10));
-
-	std::cout << "\n==== Cancelable Task Example2 ====" << std::endl;
-	cancelableExample2();
+	cancelableExample();
 	std::this_thread::sleep_for(std::chrono::milliseconds(10));
 
 	std::cout << "\n==== Batch Processing Example ====" << std::endl;

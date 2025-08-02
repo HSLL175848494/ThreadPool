@@ -5,6 +5,7 @@
 #include <vector>
 #include <future>
 #include <thread>
+#include <cstddef>
 #include <assert.h>
 
 #include "basic/TPSRWLock.hpp"
@@ -33,10 +34,10 @@ namespace HSLL
 		static_assert(HSLL_THREADPOOL_SHRINK_FACTOR < HSLL_THREADPOOL_EXPAND_FACTOR&& HSLL_THREADPOOL_EXPAND_FACTOR < 1.0
 			&& HSLL_THREADPOOL_SHRINK_FACTOR > 0.0, "Invalid factors.");
 
-		template <class T>
+		template <typename T>
 		class SingleStealer
 		{
-			template <class TYPE>
+			template <typename TYPE>
 			friend class ThreadPool;
 		private:
 
@@ -109,10 +110,10 @@ namespace HSLL
 			}
 		};
 
-		template <class T>
+		template <typename T>
 		class BulkStealer
 		{
-			template <class TYPE>
+			template <typename TYPE>
 			friend class ThreadPool;
 
 		private:
@@ -196,12 +197,12 @@ namespace HSLL
 		/**
 		 * @brief Thread pool implementation with multiple queues for task distribution
 		 */
-		template <class T = TaskStack<>>
+		template <typename T = TaskStack<>>
 		class ThreadPool
 		{
 			static_assert(is_TaskStack<T>::value, "TYPE must be a TaskStack type");
 
-			template <class TYPE, unsigned int, INSERT_POS POS>
+			template <typename TYPE, unsigned int, INSERT_POS POS>
 			friend class BatchSubmitter;
 
 		private:
@@ -428,7 +429,7 @@ namespace HSLL
 			 * 1. TaskStack object (must be passed by rvalue reference, using move semantics)
 			 * 2. Callable object (function pointer/lambda/functor...) + bound arguments
 			 */
-			template <INSERT_POS POS = TAIL, class Rep, class Period, typename... Args>
+			template <INSERT_POS POS = TAIL, typename Rep, typename Period, typename... Args>
 			bool wait_submit(const std::chrono::duration<Rep, Period>& timeout, Args &&...args) noexcept
 			{
 				HSLL_ENQUEUE_HELPER(
@@ -477,7 +478,7 @@ namespace HSLL
 			 * @param count Number of tasks to add (must be > 0)
 			 * @return Actual number of tasks added (may be less than count)
 			 */
-			template <INSERT_POS POS = TAIL, class Rep, class Period>
+			template <INSERT_POS POS = TAIL, typename Rep, typename Period>
 			unsigned int wait_submit_bulk(const std::chrono::duration<Rep, Period>& timeout, T* tasks, unsigned int count) noexcept
 			{
 				HSLL_ENQUEUE_HELPER(
@@ -971,7 +972,7 @@ namespace HSLL
 			}
 		};
 
-		template <class T, unsigned int BATCH, INSERT_POS POS = TAIL>
+		template <typename T, unsigned int BATCH, INSERT_POS POS = TAIL>
 		class BatchSubmitter
 		{
 			static_assert(is_TaskStack<T>::value, "T must be a TaskStack type");
