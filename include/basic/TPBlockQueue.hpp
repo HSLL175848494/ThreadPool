@@ -80,7 +80,7 @@ namespace HSLL
 		/**
 		 * @brief Circular buffer based blocking queue implementation
 		 */
-		template <class TYPE>
+		template <typename TYPE>
 		class alignas(64) TPBlockQueue
 		{
 			template <typename T>
@@ -377,7 +377,7 @@ namespace HSLL
 				return true;
 			}
 
-			template <INSERT_POS POS = TAIL, class Rep, class Period, typename... Args>
+			template <INSERT_POS POS = TAIL, typename Rep, typename Period, typename... Args>
 			bool wait_emplace(const std::chrono::duration<Rep, Period>& timeout, Args &&...args)
 			{
 				assert(memoryBlock);
@@ -441,7 +441,7 @@ namespace HSLL
 				return enqueue_bulk_helper<METHOD, POS>(lock, elements, count);
 			}
 
-			template <BULK_CMETHOD METHOD = COPY, INSERT_POS POS = TAIL, class Rep, class Period>
+			template <BULK_CMETHOD METHOD = COPY, INSERT_POS POS = TAIL, typename Rep, typename Period>
 			unsigned int wait_enqueue_bulk(const std::chrono::duration<Rep, Period>& timeout, TYPE* elements, unsigned int count)
 			{
 				assert(memoryBlock);
@@ -486,7 +486,7 @@ namespace HSLL
 				return true;
 			}
 
-			template <class Rep, class Period>
+			template <typename Rep, typename Period>
 			bool wait_dequeue(const std::chrono::duration<Rep, Period>& timeout, TYPE& element)
 			{
 				assert(memoryBlock);
@@ -531,7 +531,7 @@ namespace HSLL
 				return dequeue_bulk_helper(lock, elements, count);
 			}
 
-			template <class Rep, class Period>
+			template <typename Rep, typename Period>
 			unsigned int wait_dequeue_bulk(const std::chrono::duration<Rep, Period>& timeout, TYPE* elements, unsigned int count)
 			{
 				assert(memoryBlock);

@@ -28,19 +28,6 @@ namespace HSLL
 
 				InnerRWLock()noexcept :count(0) {}
 
-				bool try_lock_read() noexcept
-				{
-					long long old = count.fetch_add(1, std::memory_order_acquire);
-
-					if (old < 0)
-					{
-						count.fetch_sub(1, std::memory_order_relaxed);
-						return false;
-					}
-
-					return true;
-				}
-
 				// Optimistic locking since reads greatly outnumber writes: increment first then handle rollback if needed
 				void lock_read() noexcept
 				{
@@ -55,6 +42,19 @@ namespace HSLL
 
 						old = count.fetch_add(1, std::memory_order_acquire);
 					}
+				}
+
+				bool try_lock_read() noexcept
+				{
+					long long old = count.fetch_add(1, std::memory_order_acquire);
+
+					if (old < 0)
+					{
+						count.fetch_sub(1, std::memory_order_relaxed);
+						return false;
+					}
+
+					return true;
 				}
 
 				// Relaxed semantics sufficient since read operations don't modify shared state
@@ -188,7 +188,7 @@ namespace HSLL
 				flag.store(true, std::memory_order_release); // Allow new writers and propagate result
 			}
 
-			bool try_lock_read()
+			bool try_lock_read() noexcept
 			{
 				return counter[get_local_index()].try_lock_read();
 			}

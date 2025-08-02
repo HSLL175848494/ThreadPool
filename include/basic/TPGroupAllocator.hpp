@@ -13,10 +13,10 @@ namespace HSLL
 		static_assert(HSLL_QUEUE_FULL_FACTOR_MAIN > 0 && HSLL_QUEUE_FULL_FACTOR_MAIN <= 1, "Invalid factors.");
 		static_assert(HSLL_QUEUE_FULL_FACTOR_OTHER > 0 && HSLL_QUEUE_FULL_FACTOR_OTHER <= 1, "Invalid factors.");
 
-		template<class T>
+		template<typename T>
 		class RoundRobinGroup
 		{
-			template<class TYPE>
+			template<typename TYPE>
 			friend class TPGroupAllocator;
 
 			unsigned int nowCount;
@@ -95,7 +95,7 @@ namespace HSLL
 			}
 		};
 
-		template<class T>
+		template<typename T>
 		class TPGroupAllocator
 		{
 			unsigned int capacity;

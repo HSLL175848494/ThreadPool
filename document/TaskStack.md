@@ -98,3 +98,55 @@ TaskStack task([](auto& vec) {...}, std::ref(data));
 
 // 错误做法（值拷贝）
 TaskStack bad_task([](auto vec) {...}, data); // 数据拷贝
+
+```
+
+## 拓展
+
+### HeapCallable
+当`TaskStack`因空间不足无法存储完整任务时，会先将任务封装为`HeapCallable`对象再存储（静态断言`TSIZE > 24`确保可存储性）。用户也可直接构造`HeapCallable`独立存储任务：
+```cpp
+auto callable = make_callable(func);
+TaskStack task(callable);
+```
+
+### HeapCallable_Async
+为解决`TaskStack`原生不支持返回值的问题，`HeapCallable_Async`在构造后通过`get_future()`返回`std::future`对象。任务执行期间自动处理值/异常传递逻辑：
+```cpp
+auto callable = make_callable_async(Sum, 333, 333);
+auto future = callable.get_future();  // 获取future对象
+/* 任务在线程中执行 */
+auto result = future.get();           // 获取结果
+```
+
+### HeapCallable_Cancelable
+在`HeapCallable_Async`基础上扩展可取消功能，通过`get_controller()`获取任务控制器：
+```cpp
+auto callable = make_callable_cancelable(func);
+auto controller = callable.get_controller();  // 获取控制器
+
+/* 任务在线程中执行 */
+
+if (controller.cancel()) {  // 成功取消任务
+    // controller.get() 将抛出"Task canceled"
+} else {                   // 任务已开始执行
+    controller.get();       // 正常获取结果
+}
+```
+
+### 自定义内存分配器
+三种HeapCallable均通过`tp_smart_ptr`管理内存，而tp_smart_ptr的内存申请释放可通过全局分配器优化：
+```cpp
+class AllocatorBase {  // 分配器基类
+public:
+    virtual void* allocate(size_t) const = 0;
+    virtual void deallocate(void*) const = 0;
+};
+
+// 设置全局分配器（nullptr恢复默认）
+void set_tp_smart_ptr_allocator(const AllocatorBase* allocator = nullptr);
+```
+**注意事项**：
+1. 替换分配器前需释放所有依赖原分配器的智能指针
+2. 智能指针存活期间分配器实例必须保持有效
+3. 典型使用模式：初始化时设置分配器，退出前恢复默认

@@ -98,3 +98,53 @@ TaskStack task([](auto& vec) {...}, std::ref(data));
 // Incorrect approach (value copy)
 TaskStack bad_task([](auto vec) {...}, data); // Data copy occurs
 ```
+
+## Extensions  
+
+### HeapCallable  
+When `TaskStack` lacks sufficient space to store a complete task, it first encapsulates the task as a `HeapCallable` object for storage (the static assertion `TSIZE > 24` ensures storability). Users can also directly construct a `HeapCallable` to store tasks independently:  
+```cpp  
+auto callable = make_callable(func);  
+TaskStack task(callable);  
+```  
+
+### HeapCallable_Async  
+To address `TaskStack`'s lack of native support for return values, `HeapCallable_Async` returns an `std::future` object via `get_future()` after construction. During task execution, it automatically handles value/exception propagation logic:  
+```cpp  
+auto callable = make_callable_async(Sum, 333, 333);  
+auto future = callable.get_future();  // Obtain the future object  
+/* Task executes in a thread */  
+auto result = future.get();           // Retrieve the result  
+```  
+
+### HeapCallable_Cancelable  
+Extends `HeapCallable_Async` with cancelable functionality. Obtain the task controller via `get_controller()`:  
+```cpp  
+auto callable = make_callable_cancelable(func);  
+auto controller = callable.get_controller();  // Obtain the controller  
+
+/* Task executes in a thread */  
+
+if (controller.cancel()) {  // Successfully canceled the task  
+    // controller.get() will throw "Task canceled"  
+} else {                   // Task has started execution  
+    controller.get();       // Retrieve the result normally  
+}  
+```  
+
+### Custom Memory Allocator  
+All three HeapCallable types manage memory via `tp_smart_ptr`, whose memory allocation/deallocation can be optimized through a global allocator:  
+```cpp  
+class AllocatorBase {  // Allocator base class  
+public:  
+    virtual void* allocate(size_t) const = 0;  
+    virtual void deallocate(void*) const = 0;  
+};  
+
+// Set the global allocator (pass nullptr to restore default)  
+void set_tp_smart_ptr_allocator(const AllocatorBase* allocator = nullptr);  
+```  
+**Important Notes**:  
+1. Before replacing the allocator, release all smart pointers relying on the original allocator.  
+2. The allocator instance must remain valid while any smart pointer is alive.  
+3. Typical usage pattern: Set the allocator during initialization, and restore default before exit.
