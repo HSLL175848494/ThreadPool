@@ -26,25 +26,18 @@ namespace HSLL
 		class AllocatorBase
 		{
 		public:
-			virtual void* allocate(size_t size) const = 0;
-			virtual void deallocate(void* p) const = 0;
-		};
-
-		class DefaultAllocator : public AllocatorBase
-		{
-		public:
-			void* allocate(size_t size) const override
+			virtual void* allocate(size_t size) const
 			{
 				return malloc(size);
 			}
 
-			void deallocate(void* p) const override
+			virtual void deallocate(void* p) const
 			{
 				free(p);
 			}
 		};
 
-		static const DefaultAllocator smart_ptr_default_allocator;
+		static const AllocatorBase smart_ptr_default_allocator;
 		static const AllocatorBase* smart_ptr_allocator = &smart_ptr_default_allocator;
 
 		template<typename T>
