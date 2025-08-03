@@ -135,11 +135,16 @@ if (controller.cancel()) {  // Successfully canceled the task
 ### Custom Memory Allocator  
 All three HeapCallable types manage memory via `tp_smart_ptr`, whose memory allocation/deallocation can be optimized through a global allocator:  
 ```cpp  
-class AllocatorBase {  // Allocator base class  
-public:  
-    virtual void* allocate(size_t) const = 0;  
-    virtual void deallocate(void*) const = 0;  
-};  
+class AllocatorBase{ // Allocator base class  
+public:
+  virtual void* allocate(size_t size) const{
+    return malloc(size);
+  }
+
+  virtual void deallocate(void* p) const{
+    free(p);
+  }
+};
 
 // Set the global allocator (pass nullptr to restore default)  
 void set_tp_smart_ptr_allocator(const AllocatorBase* allocator = nullptr);  

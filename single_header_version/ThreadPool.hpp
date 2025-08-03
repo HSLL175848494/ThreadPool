@@ -94,25 +94,18 @@ namespace HSLL
 		class AllocatorBase
 		{
 		public:
-			virtual void* allocate(size_t size) const = 0;
-			virtual void deallocate(void* p) const = 0;
-		};
-
-		class DefaultAllocator : public AllocatorBase
-		{
-		public:
-			void* allocate(size_t size) const override
+			virtual void* allocate(size_t size) const
 			{
 				return malloc(size);
 			}
 
-			void deallocate(void* p) const override
+			virtual void deallocate(void* p) const
 			{
 				free(p);
 			}
 		};
 
-		static const DefaultAllocator smart_ptr_default_allocator;
+		static const AllocatorBase smart_ptr_default_allocator;
 		static const AllocatorBase* smart_ptr_allocator = &smart_ptr_default_allocator;
 
 		template<typename T>
@@ -374,28 +367,28 @@ namespace HSLL
 		template <typename Ret, typename... Args>
 		struct function_traits<Ret(*)(Args...)>
 		{
-			using return_type = Ret;
+			using result_type = Ret;
 			static constexpr bool is_member_function = false;
 		};
 
 		template <typename Ret, typename... Args>
 		struct function_traits<Ret(&)(Args...)>
 		{
-			using return_type = Ret;
+			using result_type = Ret;
 			static constexpr bool is_member_function = false;
 		};
 
 		template <typename Class, typename Ret, typename... Args>
 		struct function_traits<Ret(Class::*)(Args...)>
 		{
-			using return_type = Ret;
+			using result_type = Ret;
 			static constexpr bool is_member_function = true;
 		};
 
 		template <typename Class, typename Ret, typename... Args>
 		struct function_traits<Ret(Class::*)(Args...) const>
 		{
-			using return_type = Ret;
+			using result_type = Ret;
 			static constexpr bool is_member_function = true;
 		};
 
@@ -405,12 +398,12 @@ namespace HSLL
 		private:
 			using call_type = function_traits<decltype(&Functor::operator())>;
 		public:
-			using return_type = typename call_type::return_type;
+			using result_type = typename call_type::result_type;
 			static constexpr bool is_member_function = false;
 		};
 
 		template <typename Callable>
-		using function_rtype = typename function_traits<typename std::decay<Callable>::type>::return_type;
+		using function_result_type = typename function_traits<typename std::decay<Callable>::type>::result_type;
 
 		//helper5_invoke
 		enum TASK_TUPLE_TYPE
@@ -631,19 +624,19 @@ namespace HSLL
 		template <typename F, typename... Args>
 		class HeapCallable_Async
 		{
-			using ReturnType = function_rtype<F>;
-			using Package = std::tuple<std::promise<ReturnType>, typename std::decay<F>::type, typename std::decay<Args>::type...>;
+			using ResultType = function_result_type<F>;
+			using Package = std::tuple<std::promise<ResultType>, typename std::decay<F>::type, typename std::decay<Args>::type...>;
 
 		private:
 			tp_unique_ptr<Package> storage;
 
-			template<typename T = ReturnType, typename std::enable_if<std::is_void<T>::value, bool>::type = true>
+			template<typename T = ResultType, typename std::enable_if<std::is_void<T>::value, bool>::type = true>
 			void invoke()
 			{
 				auto& promise = std::get<0>(*storage);
 				try
 				{
-					tuple_apply<TASK_TUPLE_TYPE_ASYNC, ReturnType>(*storage);
+					tuple_apply<TASK_TUPLE_TYPE_ASYNC, ResultType>(*storage);
 					promise.set_value();
 				}
 				catch (...)
@@ -652,13 +645,13 @@ namespace HSLL
 				}
 			}
 
-			template<typename T = ReturnType, typename std::enable_if<!std::is_void<T>::value, bool>::type = true>
+			template<typename T = ResultType, typename std::enable_if<!std::is_void<T>::value, bool>::type = true>
 			void invoke()
 			{
 				auto& promise = std::get<0>(*storage);
 				try
 				{
-					promise.set_value(tuple_apply<TASK_TUPLE_TYPE_ASYNC, ReturnType>(*storage));
+					promise.set_value(tuple_apply<TASK_TUPLE_TYPE_ASYNC, ResultType>(*storage));
 				}
 				catch (...)
 				{
@@ -674,7 +667,7 @@ namespace HSLL
 			 */
 			template<typename Func, typename std::enable_if<!is_HeapCallable_Async<typename std::decay<Func>::type>::value, bool>::type = true >
 			HeapCallable_Async(Func&& func, Args &&...args) HSLL_MAY_THROW
-				: storage(std::promise<ReturnType>(), std::forward<Func>(func), std::forward<Args>(args)...) {}
+				: storage(std::promise<ResultType>(), std::forward<Func>(func), std::forward<Args>(args)...) {}
 
 			/**
 			 * @brief Executes the callable and sets promise value/exception
@@ -690,7 +683,7 @@ namespace HSLL
 			 * @return std::future<ResultType> Future object for the call result
 			 * @pre Object must be in a valid state
 			 */
-			std::future<ReturnType> get_future() HSLL_CALL_ONCE
+			std::future<ResultType> get_future() HSLL_CALL_ONCE
 			{
 				return std::get<0>(*storage).get_future();
 			}
@@ -747,20 +740,20 @@ namespace HSLL
 		template <typename F, typename... Args>
 		class HeapCallable_Cancelable
 		{
-			using ReturnType = function_rtype<F>;
-			using Package = std::tuple<std::promise<ReturnType>, CancelableFlag,
+			using ResultType = function_result_type<F>;
+			using Package = std::tuple<std::promise<ResultType>, CancelableFlag,
 				typename std::decay<F>::type, typename std::decay<Args>::type...>;
 
 		private:
 			tp_shared_ptr<Package> storage;
 
-			template<typename T = ReturnType, typename std::enable_if<std::is_void<T>::value, bool>::type = true>
+			template<typename T = ResultType, typename std::enable_if<std::is_void<T>::value, bool>::type = true>
 			void invoke()
 			{
 				auto& promise = std::get<0>(*storage);
 				try
 				{
-					tuple_apply<TASK_TUPLE_TYPE_CANCELABLE, ReturnType>(*storage);
+					tuple_apply<TASK_TUPLE_TYPE_CANCELABLE, ResultType>(*storage);
 					promise.set_value();
 				}
 				catch (...)
@@ -769,13 +762,13 @@ namespace HSLL
 				}
 			}
 
-			template<typename T = ReturnType, typename std::enable_if<!std::is_void<T>::value, bool>::type = true>
+			template<typename T = ResultType, typename std::enable_if<!std::is_void<T>::value, bool>::type = true>
 			void invoke()
 			{
 				auto& promise = std::get<0>(*storage);
 				try
 				{
-					promise.set_value(tuple_apply<TASK_TUPLE_TYPE_CANCELABLE, ReturnType>(*storage));
+					promise.set_value(tuple_apply<TASK_TUPLE_TYPE_CANCELABLE, ResultType>(*storage));
 				}
 				catch (...)
 				{
@@ -789,7 +782,7 @@ namespace HSLL
 			{
 			private:
 
-				std::future<ReturnType> future;
+				std::future<ResultType> future;
 				tp_shared_ptr<Package> storage;
 
 			public:
@@ -820,7 +813,7 @@ namespace HSLL
 				 * @throws Propagates any exception stored in the promise
 				 * @throws std::runtime_error("Task canceled") if canceled
 				 */
-				template <typename U = ReturnType>
+				template <typename U = ResultType>
 				typename std::enable_if<!std::is_void<U>::value, U>::type get() HSLL_CALL_ONCE
 				{
 					return future.get();
@@ -831,7 +824,7 @@ namespace HSLL
 				 * @throws Propagates any exception stored in the promise
 				 * @throws std::runtime_error("Task canceled") if canceled
 				 */
-				template <typename U = ReturnType>
+				template <typename U = ResultType>
 				typename std::enable_if<std::is_void<U>::value>::type get() HSLL_CALL_ONCE
 				{
 					future.get();
@@ -873,7 +866,7 @@ namespace HSLL
 			 */
 			template<typename Func, typename std::enable_if<!is_HeapCallable_Cancelable<typename std::decay<Func>::type>::value, bool>::type = true >
 			HeapCallable_Cancelable(Func&& func, Args &&...args) HSLL_MAY_THROW
-				: storage(std::promise<ReturnType>(), false, std::forward<Func>(func), std::forward<Args>(args)...) {}
+				: storage(std::promise<ResultType>(), false, std::forward<Func>(func), std::forward<Args>(args)...) {}
 
 			/**
 			 * @brief Executes the callable if not canceled
@@ -976,27 +969,22 @@ namespace HSLL
 				return obj;
 			}
 
-			void tuple_move(void* dst)
-			{
-				move_impl(dst, typename make_index_sequence<std::tuple_size<Tuple>::value>::type{});
-			}
-
 			template <size_t... Is>
 			void move_impl(void* dst, index_sequence<Is...>)
 			{
-				tmove(dst, std::get<Is>(storage)...);
+				move_conditional(dst, std::get<Is>(storage)...);
 			}
 
 			template <typename... Ts>
-			void tmove(void* dst, Ts &...args)
+			void move_conditional(void* dst, Ts &...ts)
 			{
-				new (dst) TaskImpl(move_or_copy(args)...);
+				new (dst) TaskImpl(move_or_copy(ts)...);
 			}
 
-			template <typename Func, typename... Params,
+			template <typename Func, typename... Ts,
 				typename std::enable_if<!is_TaskImpl<typename std::decay<Func>::type>::value, bool>::type = true>
-			TaskImpl(Func&& func, Params &&...args)
-				: storage(std::forward<Func>(func), std::forward<Params>(args)...) {}
+			TaskImpl(Func&& func, Ts &&...ts)
+				: storage(std::forward<Func>(func), std::forward<Ts>(ts)...) {}
 
 
 			template <bool Condition>
@@ -1018,7 +1006,7 @@ namespace HSLL
 
 			void moveTo(void* dst) override
 			{
-				tuple_move(dst);
+				move_impl(dst, typename make_index_sequence<std::tuple_size<Tuple>::value>::type{});
 			}
 		};
 
@@ -1051,20 +1039,18 @@ namespace HSLL
 			alignas(ALIGN) char storage[TSIZE];
 
 
-			template <bool Condition, typename Any, typename... Params>
-			typename std::enable_if<Condition, void>::type
-				construct(Any&& func, Params &&...params)//normal
+			template <bool Condition, typename F, typename... Args>
+			typename std::enable_if<Condition, void>::type construct(F&& func, Args &&...args)//normal
 			{
-				using ImplType = typename TaskImplTraits<Any, Params...>::type;
-				new (storage) ImplType(std::forward<Any>(func), std::forward<Params>(params)...);
+				using ImplType = typename TaskImplTraits<F, Args...>::type;
+				new (storage) ImplType(std::forward<F>(func), std::forward<Args>(args)...);
 			}
 
-			template <bool Condition, typename Any, typename... Params>
-			typename std::enable_if<!Condition, void>::type
-				construct(Any&& func, Params &&...params)//HeapCallable
+			template <bool Condition, typename F, typename... Args>
+			typename std::enable_if<!Condition, void>::type construct(F&& func, Args &&...args)//HeapCallable
 			{
-				using ImplType = typename TaskImplTraits<HeapCallable<Any, Params...>>::type;
-				new (storage) ImplType(HeapCallable<Any, Params...>(std::forward<Any>(func), std::forward<Params>(params)...));
+				using ImplType = typename TaskImplTraits<HeapCallable<F, Args...>>::type;
+				new (storage) ImplType(HeapCallable<F, Args...>(std::forward<F>(func), std::forward<Args>(args)...));
 			}
 
 		public:
