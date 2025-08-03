@@ -30,6 +30,9 @@ constexpr const char* taskType[] = { "A","B","C" };
 #define TSIZE 24
 #define CAPACITY 8192
 #define FUNC testC
+#define CALLABLE_STACK FUNC
+#define CALLABLE_HEAP make_callable(FUNC)
+#define CALLABLE CALLABLE_STACK
 
 using namespace HSLL;
 
@@ -48,7 +51,7 @@ void bulk_submit_worker()
 	while (remaining > 0)
 	{
 		std::future<void> f;
-		if (submitter.add(FUNC))
+		if (submitter.add(CALLABLE))
 			remaining--;
 		else
 			std::this_thread::yield();
@@ -72,7 +75,7 @@ void single_submit_worker()
 
 	while (remaining > 0)
 	{
-		if (pool.submit(FUNC))
+		if (pool.submit(CALLABLE))
 			remaining--;
 		else
 			std::this_thread::yield();
