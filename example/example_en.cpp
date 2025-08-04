@@ -2,7 +2,7 @@
 #include <iostream>
 
 using namespace HSLL;
-using TaskType = TaskStack<128, 8>;  // 128-byte task storage
+using TaskType = TaskStack<64, 8>;
 ThreadPool<TaskType> globalPool;
 
 // Basic function example
@@ -131,9 +131,12 @@ void storageStrategyExample()
     };
 
     TaskType smallTask(lambda_small);
-    TaskType bigTask(lambda_big, "Large", " parameters", " require", " heap allocation.");
+    TaskType bigTask(lambda_big, std::string("Large"), std::string(" parameters"), std::string(" require"), std::string(" heap allocation."));
 
+    //if (TaskType::is_stored_on_stack<decltype(lambda_small)>::value)
     globalPool.submit(std::move(smallTask));
+
+    //if (!TaskType::is_stored_on_stack<decltype(lambda_big), std::string, std::string, std::string, std::string>::value)
     globalPool.submit(std::move(bigTask));
 }
 

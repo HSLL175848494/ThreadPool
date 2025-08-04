@@ -2,7 +2,7 @@
 #include <iostream>
 
 using namespace HSLL;
-using TaskType = TaskStack<128, 8>;  // 使用128字节的任务存储
+using TaskType = TaskStack<64, 8>;
 ThreadPool<TaskType> globalPool;
 
 // 基本函数示例
@@ -15,12 +15,6 @@ void simpleTask(const std::string& msg)
 int calculateSum(int a, int b)
 {
 	return a + b;
-}
-
-// 大型函数（较多参数）
-void bigTask(int a, double b, const std::string& c, char d, float e)
-{
-	std::cout << "Big task: " << a << ", " << b << ", " << c << ", " << d << ", " << e << std::endl;
 }
 
 // 任务存储在堆上示例
@@ -131,7 +125,7 @@ void storageStrategyExample()
 	};
 
 	TaskType smallTask(lambda_small);
-	TaskType bigTask(lambda_big, "Large", " parameters", " require", " heap allocation.");
+	TaskType bigTask(lambda_big, std::string("Large"), std::string(" parameters"), std::string(" require"), std::string(" heap allocation."));
 
 	//if (TaskType::is_stored_on_stack<decltype(lambda_small)>::value)
 	globalPool.submit(std::move(smallTask));
