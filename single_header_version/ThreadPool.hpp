@@ -1749,34 +1749,16 @@ namespace HSLL
 			{
 			};
 
-			/**
-			 * @brief Helper template for bulk construction (copy/move)
-			 */
-			template <typename T, BULK_CMETHOD Method>
-			struct BulkConstructHelper;
-
-			template <typename T>
-			struct BulkConstructHelper<T, COPY>
+			template <BULK_CMETHOD Method, typename T>
+			typename std::enable_if<Method == COPY, void>::type bulk_construct(T& dest, const T& src)
 			{
-				static void construct(T& dst, T& src)
-				{
-					new (&dst) T(src);
-				}
-			};
-
-			template <typename T>
-			struct BulkConstructHelper<T, MOVE>
-			{
-				static void construct(T& dst, T& src)
-				{
-					new (&dst) T(std::move(src));
-				}
-			};
+				new (&dest) T(src);
+			}
 
 			template <BULK_CMETHOD Method, typename T>
-			void bulk_construct(T& dst, T& src)
+			typename std::enable_if<Method == MOVE, void>::type bulk_construct(T& dest, T& src)
 			{
-				BulkConstructHelper<T, Method>::construct(dst, src);
+				new (&dest) T(std::move(src));
 			}
 
 		private:
