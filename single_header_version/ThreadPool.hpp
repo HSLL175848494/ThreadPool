@@ -1185,10 +1185,9 @@ namespace HSLL
 
 				InnerRWLock()noexcept :count(0) {}
 
-				// Optimistic locking since reads greatly outnumber writes: increment first then handle rollback if needed
 				void lock_read() noexcept
 				{
-					long long old = count.fetch_add(1, std::memory_order_acquire); // Acquire semantics to get write results
+					long long old = count.fetch_add(1, std::memory_order_acquire);
 
 					while (old < 0)
 					{
@@ -1214,34 +1213,33 @@ namespace HSLL
 					return true;
 				}
 
-				// Relaxed semantics sufficient since read operations don't modify shared state
 				void unlock_read() noexcept
 				{
 					count.fetch_sub(1, std::memory_order_relaxed);
 				}
 
-				// Add write flag to prevent new read locks
 				void mark_write() noexcept
 				{
-					long long old = count.load(std::memory_order_relaxed);
-
-					while (!count.compare_exchange_weak(old, old - HSLL_SPINREADWRITELOCK_MAXREADER, std::memory_order_relaxed, std::memory_order_relaxed));
+					count.fetch_sub(HSLL_SPINREADWRITELOCK_MAXREADER, std::memory_order_relaxed);
 				}
 
-				// Must call mark_write() before this function, otherwise will never succeed
+				void unmark_write() noexcept
+				{
+					count.fetch_add(HSLL_SPINREADWRITELOCK_MAXREADER, std::memory_order_relaxed);
+				}
+
 				bool is_write_ready() noexcept
 				{
 					return count.load(std::memory_order_relaxed) == -HSLL_SPINREADWRITELOCK_MAXREADER;
 				}
 
-				// Release semantics to propagate write results
 				void unlock_write() noexcept
 				{
 					count.fetch_add(HSLL_SPINREADWRITELOCK_MAXREADER, std::memory_order_release);
 				}
 			};
 
-			struct alignas(64) PeerLock
+			struct alignas(64) Slot
 			{
 				InnerRWLock lock;
 
@@ -1265,6 +1263,11 @@ namespace HSLL
 					lock.mark_write();
 				}
 
+				void unmark_write() noexcept
+				{
+					lock.unmark_write();
+				}
+
 				bool is_write_ready() noexcept
 				{
 					return lock.is_write_ready();
@@ -1277,53 +1280,50 @@ namespace HSLL
 			};
 
 			std::atomic<bool> flag;
-			thread_local static int local_index;
-			static std::atomic<unsigned int> index;
-			PeerLock counter[HSLL_SPINREADWRITELOCK_MAXSLOTS];
+			Slot slots[HSLL_SPINREADWRITELOCK_MAXSLOTS];
+
+			thread_local static int localIndex;
+			static std::atomic<unsigned int> globalIndex;
 
 		public:
 
 			SpinReadWriteLock() noexcept :flag(true) {}
 
-			unsigned int get_local_index() noexcept
+			bool try_lock_read() noexcept
 			{
-				if (local_index == -1)
-					local_index = index.fetch_add(1, std::memory_order_relaxed) % HSLL_SPINREADWRITELOCK_MAXSLOTS;
-
-				return local_index;
+				return slots[localIndex].try_lock_read();
 			}
 
 			void lock_read() noexcept
 			{
-				counter[get_local_index()].lock_read();
+				slots[localIndex].lock_read();
 			}
 
 			void unlock_read() noexcept
 			{
-				counter[get_local_index()].unlock_read();
+				slots[localIndex].unlock_read();
 			}
 
 			void lock_write() noexcept
 			{
 				bool old = true;
 
-				// Set write flag to block new writers and acquire write permission
 				while (!flag.compare_exchange_weak(old, false, std::memory_order_acquire, std::memory_order_relaxed))
 				{
 					std::this_thread::yield();
 					old = true;
 				}
 
-				for (int i = 0; i < HSLL_SPINREADWRITELOCK_MAXSLOTS; ++i) // Mark writer waiting to prevent new readers
-					counter[i].mark_write();
+				for (int i = 0; i < HSLL_SPINREADWRITELOCK_MAXSLOTS; ++i)
+					slots[i].mark_write();
 
 				while (true)
 				{
 					bool allReady = true;
 
-					for (int i = 0; i < HSLL_SPINREADWRITELOCK_MAXSLOTS; ++i) // Lock successful when all write locks acquired
+					for (int i = 0; i < HSLL_SPINREADWRITELOCK_MAXSLOTS; ++i)
 					{
-						if (!counter[i].is_write_ready())
+						if (!slots[i].is_write_ready())
 						{
 							allReady = false;
 							break;
@@ -1337,24 +1337,10 @@ namespace HSLL
 				}
 			}
 
-			void unlock_write() noexcept
-			{
-				for (int i = 0; i < HSLL_SPINREADWRITELOCK_MAXSLOTS; ++i) // Release all read-write locks and propagate to readers
-					counter[i].unlock_write();
-
-				flag.store(true, std::memory_order_release); // Allow new writers and propagate result
-			}
-
-			bool try_lock_read() noexcept
-			{
-				return counter[get_local_index()].try_lock_read();
-			}
-
 			bool try_lock_write_until(const std::chrono::steady_clock::time_point& timestamp) noexcept
 			{
 				bool old = true;
 
-				// Set write flag to block new writers and acquire write permission
 				while (!flag.compare_exchange_weak(old, false, std::memory_order_acquire, std::memory_order_relaxed))
 				{
 					old = true;
@@ -1367,16 +1353,16 @@ namespace HSLL
 					std::this_thread::yield();
 				}
 
-				for (int i = 0; i < HSLL_SPINREADWRITELOCK_MAXSLOTS; ++i) // Mark writer waiting to prevent new readers
-					counter[i].mark_write();
+				for (int i = 0; i < HSLL_SPINREADWRITELOCK_MAXSLOTS; ++i)
+					slots[i].mark_write();
 
 				while (true)
 				{
 					bool allReady = true;
 
-					for (int i = 0; i < HSLL_SPINREADWRITELOCK_MAXSLOTS; ++i) // Lock successful when all write locks acquired
+					for (int i = 0; i < HSLL_SPINREADWRITELOCK_MAXSLOTS; ++i)
 					{
-						if (!counter[i].is_write_ready())
+						if (!slots[i].is_write_ready())
 						{
 							allReady = false;
 							break;
@@ -1388,10 +1374,10 @@ namespace HSLL
 
 					auto now = std::chrono::steady_clock::now();
 
-					if (now >= timestamp)//rollback
+					if (now >= timestamp)
 					{
 						for (int i = 0; i < HSLL_SPINREADWRITELOCK_MAXSLOTS; ++i)
-							counter[i].unlock_write();
+							slots[i].unmark_write();
 
 						flag.store(true, std::memory_order_relaxed);
 						return false;
@@ -1403,12 +1389,20 @@ namespace HSLL
 				return true;
 			}
 
+			void unlock_write() noexcept
+			{
+				for (int i = 0; i < HSLL_SPINREADWRITELOCK_MAXSLOTS; ++i)
+					slots[i].unlock_write();
+
+				flag.store(true, std::memory_order_release);
+			}
+
 			SpinReadWriteLock(const SpinReadWriteLock&) = delete;
 			SpinReadWriteLock& operator=(const SpinReadWriteLock&) = delete;
 		};
 
-		thread_local int SpinReadWriteLock::local_index{ -1 };
-		std::atomic<unsigned int> SpinReadWriteLock::index{ 0 };
+		std::atomic<unsigned int> SpinReadWriteLock::globalIndex{ 0 };
+		thread_local int SpinReadWriteLock::localIndex{ globalIndex.fetch_add(1, std::memory_order_relaxed) % HSLL_SPINREADWRITELOCK_MAXSLOTS };
 
 		class ReadLockGuard
 		{
@@ -1749,34 +1743,16 @@ namespace HSLL
 			{
 			};
 
-			/**
-			 * @brief Helper template for bulk construction (copy/move)
-			 */
-			template <typename T, BULK_CMETHOD Method>
-			struct BulkConstructHelper;
-
-			template <typename T>
-			struct BulkConstructHelper<T, COPY>
+			template <BULK_CMETHOD Method, typename T>
+			typename std::enable_if<Method == COPY, void>::type bulk_construct(T& dest, const T& src)
 			{
-				static void construct(T& dst, T& src)
-				{
-					new (&dst) T(src);
-				}
-			};
-
-			template <typename T>
-			struct BulkConstructHelper<T, MOVE>
-			{
-				static void construct(T& dst, T& src)
-				{
-					new (&dst) T(std::move(src));
-				}
-			};
+				new (&dest) T(src);
+			}
 
 			template <BULK_CMETHOD Method, typename T>
-			void bulk_construct(T& dst, T& src)
+			typename std::enable_if<Method == MOVE, void>::type bulk_construct(T& dest, T& src)
 			{
-				BulkConstructHelper<T, Method>::construct(dst, src);
+				new (&dest) T(std::move(src));
 			}
 
 		private:
