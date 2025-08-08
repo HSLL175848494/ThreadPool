@@ -628,15 +628,21 @@ namespace HSLL
 				return nullptr;
 			}
 
+			static bool try_lock_write_until(const std::chrono::steady_clock::time_point& timestamp, SpinReadWriteLock& rwLock)
+			{
+				return rwLock.try_lock_write_until(timestamp);
+			}
+
 			static bool try_wait_empty_until(const std::chrono::steady_clock::time_point& timestamp, TPBlockQueue<T>* queue) noexcept
 			{
 				while (queue->get_size())
 				{
-					std::this_thread::yield();
 					auto now = std::chrono::steady_clock::now();
 
 					if (now >= timestamp)
 						return false;
+
+					std::this_thread::yield();
 				}
 
 				return true;
@@ -646,7 +652,7 @@ namespace HSLL
 			{
 				auto timestamp = std::chrono::steady_clock::now() + std::chrono::milliseconds(HSLL_THREADPOOL_LOCK_TIMEOUT_MILLISECONDS);
 
-				if (rwLock.try_lock_write_until(timestamp))
+				if (try_lock_write_until(timestamp, rwLock))
 				{
 					threadNum--;
 					groupAllocator.update(threadNum);
@@ -688,7 +694,7 @@ namespace HSLL
 				{
 					auto timestamp = std::chrono::steady_clock::now() + std::chrono::milliseconds(HSLL_THREADPOOL_LOCK_TIMEOUT_MILLISECONDS);
 
-					if (rwLock.try_lock_write_until(timestamp))
+					if (try_lock_write_until(timestamp, rwLock))
 					{
 						threadNum += succeed;
 						groupAllocator.update(threadNum);
