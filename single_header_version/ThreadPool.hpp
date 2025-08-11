@@ -2002,7 +2002,7 @@ namespace HSLL
 					return false;
 
 				totalsize = sizeof(TYPE) * capacity;
-				memoryBlock = HSLL_ALIGNED_MALLOC(totalsize, std::max(alignof(TYPE), (size_t)64));
+				memoryBlock = HSLL_ALIGNED_MALLOC(totalsize, alignof(TYPE));
 
 				if (!memoryBlock)
 					return false;
