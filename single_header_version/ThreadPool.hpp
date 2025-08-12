@@ -1797,13 +1797,13 @@ namespace HSLL
 		private:
 			// Memory management
 			void* memoryBlock;		///< Raw memory block for element storage
-			unsigned int isStopped; ///< Flag for stopping all operations
+			unsigned int stop; ///< Flag for stopping all operations
 
 			// Queue state tracking
-			unsigned int size;		///< Current number of elements in queue
 			unsigned int maxSpin;
 			unsigned int capacity;	///< Capacity of the queue
 			unsigned int totalsize; ///< Total allocated memory size
+			std::atomic<unsigned int> size;		///< Current number of elements in queue
 
 			// Buffer pointers
 			TYPE* dataListHead; ///< Pointer to first element in queue
@@ -1907,7 +1907,7 @@ namespace HSLL
 			template <INSERT_POS POS, typename... Args>
 			void emplace_helper(std::unique_lock<std::mutex>& lock, Args &&...args)
 			{
-				size += 1;
+				size.fetch_add(1, std::memory_order_release);
 				emplace_impl<POS>(std::forward<Args>(args)...);
 				lock.unlock();
 				notEmptyCond.notify_one();
@@ -1916,8 +1916,8 @@ namespace HSLL
 			template <BULK_CMETHOD METHOD, INSERT_POS POS>
 			unsigned int enqueue_bulk_helper(std::unique_lock<std::mutex>& lock, TYPE* elements, unsigned int count)
 			{
-				unsigned int toPush = std::min(count, capacity - size);
-				size += toPush;
+				unsigned int toPush = std::min(count, capacity - size.load(std::memory_order_relaxed));
+				size.fetch_add(toPush, std::memory_order_release);
 				enqueue_bulk_impl<POS, METHOD>(elements, toPush);
 				lock.unlock();
 
@@ -1932,8 +1932,8 @@ namespace HSLL
 			unsigned int enqueue_bulk_helper(std::unique_lock<std::mutex>& lock,
 				TYPE* part1, unsigned int count1, TYPE* part2, unsigned int count2)
 			{
-				unsigned int toPush = std::min(count1 + count2, capacity - size);
-				size += toPush;
+				unsigned int toPush = std::min(count1 + count2, capacity - size.load(std::memory_order_relaxed));
+				size.fetch_add(toPush, std::memory_order_release);
 
 				if (toPush > count1)
 					enqueue_bulk_impl<POS, METHOD>(part1, count1, part2, toPush - count1);
@@ -1951,7 +1951,7 @@ namespace HSLL
 
 			void dequeue_helper(std::unique_lock<std::mutex>& lock, TYPE& element)
 			{
-				size -= 1;
+				size.fetch_sub(1, std::memory_order_release);
 				move_element(element, *dataListHead);
 				move_head_next();
 				lock.unlock();
@@ -1960,13 +1960,15 @@ namespace HSLL
 
 			unsigned int dequeue_bulk_helper(std::unique_lock<std::mutex>& lock, TYPE* elements, unsigned int count)
 			{
-				unsigned int toPop = std::min(count, size);
-				size -= toPop;
+				unsigned int toPop = std::min(count, size.load(std::memory_order_relaxed));
+				size.fetch_sub(toPop, std::memory_order_release);
+
 				for (unsigned int i = 0; i < toPop; ++i)
 				{
 					move_element(elements[i], *dataListHead);
 					move_head_next();
 				}
+
 				lock.unlock();
 
 				if (HSLL_UNLIKELY(toPop == 1))
@@ -1986,33 +1988,34 @@ namespace HSLL
 			{
 				for (unsigned int i = 0; i < maxSpin; ++i)
 				{
-					if (size)
+					if (size.load(std::memory_order_acquire))
 						return;
 				}
+
 				return;
 			}
 
 		public:
 
-			TPBlockQueue() : memoryBlock(nullptr), isStopped(0) {}
+			TPBlockQueue() : memoryBlock(nullptr), stop(0) {}
 
-			bool init(unsigned int capacity, unsigned int spin = 2000)
+			bool init(unsigned int capacity, unsigned int maxSpin = 2000)
 			{
-				if (memoryBlock || !capacity)
+				if (this->memoryBlock || !capacity)
 					return false;
 
-				totalsize = sizeof(TYPE) * capacity;
-				memoryBlock = HSLL_ALIGNED_MALLOC(totalsize, alignof(TYPE));
+				this->totalsize = sizeof(TYPE) * capacity;
+				this->memoryBlock = HSLL_ALIGNED_MALLOC(totalsize, alignof(TYPE));
 
-				if (!memoryBlock)
+				if (!this->memoryBlock)
 					return false;
 
-				size = 0;
-				maxSpin = spin;
+				this->size = 0;
+				this->maxSpin = maxSpin;
 				this->capacity = capacity;
-				dataListHead = (TYPE*)memoryBlock;
-				dataListTail = (TYPE*)memoryBlock;
-				border = (uintptr_t)memoryBlock + totalsize;
+				this->dataListHead = (TYPE*)memoryBlock;
+				this->dataListTail = (TYPE*)memoryBlock;
+				this->border = (uintptr_t)memoryBlock + totalsize;
 				return true;
 			}
 
@@ -2023,7 +2026,7 @@ namespace HSLL
 
 				std::unique_lock<std::mutex> lock(dataMutex);
 
-				if (HSLL_UNLIKELY(size == capacity))
+				if (HSLL_UNLIKELY(size.load(std::memory_order_relaxed) == capacity))
 					return false;
 
 				emplace_helper<POS>(lock, std::forward<Args>(args)...);
@@ -2039,9 +2042,9 @@ namespace HSLL
 				std::unique_lock<std::mutex> lock(dataMutex);
 
 				notFullCond.wait(lock, [this]
-					{ return HSLL_LIKELY(size != capacity) || HSLL_UNLIKELY(isStopped); });
+					{ return HSLL_LIKELY(size.load(std::memory_order_relaxed) != capacity) || HSLL_UNLIKELY(stop); });
 
-				if (HSLL_UNLIKELY(isStopped))
+				if (HSLL_UNLIKELY(stop))
 					return false;
 
 				emplace_helper<POS>(lock, std::forward<Args>(args)...);
@@ -2056,9 +2059,9 @@ namespace HSLL
 				std::unique_lock<std::mutex> lock(dataMutex);
 
 				bool success = notFullCond.wait_for(lock, timeout, [this]
-					{ return HSLL_LIKELY(size != capacity) || HSLL_UNLIKELY(isStopped); });
+					{ return HSLL_LIKELY(size.load(std::memory_order_relaxed) != capacity) || HSLL_UNLIKELY(stop); });
 
-				if (HSLL_UNLIKELY(!success || isStopped))
+				if (HSLL_UNLIKELY(!success || stop))
 					return false;
 
 				emplace_helper<POS>(lock, std::forward<Args>(args)...);
@@ -2072,7 +2075,7 @@ namespace HSLL
 				assert(elements && count);
 				std::unique_lock<std::mutex> lock(dataMutex);
 
-				if (HSLL_UNLIKELY(!(capacity - size)))
+				if (HSLL_UNLIKELY(!(capacity - size.load(std::memory_order_relaxed))))
 					return 0;
 
 				return enqueue_bulk_helper<METHOD, POS>(lock, elements, count);
@@ -2089,7 +2092,7 @@ namespace HSLL
 
 				std::unique_lock<std::mutex> lock(dataMutex);
 
-				if (HSLL_UNLIKELY(!(capacity - size)))
+				if (HSLL_UNLIKELY(!(capacity - size.load(std::memory_order_relaxed))))
 					return 0;
 
 				return enqueue_bulk_helper<METHOD, POS>(lock, part1, count1, part2, count2);
@@ -2104,9 +2107,9 @@ namespace HSLL
 				std::unique_lock<std::mutex> lock(dataMutex);
 
 				notFullCond.wait(lock, [this]
-					{ return HSLL_LIKELY(size != capacity) || HSLL_UNLIKELY(isStopped); });
+					{ return HSLL_LIKELY(size.load(std::memory_order_relaxed) != capacity) || HSLL_UNLIKELY(stop); });
 
-				if (HSLL_UNLIKELY(isStopped))
+				if (HSLL_UNLIKELY(stop))
 					return 0;
 
 				return enqueue_bulk_helper<METHOD, POS>(lock, elements, count);
@@ -2121,9 +2124,9 @@ namespace HSLL
 				std::unique_lock<std::mutex> lock(dataMutex);
 
 				bool success = notFullCond.wait_for(lock, timeout, [this]
-					{ return HSLL_LIKELY(size != capacity) || HSLL_UNLIKELY(isStopped); });
+					{ return HSLL_LIKELY(size.load(std::memory_order_relaxed) != capacity) || HSLL_UNLIKELY(stop); });
 
-				if (HSLL_UNLIKELY(!success || isStopped))
+				if (HSLL_UNLIKELY(!success || stop))
 					return 0;
 
 				return enqueue_bulk_helper<METHOD, POS>(lock, elements, count);
@@ -2134,7 +2137,7 @@ namespace HSLL
 				assert(memoryBlock);
 				std::unique_lock<std::mutex> lock(dataMutex);
 
-				if (HSLL_UNLIKELY(!size))
+				if (HSLL_UNLIKELY(!size.load(std::memory_order_relaxed)))
 					return false;
 
 				dequeue_helper(lock, element);
@@ -2148,9 +2151,9 @@ namespace HSLL
 				std::unique_lock<std::mutex> lock(dataMutex);
 
 				notEmptyCond.wait(lock, [this]
-					{ return HSLL_LIKELY(size) || HSLL_UNLIKELY(isStopped); });
+					{ return HSLL_LIKELY(size.load(std::memory_order_relaxed)) || HSLL_UNLIKELY(stop); });
 
-				if (HSLL_UNLIKELY(isStopped))
+				if (HSLL_UNLIKELY(stop))
 					return false;
 
 				dequeue_helper(lock, element);
@@ -2165,9 +2168,9 @@ namespace HSLL
 				std::unique_lock<std::mutex> lock(dataMutex);
 
 				bool success = notEmptyCond.wait_for(lock, timeout, [this]
-					{ return HSLL_LIKELY(size) || HSLL_UNLIKELY(isStopped); });
+					{ return HSLL_LIKELY(size.load(std::memory_order_relaxed)) || HSLL_UNLIKELY(stop); });
 
-				if (HSLL_UNLIKELY(!success || isStopped))
+				if (HSLL_UNLIKELY(!success || stop))
 					return false;
 
 				dequeue_helper(lock, element);
@@ -2180,7 +2183,7 @@ namespace HSLL
 				assert(elements && count);
 				std::unique_lock<std::mutex> lock(dataMutex);
 
-				if (HSLL_UNLIKELY(!size))
+				if (HSLL_UNLIKELY(!size.load(std::memory_order_relaxed)))
 					return 0;
 
 				return dequeue_bulk_helper(lock, elements, count);
@@ -2194,9 +2197,9 @@ namespace HSLL
 				std::unique_lock<std::mutex> lock(dataMutex);
 
 				notEmptyCond.wait(lock, [this]
-					{ return HSLL_LIKELY(size) || HSLL_UNLIKELY(isStopped); });
+					{ return HSLL_LIKELY(size.load(std::memory_order_relaxed)) || HSLL_UNLIKELY(stop); });
 
-				if (HSLL_UNLIKELY(isStopped))
+				if (HSLL_UNLIKELY(stop))
 					return 0;
 
 				return dequeue_bulk_helper(lock, elements, count);
@@ -2211,47 +2214,60 @@ namespace HSLL
 				std::unique_lock<std::mutex> lock(dataMutex);
 
 				bool success = notEmptyCond.wait_for(lock, timeout, [this]
-					{ return HSLL_LIKELY(size) || HSLL_UNLIKELY(isStopped); });
+					{ return HSLL_LIKELY(size.load(std::memory_order_relaxed)) || HSLL_UNLIKELY(stop); });
 
-				if (HSLL_UNLIKELY(!success || isStopped))
+				if (HSLL_UNLIKELY(!success || stop))
 					return 0;
 
 				return dequeue_bulk_helper(lock, elements, count);
 			}
 
-			unsigned int get_size()
+			unsigned int get_size_weak()
 			{
 				assert(memoryBlock);
-				return size;
+				return size.load(std::memory_order_relaxed);
 			}
 
-			unsigned int is_Stopped()
+			unsigned int get_size_strong()
 			{
 				assert(memoryBlock);
-				return isStopped;
+				return size.load(std::memory_order_acquire);
 			}
 
-			void stopWait()
+			unsigned int is_stopped_weak()
+			{
+				assert(memoryBlock);
+				return stop;
+			}
+
+			unsigned int is_stopped_strong()
+			{
+				std::lock_guard<std::mutex> lock(dataMutex);
+				return is_stopped_weak();
+			}
+
+			void disableWait()
 			{
 				{
 					std::lock_guard<std::mutex> lock(dataMutex);
-					isStopped = 1;
+					stop = 1;
 				}
 
-				notEmptyCond.notify_all();
 				notFullCond.notify_all();
+				notEmptyCond.notify_all();
 			}
 
 			void enableWait()
 			{
 				std::lock_guard<std::mutex> lock(dataMutex);
-				isStopped = 0;
+				stop = 0;
 			}
 
 			void release()
 			{
 				assert(memoryBlock);
 				TYPE* current = dataListHead;
+
 				for (unsigned int i = 0; i < size; ++i)
 				{
 					current->~TYPE();
@@ -2261,13 +2277,8 @@ namespace HSLL
 				}
 
 				HSLL_ALIGNED_FREE(memoryBlock);
-
-				size = 0;
-				capacity = 0;
-				isStopped = 0;
 				memoryBlock = nullptr;
-				dataListHead = nullptr;
-				dataListTail = nullptr;
+				stop = 0;
 			}
 
 			~TPBlockQueue()
@@ -2284,7 +2295,6 @@ namespace HSLL
 
 	using INNER::INSERT_POS;
 }
-
 
 //TPGroupAllocator
 namespace HSLL
@@ -2335,7 +2345,7 @@ namespace HSLL
 			{
 				TPBlockQueue<T>* queue = (*assignedQueues)[nowIndex];
 
-				if (queue->get_size() <= mainFullThreshold)
+				if (queue->get_size_strong() <= mainFullThreshold)
 					return queue;
 				else
 					return nullptr;
@@ -2350,7 +2360,7 @@ namespace HSLL
 					nowIndex = (nowIndex + 1) % assignedQueues->size();
 					candidateQueue = (*assignedQueues)[nowIndex];
 
-					if (candidateQueue->get_size() <= otherFullThreshold)
+					if (candidateQueue->get_size_strong() <= otherFullThreshold)
 					{
 						nowCount = 0;
 						return candidateQueue;
@@ -2576,7 +2586,7 @@ namespace HSLL
 				{
 					TPBlockQueue<T>* queue = queues + (start + i) % queueCount;
 
-					if (queue->get_size() <= fullThreshold)
+					if (queue->get_size_strong() <= fullThreshold)
 						return queue;
 				}
 
@@ -2690,7 +2700,7 @@ namespace HSLL
 					unsigned int now = (index + i) % num;
 					TPBlockQueue<T>* queue = queues + now;
 
-					if (queue != ignore && queue->get_size() >= threshold)
+					if (queue != ignore && queue->get_size_strong() >= threshold)
 					{
 						if (queue->dequeue(element))
 						{
@@ -2770,7 +2780,7 @@ namespace HSLL
 					unsigned int now = (index + i) % num;
 					TPBlockQueue<T>* queue = queues + now;
 
-					if (queue != ignore && queue->get_size() >= threshold)
+					if (queue != ignore && queue->get_size_strong() >= threshold)
 					{
 						if (count = queue->dequeue_bulk(elements, batchSize))
 						{
@@ -3103,7 +3113,7 @@ namespace HSLL
 				for (int i = 0; i < threadNum; ++i)
 				{
 					restartSem[i].release();
-					queues[i].stopWait();
+					queues[i].disableWait();
 				}
 
 				for (int i = 0; i < threadNum; ++i)
@@ -3133,7 +3143,7 @@ namespace HSLL
 					monitor.join();
 				}
 
-				exitFlag = true;
+				this->exitFlag = true;
 				this->shutdownPolicy = shutdownPolicy;
 
 				{
@@ -3141,7 +3151,7 @@ namespace HSLL
 						restartSem[i].release();
 
 					for (unsigned i = 0; i < workers.size(); ++i)
-						queues[i].stopWait();
+						queues[i].disableWait();
 
 					for (auto& worker : workers)
 						worker.join();
@@ -3207,14 +3217,14 @@ namespace HSLL
 				unsigned int now = next_index();
 				TPBlockQueue<T>* queue = queues + now;
 
-				if (queue->get_size() <= mainFullThreshold)
+				if (queue->get_size_strong() <= mainFullThreshold)
 					return queue;
 
 				for (unsigned int i = 1; i <= threadNum - 1; ++i)
 				{
 					queue = queues + ((now + i) % threadNum);
 
-					if (queue->get_size() <= otherFullThreshold)
+					if (queue->get_size_strong() <= otherFullThreshold)
 						return queue;
 				}
 
@@ -3228,7 +3238,7 @@ namespace HSLL
 
 			static bool try_wait_empty_until(const std::chrono::steady_clock::time_point& timestamp, TPBlockQueue<T>* queue) noexcept
 			{
-				while (queue->get_size())
+				while (queue->get_size_strong())
 				{
 					auto now = std::chrono::steady_clock::now();
 
@@ -3253,7 +3263,7 @@ namespace HSLL
 
 					if (try_wait_empty_until(timestamp, queues + threadNum))
 					{
-						queues[threadNum].stopWait();
+						queues[threadNum].disableWait();
 						stoppedSem[threadNum].acquire();
 						queues[threadNum].release();
 
@@ -3299,7 +3309,7 @@ namespace HSLL
 					//rollback
 					for (unsigned int i = threadNum; i < threadNum + succeed; ++i)
 					{
-						queues[i].stopWait();
+						queues[i].disableWait();
 						stoppedSem[i].acquire();
 						queues[i].release();
 					}
@@ -3340,7 +3350,7 @@ namespace HSLL
 					unsigned int totalSize = 0;
 
 					for (unsigned int i = 0; i < threadNum; ++i)
-						totalSize += queues[i].get_size();
+						totalSize += queues[i].get_size_strong();
 
 					if (totalSize < allSize * HSLL_THREADPOOL_SHRINK_FACTOR)
 						shrink++;
@@ -3427,7 +3437,7 @@ namespace HSLL
 
 					cheak:
 
-						if (queue->is_Stopped())
+						if (queue->is_stopped_weak())
 							break;
 					}
 
@@ -3462,13 +3472,13 @@ namespace HSLL
 					{
 						while (true)
 						{
-							unsigned int size = queue->get_size();
+							unsigned int size = queue->get_size_strong();
 							unsigned int round = batchSize;
 
 							while (round && size < batchSize)
 							{
 								std::this_thread::yield();
-								size = queue->get_size();
+								size = queue->get_size_strong();
 								round--;
 							}
 
@@ -3490,7 +3500,7 @@ namespace HSLL
 
 					cheak:
 
-						if (queue->is_Stopped())
+						if (queue->is_stopped_weak())
 							break;
 					}
 
