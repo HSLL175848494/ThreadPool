@@ -97,7 +97,7 @@ namespace HSLL
 					unsigned int now = (index + i) % num;
 					TPBlockQueue<T>* queue = queues + now;
 
-					if (queue != ignore && queue->get_size() >= threshold)
+					if (queue != ignore && queue->get_size_strong() >= threshold)
 					{
 						if (queue->dequeue(element))
 						{
@@ -177,7 +177,7 @@ namespace HSLL
 					unsigned int now = (index + i) % num;
 					TPBlockQueue<T>* queue = queues + now;
 
-					if (queue != ignore && queue->get_size() >= threshold)
+					if (queue != ignore && queue->get_size_strong() >= threshold)
 					{
 						if (count = queue->dequeue_bulk(elements, batchSize))
 						{
@@ -510,7 +510,7 @@ namespace HSLL
 				for (int i = 0; i < threadNum; ++i)
 				{
 					restartSem[i].release();
-					queues[i].stopWait();
+					queues[i].disableWait();
 				}
 
 				for (int i = 0; i < threadNum; ++i)
@@ -540,7 +540,7 @@ namespace HSLL
 					monitor.join();
 				}
 
-				exitFlag = true;
+				this->exitFlag = true;
 				this->shutdownPolicy = shutdownPolicy;
 
 				{
@@ -548,7 +548,7 @@ namespace HSLL
 						restartSem[i].release();
 
 					for (unsigned i = 0; i < workers.size(); ++i)
-						queues[i].stopWait();
+						queues[i].disableWait();
 
 					for (auto& worker : workers)
 						worker.join();
@@ -614,14 +614,14 @@ namespace HSLL
 				unsigned int now = next_index();
 				TPBlockQueue<T>* queue = queues + now;
 
-				if (queue->get_size() <= mainFullThreshold)
+				if (queue->get_size_strong() <= mainFullThreshold)
 					return queue;
 
 				for (unsigned int i = 1; i <= threadNum - 1; ++i)
 				{
 					queue = queues + ((now + i) % threadNum);
 
-					if (queue->get_size() <= otherFullThreshold)
+					if (queue->get_size_strong() <= otherFullThreshold)
 						return queue;
 				}
 
@@ -635,7 +635,7 @@ namespace HSLL
 
 			static bool try_wait_empty_until(const std::chrono::steady_clock::time_point& timestamp, TPBlockQueue<T>* queue) noexcept
 			{
-				while (queue->get_size())
+				while (queue->get_size_strong())
 				{
 					auto now = std::chrono::steady_clock::now();
 
@@ -660,7 +660,7 @@ namespace HSLL
 
 					if (try_wait_empty_until(timestamp, queues + threadNum))
 					{
-						queues[threadNum].stopWait();
+						queues[threadNum].disableWait();
 						stoppedSem[threadNum].acquire();
 						queues[threadNum].release();
 
@@ -706,7 +706,7 @@ namespace HSLL
 					//rollback
 					for (unsigned int i = threadNum; i < threadNum + succeed; ++i)
 					{
-						queues[i].stopWait();
+						queues[i].disableWait();
 						stoppedSem[i].acquire();
 						queues[i].release();
 					}
@@ -747,7 +747,7 @@ namespace HSLL
 					unsigned int totalSize = 0;
 
 					for (unsigned int i = 0; i < threadNum; ++i)
-						totalSize += queues[i].get_size();
+						totalSize += queues[i].get_size_strong();
 
 					if (totalSize < allSize * HSLL_THREADPOOL_SHRINK_FACTOR)
 						shrink++;
@@ -834,7 +834,7 @@ namespace HSLL
 
 					cheak:
 
-						if (queue->is_Stopped())
+						if (queue->is_stopped_weak())
 							break;
 					}
 
@@ -869,13 +869,13 @@ namespace HSLL
 					{
 						while (true)
 						{
-							unsigned int size = queue->get_size();
+							unsigned int size = queue->get_size_strong();
 							unsigned int round = batchSize;
 
 							while (round && size < batchSize)
 							{
 								std::this_thread::yield();
-								size = queue->get_size();
+								size = queue->get_size_strong();
 								round--;
 							}
 
@@ -897,7 +897,7 @@ namespace HSLL
 
 					cheak:
 
-						if (queue->is_Stopped())
+						if (queue->is_stopped_weak())
 							break;
 					}
 
