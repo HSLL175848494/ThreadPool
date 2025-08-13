@@ -44,6 +44,9 @@ namespace HSLL
 	{
 		inline void* hsll_aligned_alloc(size_t align, size_t size)
 		{
+			static_assert(align > 0 && (align & (align - 1)) == 0,
+				"align must be > 0 and be an nth power of 2.");
+
 			const size_t aligned_size = (size + align - 1) & ~(align - 1);
 			return aligned_alloc(align, aligned_size);
 		}
@@ -60,15 +63,6 @@ namespace HSLL
 	namespace INNER
 	{
 		/**
-		 * @brief Enumeration defining the method of bulk construction
-		 */
-		enum BULK_CMETHOD
-		{
-			COPY, ///< Use copy construction semantics
-			MOVE  ///< Use move construction semantics
-		};
-
-		/**
 		 * @brief Enumeration defining the insertion position
 		 */
 		enum INSERT_POS
@@ -83,38 +77,15 @@ namespace HSLL
 		template <typename TYPE>
 		class alignas(64) TPBlockQueue
 		{
-			template <typename T>
-			struct is_duration : std::false_type
-			{
-			};
-
-			template <typename Rep, typename Period>
-			struct is_duration<std::chrono::duration<Rep, Period>> : std::true_type
-			{
-			};
-
-			template <BULK_CMETHOD Method, typename T>
-			typename std::enable_if<Method == COPY, void>::type bulk_construct(T& dest, const T& src)
-			{
-				new (&dest) T(src);
-			}
-
-			template <BULK_CMETHOD Method, typename T>
-			typename std::enable_if<Method == MOVE, void>::type bulk_construct(T& dest, T& src)
-			{
-				new (&dest) T(std::move(src));
-			}
-
-		private:
 			// Memory management
-			void* memoryBlock;		///< Raw memory block for element storage
-			unsigned int stop; ///< Flag for stopping all operations
+			bool stopped;		///< Flag for stopping all operations
+			void* memoryBlock;	///< Raw memory block for element storage
 
 			// Queue state tracking
 			unsigned int maxSpin;
 			unsigned int capacity;	///< Capacity of the queue
 			unsigned int totalsize; ///< Total allocated memory size
-			std::atomic<unsigned int> size;		///< Current number of elements in queue
+			unsigned int size;		///< Current number of elements in queue
 
 			// Buffer pointers
 			TYPE* dataListHead; ///< Pointer to first element in queue
@@ -163,73 +134,73 @@ namespace HSLL
 				new (dataListHead) TYPE(std::forward<Args>(args)...);
 			}
 
-			template <INSERT_POS POS, BULK_CMETHOD METHOD>
+			template <INSERT_POS POS>
 			typename std::enable_if<POS == TAIL>::type enqueue_bulk_impl(TYPE* elements, unsigned int toPush)
 			{
 				for (unsigned int i = 0; i < toPush; ++i)
 				{
-					bulk_construct<METHOD>(*dataListTail, elements[i]);
+					new (dataListTail) TYPE(std::move(elements[i]));
 					move_tail_next();
 				}
 			}
 
-			template <INSERT_POS POS, BULK_CMETHOD METHOD>
+			template <INSERT_POS POS>
 			typename std::enable_if<POS == HEAD>::type enqueue_bulk_impl(TYPE* elements, unsigned int toPush)
 			{
 				for (unsigned int i = 0; i < toPush; ++i)
 				{
 					move_head_prev();
-					bulk_construct<METHOD>(*dataListHead, elements[toPush - i - 1]);
+					new (dataListHead) TYPE(std::move(elements[toPush - i - 1]));
 				}
 			}
 
-			template <INSERT_POS POS, BULK_CMETHOD METHOD>
+			template <INSERT_POS POS>
 			typename std::enable_if<POS == TAIL>::type enqueue_bulk_impl(TYPE* part1, unsigned int count1, TYPE* part2, unsigned int count2)
 			{
 				for (unsigned int i = 0; i < count1; ++i)
 				{
-					bulk_construct<METHOD>(*dataListTail, part1[i]);
+					new (dataListTail) TYPE(std::move(part1[i]));
 					move_tail_next();
 				}
 
 				for (unsigned int i = 0; i < count2; ++i)
 				{
-					bulk_construct<METHOD>(*dataListTail, part2[i]);
+					new (dataListTail) TYPE(std::move(part2[i]));
 					move_tail_next();
 				}
 			}
 
-			template <INSERT_POS POS, BULK_CMETHOD METHOD>
+			template <INSERT_POS POS>
 			typename std::enable_if<POS == HEAD>::type enqueue_bulk_impl(TYPE* part1, unsigned int count1, TYPE* part2, unsigned int count2)
 			{
 				for (unsigned int i = 0; i < count1; ++i)
 				{
 					move_head_prev();
-					bulk_construct<METHOD>(*dataListHead, part1[count1 - i - 1]);
+					new (dataListHead) TYPE(std::move(part1[count1 - i - 1]));
 				}
 
 				for (unsigned int i = 0; i < count2; ++i)
 				{
 					move_head_prev();
-					bulk_construct<METHOD>(*dataListHead, part2[count2 - i - 1]);
+					new (dataListHead) TYPE(std::move(part2[count2 - i - 1]));
 				}
 			}
 
 			template <INSERT_POS POS, typename... Args>
 			void emplace_helper(std::unique_lock<std::mutex>& lock, Args &&...args)
 			{
-				size.fetch_add(1, std::memory_order_release);
+				size++;
 				emplace_impl<POS>(std::forward<Args>(args)...);
 				lock.unlock();
 				notEmptyCond.notify_one();
 			}
 
-			template <BULK_CMETHOD METHOD, INSERT_POS POS>
+			template <INSERT_POS POS>
 			unsigned int enqueue_bulk_helper(std::unique_lock<std::mutex>& lock, TYPE* elements, unsigned int count)
 			{
-				unsigned int toPush = std::min(count, capacity - size.load(std::memory_order_relaxed));
-				size.fetch_add(toPush, std::memory_order_release);
-				enqueue_bulk_impl<POS, METHOD>(elements, toPush);
+				unsigned int toPush = std::min(count, capacity - size);
+				size += toPush;
+				enqueue_bulk_impl<POS>(elements, toPush);
 				lock.unlock();
 
 				if (HSLL_UNLIKELY(toPush == 1))
@@ -239,17 +210,17 @@ namespace HSLL
 				return toPush;
 			}
 
-			template <BULK_CMETHOD METHOD, INSERT_POS POS>
+			template <INSERT_POS POS>
 			unsigned int enqueue_bulk_helper(std::unique_lock<std::mutex>& lock,
 				TYPE* part1, unsigned int count1, TYPE* part2, unsigned int count2)
 			{
-				unsigned int toPush = std::min(count1 + count2, capacity - size.load(std::memory_order_relaxed));
-				size.fetch_add(toPush, std::memory_order_release);
+				unsigned int toPush = std::min(count1 + count2, capacity - size);
+				size += toPush;
 
 				if (toPush > count1)
-					enqueue_bulk_impl<POS, METHOD>(part1, count1, part2, toPush - count1);
+					enqueue_bulk_impl<POS>(part1, count1, part2, toPush - count1);
 				else
-					enqueue_bulk_impl<POS, METHOD>(part1, toPush);
+					enqueue_bulk_impl<POS>(part1, toPush);
 
 				lock.unlock();
 
@@ -262,7 +233,7 @@ namespace HSLL
 
 			void dequeue_helper(std::unique_lock<std::mutex>& lock, TYPE& element)
 			{
-				size.fetch_sub(1, std::memory_order_release);
+				size -= 1;
 				move_element(element, *dataListHead);
 				move_head_next();
 				lock.unlock();
@@ -271,8 +242,8 @@ namespace HSLL
 
 			unsigned int dequeue_bulk_helper(std::unique_lock<std::mutex>& lock, TYPE* elements, unsigned int count)
 			{
-				unsigned int toPop = std::min(count, size.load(std::memory_order_relaxed));
-				size.fetch_sub(toPop, std::memory_order_release);
+				unsigned int toPop = std::min(count, size);
+				size -= toPop;
 
 				for (unsigned int i = 0; i < toPop; ++i)
 				{
@@ -295,30 +266,33 @@ namespace HSLL
 				src.~TYPE();
 			}
 
-			void spin()
+			void wait_element()
 			{
 				for (unsigned int i = 0; i < maxSpin; ++i)
 				{
-					if (size.load(std::memory_order_acquire))
+					if (size)
 						return;
 				}
 
+				std::this_thread::yield();
 				return;
 			}
 
 		public:
 
-			TPBlockQueue() : memoryBlock(nullptr), stop(0) {}
+			TPBlockQueue() : memoryBlock(nullptr), stopped(false) {}
 
-			bool init(unsigned int capacity, unsigned int maxSpin = 2000)
+			bool init(unsigned int capacity, unsigned int maxSpin = 5000)
 			{
-				if (this->memoryBlock || !capacity)
+				assert(!memoryBlock);
+
+				if (!capacity)
 					return false;
 
-				this->totalsize = sizeof(TYPE) * capacity;
-				this->memoryBlock = HSLL_ALIGNED_MALLOC(totalsize, alignof(TYPE));
+				totalsize = sizeof(TYPE) * capacity;
+				memoryBlock = HSLL_ALIGNED_MALLOC(totalsize, alignof(TYPE));
 
-				if (!this->memoryBlock)
+				if (!memoryBlock)
 					return false;
 
 				this->size = 0;
@@ -334,10 +308,9 @@ namespace HSLL
 			bool emplace(Args &&...args)
 			{
 				assert(memoryBlock);
-
 				std::unique_lock<std::mutex> lock(dataMutex);
 
-				if (HSLL_UNLIKELY(size.load(std::memory_order_relaxed) == capacity))
+				if (HSLL_UNLIKELY(size == capacity))
 					return false;
 
 				emplace_helper<POS>(lock, std::forward<Args>(args)...);
@@ -345,17 +318,27 @@ namespace HSLL
 			}
 
 			template <INSERT_POS POS = TAIL, typename... Args>
-			typename std::enable_if<!is_duration<typename std::tuple_element<0, std::tuple<Args...>>::type>::value, bool>::type
-				wait_emplace(Args &&...args)
+			bool wait_emplace(Args &&...args)
 			{
 				assert(memoryBlock);
-				spin();
+
+				{
+					std::unique_lock<std::mutex> lock(dataMutex);
+
+					if (HSLL_LIKELY(size != capacity))
+					{
+						emplace_helper<POS>(lock, std::forward<Args>(args)...);
+						return true;
+					}
+				}
+
+				wait_element();
 				std::unique_lock<std::mutex> lock(dataMutex);
 
-				notFullCond.wait(lock, [this]
-					{ return HSLL_LIKELY(size.load(std::memory_order_relaxed) != capacity) || HSLL_UNLIKELY(stop); });
+				notFullCond.wait(lock, [this] {
+					return HSLL_LIKELY(size != capacity) || HSLL_UNLIKELY(stopped); });
 
-				if (HSLL_UNLIKELY(stop))
+				if (HSLL_UNLIKELY(stopped))
 					return false;
 
 				emplace_helper<POS>(lock, std::forward<Args>(args)...);
@@ -363,84 +346,124 @@ namespace HSLL
 			}
 
 			template <INSERT_POS POS = TAIL, typename Rep, typename Period, typename... Args>
-			bool wait_emplace(const std::chrono::duration<Rep, Period>& timeout, Args &&...args)
+			bool wait_emplace_for(const std::chrono::duration<Rep, Period>& timeout, Args &&...args)
+			{
+				return wait_emplace_until<POS>(std::chrono::steady_clock::now() + timeout, std::forward<Args>(args)...);
+			}
+
+			template <INSERT_POS POS = TAIL, typename Clock, typename Duration, typename... Args>
+			bool wait_emplace_until(const std::chrono::time_point<Clock, Duration>& abs, Args &&...args)
 			{
 				assert(memoryBlock);
-				spin();
+
+				{
+					std::unique_lock<std::mutex> lock(dataMutex);
+
+					if (HSLL_LIKELY(size != capacity))
+					{
+						emplace_helper<POS>(lock, std::forward<Args>(args)...);
+						return true;
+					}
+				}
+
+				wait_element();
 				std::unique_lock<std::mutex> lock(dataMutex);
 
-				bool success = notFullCond.wait_for(lock, timeout, [this]
-					{ return HSLL_LIKELY(size.load(std::memory_order_relaxed) != capacity) || HSLL_UNLIKELY(stop); });
+				bool success = notFullCond.wait_until(lock, abs, [this]
+					{ return HSLL_LIKELY(size != capacity) || HSLL_UNLIKELY(stopped); });
 
-				if (HSLL_UNLIKELY(!success || stop))
+				if (HSLL_UNLIKELY(!success || stopped))
 					return false;
 
 				emplace_helper<POS>(lock, std::forward<Args>(args)...);
 				return true;
 			}
 
-			template <BULK_CMETHOD METHOD = COPY, INSERT_POS POS = TAIL>
+			template <INSERT_POS POS = TAIL>
 			unsigned int enqueue_bulk(TYPE* elements, unsigned int count)
 			{
 				assert(memoryBlock);
 				assert(elements && count);
 				std::unique_lock<std::mutex> lock(dataMutex);
 
-				if (HSLL_UNLIKELY(!(capacity - size.load(std::memory_order_relaxed))))
+				if (HSLL_UNLIKELY(!(capacity - size)))
 					return 0;
 
-				return enqueue_bulk_helper<METHOD, POS>(lock, elements, count);
+				return enqueue_bulk_helper<POS>(lock, elements, count);
 			}
 
-			template <BULK_CMETHOD METHOD = COPY, INSERT_POS POS = TAIL>
+			template <INSERT_POS POS = TAIL>
 			unsigned int enqueue_bulk(TYPE* part1, unsigned int count1, TYPE* part2, unsigned int count2)
 			{
 				assert(memoryBlock);
 				assert(part1 && count1);
 
 				if (!part2 || !count2)
-					return enqueue_bulk<METHOD, POS>(part1, count1);
+					return enqueue_bulk<POS>(part1, count1);
 
 				std::unique_lock<std::mutex> lock(dataMutex);
 
-				if (HSLL_UNLIKELY(!(capacity - size.load(std::memory_order_relaxed))))
+				if (HSLL_UNLIKELY(!(capacity - size)))
 					return 0;
 
-				return enqueue_bulk_helper<METHOD, POS>(lock, part1, count1, part2, count2);
+				return enqueue_bulk_helper<POS>(lock, part1, count1, part2, count2);
 			}
 
-			template <BULK_CMETHOD METHOD = COPY, INSERT_POS POS = TAIL>
+			template <INSERT_POS POS = TAIL>
 			unsigned int wait_enqueue_bulk(TYPE* elements, unsigned int count)
 			{
 				assert(memoryBlock);
 				assert(elements && count);
-				spin();
+
+				{
+					std::unique_lock<std::mutex> lock(dataMutex);
+
+					if (HSLL_LIKELY(size != capacity))
+						return enqueue_bulk_helper<POS>(lock, elements, count);
+				}
+
+				wait_element();
 				std::unique_lock<std::mutex> lock(dataMutex);
 
 				notFullCond.wait(lock, [this]
-					{ return HSLL_LIKELY(size.load(std::memory_order_relaxed) != capacity) || HSLL_UNLIKELY(stop); });
+					{ return HSLL_LIKELY(size != capacity) || HSLL_UNLIKELY(stopped); });
 
-				if (HSLL_UNLIKELY(stop))
+				if (HSLL_UNLIKELY(stopped))
 					return 0;
 
-				return enqueue_bulk_helper<METHOD, POS>(lock, elements, count);
+				return enqueue_bulk_helper<POS>(lock, elements, count);
 			}
 
-			template <BULK_CMETHOD METHOD = COPY, INSERT_POS POS = TAIL, typename Rep, typename Period>
-			unsigned int wait_enqueue_bulk(const std::chrono::duration<Rep, Period>& timeout, TYPE* elements, unsigned int count)
+			template <INSERT_POS POS = TAIL, typename Rep, typename Period>
+			unsigned int wait_enqueue_bulk_for(const std::chrono::duration<Rep, Period>& timeout, TYPE* elements, unsigned int count)
+			{
+				return  wait_enqueue_bulk_until<POS>(std::chrono::steady_clock::now() + timeout, elements, count);
+			}
+
+			template <INSERT_POS POS = TAIL, typename Clock, typename Duration>
+			unsigned int wait_enqueue_bulk_until(const std::chrono::time_point<Clock, Duration>& abs, TYPE* elements, unsigned int count)
 			{
 				assert(memoryBlock);
 				assert(elements && count);
-				spin();
+
+				{
+					std::unique_lock<std::mutex> lock(dataMutex);
+
+					if (HSLL_LIKELY(size != capacity))
+						return enqueue_bulk_helper<POS>(lock, elements, count);
+				}
+
+				wait_element();
 				std::unique_lock<std::mutex> lock(dataMutex);
 
-				bool success = notFullCond.wait_for(lock, timeout, [this]
-					{ return HSLL_LIKELY(size.load(std::memory_order_relaxed) != capacity) || HSLL_UNLIKELY(stop); });
+				bool success = notFullCond.wait_until(lock, abs, [this] {
+					return HSLL_LIKELY(size != capacity) || HSLL_UNLIKELY(stopped);
+					});
 
-				if (HSLL_UNLIKELY(!success || stop))
+				if (HSLL_UNLIKELY(!success || stopped))
 					return 0;
 
-				return enqueue_bulk_helper<METHOD, POS>(lock, elements, count);
+				return enqueue_bulk_helper<POS>(lock, elements, count);
 			}
 
 			bool dequeue(TYPE& element)
@@ -448,7 +471,7 @@ namespace HSLL
 				assert(memoryBlock);
 				std::unique_lock<std::mutex> lock(dataMutex);
 
-				if (HSLL_UNLIKELY(!size.load(std::memory_order_relaxed)))
+				if (HSLL_UNLIKELY(!size))
 					return false;
 
 				dequeue_helper(lock, element);
@@ -458,13 +481,24 @@ namespace HSLL
 			bool wait_dequeue(TYPE& element)
 			{
 				assert(memoryBlock);
-				spin();
+
+				{
+					std::unique_lock<std::mutex> lock(dataMutex);
+
+					if (HSLL_LIKELY(size))
+					{
+						dequeue_helper(lock, element);
+						return true;
+					}
+				}
+
+				wait_element();
 				std::unique_lock<std::mutex> lock(dataMutex);
 
 				notEmptyCond.wait(lock, [this]
-					{ return HSLL_LIKELY(size.load(std::memory_order_relaxed)) || HSLL_UNLIKELY(stop); });
+					{ return HSLL_LIKELY(size) || HSLL_UNLIKELY(stopped); });
 
-				if (HSLL_UNLIKELY(stop))
+				if (HSLL_UNLIKELY(stopped))
 					return false;
 
 				dequeue_helper(lock, element);
@@ -472,16 +506,33 @@ namespace HSLL
 			}
 
 			template <typename Rep, typename Period>
-			bool wait_dequeue(const std::chrono::duration<Rep, Period>& timeout, TYPE& element)
+			bool wait_dequeue_for(const std::chrono::duration<Rep, Period>& timeout, TYPE& element)
+			{
+				return wait_dequeue_until(std::chrono::steady_clock::now() + timeout, element);
+			}
+
+			template <typename Clock, typename Duration>
+			bool wait_dequeue_until(const std::chrono::time_point<Clock, Duration>& abs, TYPE& element)
 			{
 				assert(memoryBlock);
-				spin();
+
+				{
+					std::unique_lock<std::mutex> lock(dataMutex);
+
+					if (HSLL_LIKELY(size))
+					{
+						dequeue_helper(lock, element);
+						return true;
+					}
+				}
+
+				wait_element();
 				std::unique_lock<std::mutex> lock(dataMutex);
 
-				bool success = notEmptyCond.wait_for(lock, timeout, [this]
-					{ return HSLL_LIKELY(size.load(std::memory_order_relaxed)) || HSLL_UNLIKELY(stop); });
+				bool success = notEmptyCond.wait_until(lock, abs, [this]
+					{ return HSLL_LIKELY(size) || HSLL_UNLIKELY(stopped); });
 
-				if (HSLL_UNLIKELY(!success || stop))
+				if (HSLL_UNLIKELY(!success || stopped))
 					return false;
 
 				dequeue_helper(lock, element);
@@ -494,7 +545,7 @@ namespace HSLL
 				assert(elements && count);
 				std::unique_lock<std::mutex> lock(dataMutex);
 
-				if (HSLL_UNLIKELY(!size.load(std::memory_order_relaxed)))
+				if (HSLL_UNLIKELY(!size))
 					return 0;
 
 				return dequeue_bulk_helper(lock, elements, count);
@@ -504,30 +555,52 @@ namespace HSLL
 			{
 				assert(memoryBlock);
 				assert(elements && count);
-				spin();
+
+				{
+					std::unique_lock<std::mutex> lock(dataMutex);
+
+					if (HSLL_LIKELY(size))
+						return dequeue_bulk_helper(lock, elements, count);
+				}
+
+				wait_element();
 				std::unique_lock<std::mutex> lock(dataMutex);
 
 				notEmptyCond.wait(lock, [this]
-					{ return HSLL_LIKELY(size.load(std::memory_order_relaxed)) || HSLL_UNLIKELY(stop); });
+					{ return HSLL_LIKELY(size) || HSLL_UNLIKELY(stopped); });
 
-				if (HSLL_UNLIKELY(stop))
+				if (HSLL_UNLIKELY(stopped))
 					return 0;
 
 				return dequeue_bulk_helper(lock, elements, count);
 			}
 
 			template <typename Rep, typename Period>
-			unsigned int wait_dequeue_bulk(const std::chrono::duration<Rep, Period>& timeout, TYPE* elements, unsigned int count)
+			unsigned int wait_dequeue_bulk_for(const std::chrono::duration<Rep, Period>& timeout, TYPE* elements, unsigned int count)
+			{
+				return wait_dequeue_bulk_until(std::chrono::steady_clock::now() + timeout, elements, count);
+			}
+
+			template <typename Clock, typename Duration>
+			unsigned int wait_dequeue_bulk_until(const std::chrono::time_point<Clock, Duration>& abs, TYPE* elements, unsigned int count)
 			{
 				assert(memoryBlock);
 				assert(elements && count);
-				spin();
+
+				{
+					std::unique_lock<std::mutex> lock(dataMutex);
+
+					if (HSLL_LIKELY(size))
+						return dequeue_bulk_helper(lock, elements, count);
+				}
+
+				wait_element();
 				std::unique_lock<std::mutex> lock(dataMutex);
 
-				bool success = notEmptyCond.wait_for(lock, timeout, [this]
-					{ return HSLL_LIKELY(size.load(std::memory_order_relaxed)) || HSLL_UNLIKELY(stop); });
+				bool success = notEmptyCond.wait_until(lock, abs, [this]
+					{ return HSLL_LIKELY(size) || HSLL_UNLIKELY(stopped); });
 
-				if (HSLL_UNLIKELY(!success || stop))
+				if (HSLL_UNLIKELY(!success || stopped))
 					return 0;
 
 				return dequeue_bulk_helper(lock, elements, count);
@@ -536,32 +609,36 @@ namespace HSLL
 			unsigned int get_size_weak()
 			{
 				assert(memoryBlock);
-				return size.load(std::memory_order_relaxed);
+				return size;
 			}
 
 			unsigned int get_size_strong()
 			{
 				assert(memoryBlock);
-				return size.load(std::memory_order_acquire);
+				std::lock_guard<std::mutex> lock(dataMutex);
+				return size;
 			}
 
 			unsigned int is_stopped_weak()
 			{
 				assert(memoryBlock);
-				return stop;
+				return stopped;
 			}
 
 			unsigned int is_stopped_strong()
 			{
+				assert(memoryBlock);
 				std::lock_guard<std::mutex> lock(dataMutex);
-				return is_stopped_weak();
+				return stopped;
 			}
 
 			void disableWait()
 			{
+				assert(memoryBlock);
+
 				{
 					std::lock_guard<std::mutex> lock(dataMutex);
-					stop = 1;
+					stopped = true;
 				}
 
 				notFullCond.notify_all();
@@ -570,8 +647,9 @@ namespace HSLL
 
 			void enableWait()
 			{
+				assert(memoryBlock);
 				std::lock_guard<std::mutex> lock(dataMutex);
-				stop = 0;
+				stopped = false;
 			}
 
 			void release()
@@ -588,8 +666,8 @@ namespace HSLL
 				}
 
 				HSLL_ALIGNED_FREE(memoryBlock);
+				stopped = false;
 				memoryBlock = nullptr;
-				stop = 0;
 			}
 
 			~TPBlockQueue()

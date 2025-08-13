@@ -51,7 +51,7 @@ namespace HSLL
 			{
 				TPBlockQueue<T>* queue = (*assignedQueues)[nowIndex];
 
-				if (queue->get_size_strong() <= mainFullThreshold)
+				if (queue->get_size_weak() <= mainFullThreshold)
 					return queue;
 				else
 					return nullptr;
@@ -66,7 +66,7 @@ namespace HSLL
 					nowIndex = (nowIndex + 1) % assignedQueues->size();
 					candidateQueue = (*assignedQueues)[nowIndex];
 
-					if (candidateQueue->get_size_strong() <= otherFullThreshold)
+					if (candidateQueue->get_size_weak() <= otherFullThreshold)
 					{
 						nowCount = 0;
 						return candidateQueue;
@@ -292,7 +292,7 @@ namespace HSLL
 				{
 					TPBlockQueue<T>* queue = queues + (start + i) % queueCount;
 
-					if (queue->get_size_strong() <= fullThreshold)
+					if (queue->get_size_weak() <= fullThreshold)
 						return queue;
 				}
 

@@ -73,10 +73,11 @@ void exit(bool shutdownPolicy = true)
 
 ## 任务提交接口
 
-| 方法类型      | 非阻塞      | 阻塞等待    | 超时等待      |
-|-------------|------------|------------|--------------|
-| 单任务提交    | submit    | wait_submit| wait_submit |
-| 批量任务     | submit_bulk| wait_submit_bulk | wait_submit_bulk |
+| 方法类型       | 非阻塞           | 阻塞等待（无限等待） | 超时等待（for）            | 超时等待（until）           |
+|---------------|------------------|----------------------|--------------------------|---------------------------|
+| **单任务提交** | `submit`        | `wait_submit`       | `wait_submit_for`        | `wait_submit_until`       |
+| **批量任务提交** | `submit_bulk`   | `wait_submit_bulk`  | `wait_submit_bulk_for`   | `wait_submit_bulk_until`  |
+
 
 
 ## 基本使用
