@@ -97,7 +97,7 @@ namespace HSLL
 					unsigned int now = (index + i) % num;
 					TPBlockQueue<T>* queue = queues + now;
 
-					if (queue != ignore && queue->get_size_strong() >= threshold)
+					if (queue != ignore && queue->get_size_weak() >= threshold)
 					{
 						if (queue->dequeue(element))
 						{
@@ -177,7 +177,7 @@ namespace HSLL
 					unsigned int now = (index + i) % num;
 					TPBlockQueue<T>* queue = queues + now;
 
-					if (queue != ignore && queue->get_size_strong() >= threshold)
+					if (queue != ignore && queue->get_size_weak() >= threshold)
 					{
 						if (count = queue->dequeue_bulk(elements, batchSize))
 						{
@@ -430,11 +430,31 @@ namespace HSLL
 			 * 2. Callable object (function pointer/lambda/functor...) + bound arguments
 			 */
 			template <INSERT_POS POS = TAIL, typename Rep, typename Period, typename... Args>
-			bool wait_submit(const std::chrono::duration<Rep, Period>& timeout, Args &&...args) noexcept
+			bool wait_submit_for(const std::chrono::duration<Rep, Period>& timeout, Args &&...args) noexcept
 			{
 				HSLL_ENQUEUE_HELPER(
-					(queues-> template wait_emplace<POS>(timeout, std::forward<Args>(args)...)),
-					(queue-> template wait_emplace<POS>(timeout, std::forward<Args>(args)...))
+					(queues-> template wait_emplace_for<POS>(timeout, std::forward<Args>(args)...)),
+					(queue-> template wait_emplace_for<POS>(timeout, std::forward<Args>(args)...))
+				)
+			}
+
+			/**
+			 * @brief Blocking task submission with absolute timeout
+			 * @tparam POS Insertion position (HEAD or TAIL, default: TAIL)
+			 * @param abs Absolute timeout point
+			 * @param args Arguments forwarded to task constructor
+			 * @return true if task was added successfully, false on timeout or thread pool stop
+			 * @note
+			 * Supports two argument structures:
+			 * 1. TaskStack object (must be passed by rvalue reference, using move semantics)
+			 * 2. Callable object (function pointer/lambda/functor...) + bound arguments
+			 */
+			template <INSERT_POS POS = TAIL, typename Clock, typename Duration, typename... Args>
+			bool wait_submit_until(const std::chrono::time_point<Clock, Duration>& abs, Args &&...args)
+			{
+				HSLL_ENQUEUE_HELPER(
+					(queues-> template wait_emplace_until<POS>(abs, std::forward<Args>(args)...)),
+					(queue-> template wait_emplace_until<POS>(abs, std::forward<Args>(args)...))
 				)
 			}
 
@@ -449,8 +469,8 @@ namespace HSLL
 			unsigned int submit_bulk(T* tasks, unsigned int count) noexcept
 			{
 				HSLL_ENQUEUE_HELPER(
-					(queues-> template enqueue_bulk<MOVE, POS>(tasks, count)),
-					(queue-> template enqueue_bulk<MOVE, POS>(tasks, count))
+					(queues-> template enqueue_bulk<POS>(tasks, count)),
+					(queue-> template enqueue_bulk<POS>(tasks, count))
 				)
 			}
 
@@ -465,8 +485,8 @@ namespace HSLL
 			unsigned int wait_submit_bulk(T* tasks, unsigned int count) noexcept
 			{
 				HSLL_ENQUEUE_HELPER(
-					(queues-> template wait_enqueue_bulk<MOVE, POS>(tasks, count)),
-					(queue-> template wait_enqueue_bulk<MOVE, POS>(tasks, count))
+					(queues-> template wait_enqueue_bulk<POS>(tasks, count)),
+					(queue-> template wait_enqueue_bulk<POS>(tasks, count))
 				)
 			}
 
@@ -479,11 +499,28 @@ namespace HSLL
 			 * @return Actual number of tasks added (may be less than count)
 			 */
 			template <INSERT_POS POS = TAIL, typename Rep, typename Period>
-			unsigned int wait_submit_bulk(const std::chrono::duration<Rep, Period>& timeout, T* tasks, unsigned int count) noexcept
+			unsigned int wait_submit_bulk_for(const std::chrono::duration<Rep, Period>& timeout, T* tasks, unsigned int count) noexcept
 			{
 				HSLL_ENQUEUE_HELPER(
-					(queues-> template wait_enqueue_bulk<MOVE, POS>(timeout, tasks, count)),
-					(queue-> template wait_enqueue_bulk<MOVE, POS>(timeout, tasks, count))
+					(queues-> template wait_enqueue_bulk_for<POS>(timeout, tasks, count)),
+					(queue-> template wait_enqueue_bulk_for<POS>(timeout, tasks, count))
+				)
+			}
+
+			/**
+			 * @brief Blocking bulk submission with absolute timeout (using move semantics)
+			 * @tparam POS Insertion position (HEAD or TAIL, default: TAIL)
+			 * @param abs Absolute timeout point
+			 * @param tasks Array of tasks to add
+			 * @param count Number of tasks to add (must be > 0)
+			 * @return Actual number of tasks added (may be less than count)
+			 */
+			template <INSERT_POS POS = TAIL, typename Clock, typename Duration>
+			unsigned int wait_submit_bulk_until(const std::chrono::time_point<Clock, Duration>& abs, T* tasks, unsigned int count)
+			{
+				HSLL_ENQUEUE_HELPER(
+					(queues-> template wait_enqueue_bulk_until<POS>(abs, tasks, count)),
+					(queue-> template wait_enqueue_bulk_until<POS>(abs, tasks, count))
 				)
 			}
 
@@ -547,7 +584,7 @@ namespace HSLL
 					for (unsigned i = 0; i < workers.size(); ++i)
 						restartSem[i].release();
 
-					for (unsigned i = 0; i < workers.size(); ++i)
+					for (unsigned i = 0; i < threadNum; ++i)
 						queues[i].disableWait();
 
 					for (auto& worker : workers)
@@ -567,6 +604,7 @@ namespace HSLL
 			 */
 			void register_this_thread() noexcept
 			{
+				assert(queues);
 				std::thread::id id = std::this_thread::get_id();
 				WriteLockGuard lock(rwLock);
 				groupAllocator.register_thread(id);
@@ -577,6 +615,7 @@ namespace HSLL
 			 */
 			void unregister_this_thread() noexcept
 			{
+				assert(queues);
 				std::thread::id id = std::this_thread::get_id();
 				WriteLockGuard lock(rwLock);
 				groupAllocator.unregister_thread(id);
@@ -599,8 +638,8 @@ namespace HSLL
 			unsigned int submit_bulk(T* part1, unsigned int count1, T* part2, unsigned int count2) noexcept
 			{
 				HSLL_ENQUEUE_HELPER(
-					(queues-> template enqueue_bulk<MOVE, POS>(part1, count1, part2, count2)),
-					(queue-> template enqueue_bulk<MOVE, POS>(part1, count1, part2, count2))
+					(queues-> template enqueue_bulk<POS>(part1, count1, part2, count2)),
+					(queue-> template enqueue_bulk<POS>(part1, count1, part2, count2))
 				)
 			}
 
@@ -614,14 +653,14 @@ namespace HSLL
 				unsigned int now = next_index();
 				TPBlockQueue<T>* queue = queues + now;
 
-				if (queue->get_size_strong() <= mainFullThreshold)
+				if (queue->get_size_weak() <= mainFullThreshold)
 					return queue;
 
 				for (unsigned int i = 1; i <= threadNum - 1; ++i)
 				{
 					queue = queues + ((now + i) % threadNum);
 
-					if (queue->get_size_strong() <= otherFullThreshold)
+					if (queue->get_size_weak() <= otherFullThreshold)
 						return queue;
 				}
 
@@ -635,7 +674,7 @@ namespace HSLL
 
 			static bool try_wait_empty_until(const std::chrono::steady_clock::time_point& timestamp, TPBlockQueue<T>* queue) noexcept
 			{
-				while (queue->get_size_strong())
+				while (queue->get_size_weak())
 				{
 					auto now = std::chrono::steady_clock::now();
 
@@ -747,7 +786,7 @@ namespace HSLL
 					unsigned int totalSize = 0;
 
 					for (unsigned int i = 0; i < threadNum; ++i)
-						totalSize += queues[i].get_size_strong();
+						totalSize += queues[i].get_size_weak();
 
 					if (totalSize < allSize * HSLL_THREADPOOL_SHRINK_FACTOR)
 						shrink++;
@@ -826,7 +865,7 @@ namespace HSLL
 							goto cheak;
 						}
 
-						if (queue->wait_dequeue(std::chrono::milliseconds(HSLL_THREADPOOL_DEQUEUE_TIMEOUT_MILLISECONDS), *task))
+						if (queue->wait_dequeue_for(std::chrono::milliseconds(HSLL_THREADPOOL_DEQUEUE_TIMEOUT_MILLISECONDS), *task))
 						{
 							task->execute();
 							task->~T();
@@ -869,13 +908,13 @@ namespace HSLL
 					{
 						while (true)
 						{
-							unsigned int size = queue->get_size_strong();
+							unsigned int size = queue->get_size_weak();
 							unsigned int round = batchSize;
 
 							while (round && size < batchSize)
 							{
 								std::this_thread::yield();
-								size = queue->get_size_strong();
+								size = queue->get_size_weak();
 								round--;
 							}
 
@@ -891,7 +930,7 @@ namespace HSLL
 							goto cheak;
 						}
 
-						if (count = queue->wait_dequeue_bulk(std::chrono::milliseconds(HSLL_THREADPOOL_DEQUEUE_TIMEOUT_MILLISECONDS),
+						if (count = queue->wait_dequeue_bulk_for(std::chrono::milliseconds(HSLL_THREADPOOL_DEQUEUE_TIMEOUT_MILLISECONDS),
 							tasks, batchSize))
 							execute_tasks(tasks, count);
 

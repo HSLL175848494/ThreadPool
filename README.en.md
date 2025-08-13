@@ -70,12 +70,12 @@ void exit(bool shutdownPolicy = true)
   - `true`: Graceful shutdown (completes remaining tasks in queues)
   - `false`: Immediate shutdown
 
-## Task Submission Interfaces
+## Task Submission Interface
 
-| Method Type | Non-Blocking | Blocking Wait | Timeout Wait     |
-|-------------|--------------|---------------|------------------|
-| Single Task | `submit`     | `wait_submit` | `wait_submit`    |
-| Batch Tasks | `submit_bulk`| `wait_submit_bulk` | `wait_submit_bulk` |
+| Method Type          | Non-blocking      | Blocking Wait (Wait indefinitely) | Timeout Wait (for)         | Timeout Wait (until)        |
+|----------------------|-------------------|-----------------------------------|----------------------------|-----------------------------|
+| **Single Task Submission** | `submit`         | `wait_submit`                     | `wait_submit_for`          | `wait_submit_until`         |
+| **Bulk Task Submission**   | `submit_bulk`    | `wait_submit_bulk`                | `wait_submit_bulk_for`     | `wait_submit_bulk_until`    |
 
 ## Basic Usage
 ```cpp
