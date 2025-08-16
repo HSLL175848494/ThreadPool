@@ -5,12 +5,12 @@ namespace HSLL
 {
 	namespace INNER
 	{
-		constexpr long long HSLL_SPINREADWRITELOCK_MAXSLOTS = 128;
-		constexpr long long HSLL_SPINREADWRITELOCK_MAXREADER = (1LL << 62);
+		constexpr intptr_t HSLL_SPINREADWRITELOCK_MAXSLOTS = 32;
+		constexpr intptr_t HSLL_SPINREADWRITELOCK_MAXREADER = (sizeof(intptr_t) == 4 ? (1 << 30) : (1LL << 62));
 
 		static_assert(HSLL_SPINREADWRITELOCK_MAXSLOTS > 0, "HSLL_SPINREADWRITELOCK_MAXSLOTS must be > 0");
-		static_assert(HSLL_SPINREADWRITELOCK_MAXREADER > 0 && HSLL_SPINREADWRITELOCK_MAXREADER <= (1LL << 62),
-			"HSLL_SPINREADWRITELOCK_MAXREADER must be > 0 and <= 2^62");
+		static_assert(HSLL_SPINREADWRITELOCK_MAXREADER > 0 && HSLL_SPINREADWRITELOCK_MAXREADER <= (sizeof(intptr_t) == 4 ? (1 << 30) : (1LL << 62)),
+			"HSLL_SPINREADWRITELOCK_MAXREADER must be > 0 and <= (2^30 for 32-bit, 2^62 for 64-bit)");
 
 		/**
 		* @brief Efficient spin lock based on atomic variables, suitable for scenarios where reads significantly outnumber writes
@@ -22,7 +22,7 @@ namespace HSLL
 			class alignas(64) InnerLock
 			{
 			private:
-				std::atomic<long long> count;
+				std::atomic<intptr_t> count;
 
 			public:
 
@@ -30,7 +30,7 @@ namespace HSLL
 
 				void lock_read() noexcept
 				{
-					long long old = count.fetch_add(1, std::memory_order_acquire);
+					intptr_t old = count.fetch_add(1, std::memory_order_acquire);
 
 					while (old < 0)
 					{
@@ -47,7 +47,7 @@ namespace HSLL
 
 				bool try_lock_read() noexcept
 				{
-					long long old = count.fetch_add(1, std::memory_order_acquire);
+					intptr_t old = count.fetch_add(1, std::memory_order_acquire);
 
 					if (old < 0)
 					{
@@ -76,14 +76,17 @@ namespace HSLL
 					return !count.fetch_sub(HSLL_SPINREADWRITELOCK_MAXREADER, std::memory_order_relaxed);
 				}
 
-				void unmark_write() noexcept
+				void unmark_write(bool ready) noexcept
 				{
-					count.fetch_add(HSLL_SPINREADWRITELOCK_MAXREADER, std::memory_order_relaxed);
+					if (ready)
+						count.store(0, std::memory_order_relaxed);
+					else
+						count.fetch_add(HSLL_SPINREADWRITELOCK_MAXREADER, std::memory_order_relaxed);
 				}
 
 				void unlock_write() noexcept
 				{
-					count.fetch_add(HSLL_SPINREADWRITELOCK_MAXREADER, std::memory_order_release);
+					count.store(0, std::memory_order_release);
 				}
 
 				bool is_write_ready() noexcept
@@ -92,15 +95,72 @@ namespace HSLL
 				}
 			};
 
+			class LocalReadLock
+			{
+				InnerLock& localLock;
+
+			public:
+
+				explicit LocalReadLock(InnerLock& localLock) noexcept :localLock(localLock) {}
+
+				bool try_lock_read() noexcept
+				{
+					return localLock.try_lock_read();
+				}
+
+				template <typename Rep, typename Period>
+				bool try_lock_read_for(const std::chrono::duration<Rep, Period>& timeout) noexcept
+				{
+					auto absTime = std::chrono::steady_clock::now() + timeout;
+					return try_lock_read_until(absTime);
+				}
+
+				template <typename Clock, typename Duration>
+				bool try_lock_read_until(const std::chrono::time_point<Clock, Duration>& absTime) noexcept
+				{
+					if (localLock.try_lock_read())
+						return true;
+
+					std::this_thread::yield();
+
+					while (!localLock.try_lock_read_check_before())
+					{
+						auto now = Clock::now();
+
+						if (now >= absTime)
+							return false;
+
+						std::this_thread::yield();
+					}
+
+					return true;
+				}
+
+				void lock_read() noexcept
+				{
+					localLock.lock_read();
+				}
+
+				void unlock_read() noexcept
+				{
+					localLock.unlock_read();
+				}
+			};
+
 			std::atomic<bool> flag;
 			InnerLock rwLocks[HSLL_SPINREADWRITELOCK_MAXSLOTS];
 
-			thread_local static long long localIndex;
-			static std::atomic<long long> globalIndex;
+			thread_local static intptr_t localIndex;
+			static std::atomic<intptr_t> globalIndex;
 
-			InnerLock& get_local_lock() noexcept
+			inline LocalReadLock get_local_lock() noexcept
 			{
-				return rwLocks[localIndex + 1 ? localIndex : (localIndex = globalIndex.fetch_add(1, std::memory_order_relaxed) % HSLL_SPINREADWRITELOCK_MAXSLOTS)];
+				intptr_t index = localIndex;
+
+				if (index == -1)
+					index = localIndex = globalIndex.fetch_add(1, std::memory_order_relaxed) % HSLL_SPINREADWRITELOCK_MAXSLOTS;
+
+				return LocalReadLock(rwLocks[index]);
 			}
 
 			bool try_mark_write(bool flagArray[HSLL_SPINREADWRITELOCK_MAXSLOTS]) noexcept
@@ -110,7 +170,7 @@ namespace HSLL
 				if (!flag.compare_exchange_strong(old, false, std::memory_order_acquire, std::memory_order_relaxed))
 					return false;
 
-				for (long long i = 0; i < HSLL_SPINREADWRITELOCK_MAXSLOTS; ++i)
+				for (intptr_t i = 0; i < HSLL_SPINREADWRITELOCK_MAXSLOTS; ++i)
 					flagArray[i] = rwLocks[i].mark_write();
 
 				return true;
@@ -135,19 +195,19 @@ namespace HSLL
 					std::this_thread::yield();
 			}
 
-			void unmark_write() noexcept
+			void unmark_write(bool flagArray[HSLL_SPINREADWRITELOCK_MAXSLOTS]) noexcept
 			{
-				for (long long i = 0; i < HSLL_SPINREADWRITELOCK_MAXSLOTS; ++i)
-					rwLocks[i].unmark_write();
+				for (intptr_t i = 0; i < HSLL_SPINREADWRITELOCK_MAXSLOTS; ++i)
+					rwLocks[i].unmark_write(flagArray[i]);
 
 				flag.store(true, std::memory_order_relaxed);
 			}
 
-			long long ready_count(long long startIndex, bool flagArray[HSLL_SPINREADWRITELOCK_MAXSLOTS]) noexcept
+			intptr_t ready_count(intptr_t startIndex, bool flagArray[HSLL_SPINREADWRITELOCK_MAXSLOTS]) noexcept
 			{
-				long long index = HSLL_SPINREADWRITELOCK_MAXSLOTS;
+				intptr_t index = HSLL_SPINREADWRITELOCK_MAXSLOTS;
 
-				for (long long i = startIndex; i < HSLL_SPINREADWRITELOCK_MAXSLOTS; ++i)
+				for (intptr_t i = startIndex; i < HSLL_SPINREADWRITELOCK_MAXSLOTS; ++i)
 				{
 					if (flagArray[i])
 						continue;
@@ -173,31 +233,13 @@ namespace HSLL
 			template <typename Rep, typename Period>
 			bool try_lock_read_for(const std::chrono::duration<Rep, Period>& timeout) noexcept
 			{
-				auto absTime = std::chrono::steady_clock::now() + timeout;
-				return try_lock_read_until(absTime);
+				return get_local_lock().try_lock_read_for(timeout);
 			}
 
 			template <typename Clock, typename Duration>
 			bool try_lock_read_until(const std::chrono::time_point<Clock, Duration>& absTime) noexcept
 			{
-				InnerLock& lock = get_local_lock();
-
-				if (lock.try_lock_read())
-					return true;
-
-				std::this_thread::yield();
-
-				while (!lock.try_lock_read_check_before())
-				{
-					auto now = Clock::now();
-
-					if (now >= absTime)
-						return false;
-
-					std::this_thread::yield();
-				}
-
-				return true;
+				return get_local_lock().try_lock_read_until(absTime);
 			}
 
 			void lock_read() noexcept
@@ -220,7 +262,7 @@ namespace HSLL
 				if (ready_count(0, flagArray) == HSLL_SPINREADWRITELOCK_MAXSLOTS)
 					return true;
 				else
-					unmark_write();
+					unmark_write(flagArray);
 
 				return false;
 			}
@@ -254,7 +296,7 @@ namespace HSLL
 					}
 				}
 
-				long long nextCheckIndex = 0;
+				intptr_t nextCheckIndex = 0;
 
 				while ((nextCheckIndex = ready_count(nextCheckIndex, flagArray)) != HSLL_SPINREADWRITELOCK_MAXSLOTS)
 				{
@@ -262,7 +304,7 @@ namespace HSLL
 
 					if (now >= absTime)
 					{
-						unmark_write();
+						unmark_write(flagArray);
 						return false;
 					}
 
@@ -278,7 +320,7 @@ namespace HSLL
 
 				mark_write(flagArray);
 
-				long long nextCheckIndex = 0;
+				intptr_t nextCheckIndex = 0;
 
 				while ((nextCheckIndex = ready_count(nextCheckIndex, flagArray)) != HSLL_SPINREADWRITELOCK_MAXSLOTS)
 					std::this_thread::yield();
@@ -286,7 +328,7 @@ namespace HSLL
 
 			void unlock_write() noexcept
 			{
-				for (long long i = 0; i < HSLL_SPINREADWRITELOCK_MAXSLOTS; ++i)
+				for (intptr_t i = 0; i < HSLL_SPINREADWRITELOCK_MAXSLOTS; ++i)
 					rwLocks[i].unlock_write();
 
 				flag.store(true, std::memory_order_release);
@@ -296,8 +338,8 @@ namespace HSLL
 			SpinReadWriteLock& operator=(const SpinReadWriteLock&) = delete;
 		};
 
-		std::atomic<long long> SpinReadWriteLock::globalIndex{ 0 };
-		thread_local long long SpinReadWriteLock::localIndex{ -1 };
+		std::atomic<intptr_t> SpinReadWriteLock::globalIndex{ 0 };
+		thread_local intptr_t SpinReadWriteLock::localIndex{ -1 };
 
 		class ReadLockGuard
 		{
