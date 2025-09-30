@@ -14,18 +14,16 @@ void testB() {
 		k = k * 2 + i;
 }
 
-
 void testC() {
 
 }
-
 
 constexpr const char* taskType[] = { "A","B","C" };
 
 #define WORKER 8
 #define PRODUCER 8
-#define SUBMIT_BATCH 32
-#define PROCESS_BATCH 32
+#define SUBMIT_BATCH 1
+#define PROCESS_BATCH 1
 #define PEER 10000000/PRODUCER
 #define TSIZE 24
 #define CAPACITY 8192

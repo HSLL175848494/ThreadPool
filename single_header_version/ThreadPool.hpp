@@ -71,206 +71,6 @@ namespace HSLL
 #define HSLL_ALIGNED_FREE(ptr) free(ptr)
 #endif
 
-//TPSmartPtr
-namespace HSLL
-{
-	namespace INNER
-	{
-		template<typename T>
-		class tp_unique_ptr;
-
-		template<typename T>
-		class tp_shared_ptr;
-
-		template <typename T>
-		struct is_tp_unique_ptr : std::false_type {};
-
-		template <typename T>
-		struct is_tp_unique_ptr<tp_unique_ptr<T>> : std::true_type {};
-
-		template <typename T>
-		struct is_tp_shared_ptr : std::false_type {};
-
-		template <typename T>
-		struct is_tp_shared_ptr<tp_shared_ptr<T>> : std::true_type {};
-
-		class AllocatorBase
-		{
-		public:
-			virtual void* allocate(size_t size) const
-			{
-				return malloc(size);
-			}
-
-			virtual void deallocate(void* p) const
-			{
-				free(p);
-			}
-		};
-
-		static const AllocatorBase smart_ptr_default_allocator;
-		static const AllocatorBase* smart_ptr_allocator = &smart_ptr_default_allocator;
-
-		template<typename T>
-		class tp_unique_ptr
-		{
-			static_assert(alignof(T) <= alignof(std::max_align_t),
-				"The alignment requirement of T exceeds the maximum alignment supported by the standard library allocators.");
-
-			T* data;
-
-		public:
-
-			template<typename U,
-				typename std::enable_if<!is_tp_unique_ptr<typename std::decay<U>::type>::value, bool>::type = true,
-				typename... Args>
-			tp_unique_ptr(U&& any, Args&&... args)
-			{
-				data = (T*)smart_ptr_allocator->allocate(sizeof(T));
-
-				if (!data)
-					throw std::bad_alloc();
-
-				try
-				{
-					new (data) T(std::forward<U>(any), std::forward<Args>(args)...);
-				}
-				catch (...)
-				{
-					smart_ptr_allocator->deallocate(data);
-					throw;
-				}
-			}
-
-			T& operator*() const
-			{
-				if (!data)
-					throw std::logic_error("Dereferencing null unique_ptr");
-
-				return *data;
-			}
-
-			tp_unique_ptr(tp_unique_ptr&& other) noexcept : data(other.data)
-			{
-				other.data = nullptr;
-			}
-
-			void release() noexcept
-			{
-				if (data)
-				{
-					data->~T();
-					smart_ptr_allocator->deallocate(data);
-					data = nullptr;
-				}
-			}
-
-			~tp_unique_ptr()
-			{
-				release();
-			}
-
-			tp_unique_ptr(const tp_unique_ptr&) = delete;
-			tp_unique_ptr& operator=(const tp_unique_ptr&) = delete;
-			tp_unique_ptr& operator=(tp_unique_ptr&&) = delete;
-		};
-
-		template<typename T>
-		class tp_shared_ptr
-		{
-			static_assert(alignof(T) <= alignof(std::max_align_t),
-				"The alignment requirement of T exceeds the maximum alignment supported by the standard library allocators.");
-
-			struct Controller
-			{
-				T data;
-				std::atomic<unsigned int> refcount;
-			};
-
-			Controller* ctrl;
-
-		public:
-
-			template<typename U,
-				typename std::enable_if<!is_tp_shared_ptr<typename std::decay<U>::type>::value, bool>::type = true,
-				typename... Args>
-			tp_shared_ptr(U&& any, Args&&... args)
-			{
-				ctrl = (Controller*)smart_ptr_allocator->allocate(sizeof(Controller));
-
-				if (!ctrl)
-					throw std::bad_alloc();
-
-				try
-				{
-					new (&(ctrl->data)) T(std::forward<U>(any), std::forward<Args>(args)...);
-					new (&(ctrl->refcount)) std::atomic<unsigned int>(1);//seq_cst
-				}
-				catch (...)
-				{
-					smart_ptr_allocator->deallocate(ctrl);
-					throw;
-				}
-			}
-
-			T& operator*() const
-			{
-				if (!ctrl)
-					throw std::logic_error("Dereferencing null shared_ptr");
-
-				return ctrl->data;
-			}
-
-			tp_shared_ptr(const tp_shared_ptr& other) noexcept : ctrl(other.ctrl)
-			{
-				if (ctrl)
-					ctrl->refcount.fetch_add(1, std::memory_order_relaxed);
-			}
-
-			tp_shared_ptr(tp_shared_ptr&& other) noexcept : ctrl(other.ctrl)
-			{
-				other.ctrl = nullptr;
-			}
-
-			void release() noexcept
-			{
-				if (ctrl && ctrl->refcount.fetch_sub(1, std::memory_order_relaxed) == 1)
-				{
-					ctrl->~Controller();
-					smart_ptr_allocator->deallocate(ctrl);
-					ctrl = nullptr;
-				}
-			}
-
-			~tp_shared_ptr()
-			{
-				release();
-			}
-
-			tp_shared_ptr& operator=(const tp_shared_ptr& other) = delete;
-			tp_shared_ptr& operator=(tp_shared_ptr&& other) = delete;
-		};
-
-		/**
-		 * @brief Sets the global allocator for tp_smart_ptr  (Not thread-safe)
-		 * @param allocator Custom allocator pointer. Defaults to `nullptr`, indicating use of the built-in malloc/free allocator
-		 * @note Important considerations:
-		 *  1. Before replacing the allocator, ensure all smart pointers relying on the previous allocator are fully released
-		 *  2. While smart pointers are still alive, ensure the instance pointed to by `allocator` remains valid
-		 */
-		void set_tp_smart_ptr_allocator(const AllocatorBase* allocator = nullptr)
-		{
-			const AllocatorBase* select = allocator ? allocator : &smart_ptr_default_allocator;
-
-			if (smart_ptr_allocator != select)
-				smart_ptr_allocator = select;
-		}
-	}
-
-	using INNER::AllocatorBase;
-	using INNER::set_tp_smart_ptr_allocator;
-}
-
 //TPTaskStack
 namespace HSLL
 {
@@ -595,7 +395,7 @@ namespace HSLL
 		{
 		private:
 			using Package = std::tuple<typename std::decay<F>::type, typename std::decay<Args>::type...>;
-			tp_unique_ptr<Package> storage;
+			std::unique_ptr<Package> storage;
 
 		public:
 			/**
@@ -605,7 +405,7 @@ namespace HSLL
 			 */
 			template<typename Func, typename std::enable_if<!is_HeapCallable<typename std::decay<Func>::type>::value, bool>::type = true >
 			HeapCallable(Func&& func, Args &&...args) HSLL_MAY_THROW
-				: storage(std::forward<Func>(func), std::forward<Args>(args)...) {}
+				: storage(new Package(std::forward<Func>(func), std::forward<Args>(args)...)) {}
 
 			/**
 			 * @brief Invokes the stored callable with bound arguments
@@ -631,7 +431,7 @@ namespace HSLL
 			using Package = std::tuple<std::promise<ResultType>, typename std::decay<F>::type, typename std::decay<Args>::type...>;
 
 		private:
-			tp_unique_ptr<Package> storage;
+			std::unique_ptr<Package> storage;
 
 			template<typename T = ResultType, typename std::enable_if<std::is_void<T>::value, bool>::type = true>
 			void invoke()
@@ -670,7 +470,7 @@ namespace HSLL
 			 */
 			template<typename Func, typename std::enable_if<!is_HeapCallable_Async<typename std::decay<Func>::type>::value, bool>::type = true >
 			HeapCallable_Async(Func&& func, Args &&...args) HSLL_MAY_THROW
-				: storage(std::promise<ResultType>(), std::forward<Func>(func), std::forward<Args>(args)...) {}
+				: storage(new Package(std::promise<ResultType>(), std::forward<Func>(func), std::forward<Args>(args)...)) {}
 
 			/**
 			 * @brief Executes the callable and sets promise value/exception
@@ -748,7 +548,7 @@ namespace HSLL
 				typename std::decay<F>::type, typename std::decay<Args>::type...>;
 
 		private:
-			tp_shared_ptr<Package> storage;
+			std::shared_ptr<Package> storage;
 
 			template<typename T = ResultType, typename std::enable_if<std::is_void<T>::value, bool>::type = true>
 			void invoke()
@@ -786,11 +586,11 @@ namespace HSLL
 			private:
 
 				std::future<ResultType> future;
-				tp_shared_ptr<Package> storage;
+				std::shared_ptr<Package> storage;
 
 			public:
 
-				Controller(tp_shared_ptr<Package> storage)
+				Controller(std::shared_ptr<Package> storage)
 					:storage(storage), future(std::get<0>(*storage).get_future()) {};
 
 				/**
@@ -869,7 +669,7 @@ namespace HSLL
 			 */
 			template<typename Func, typename std::enable_if<!is_HeapCallable_Cancelable<typename std::decay<Func>::type>::value, bool>::type = true >
 			HeapCallable_Cancelable(Func&& func, Args &&...args) HSLL_MAY_THROW
-				: storage(std::promise<ResultType>(), false, std::forward<Func>(func), std::forward<Args>(args)...) {}
+				: storage(std::make_shared<Package>(std::promise<ResultType>(), false, std::forward<Func>(func), std::forward<Args>(args)...)) {}
 
 			/**
 			 * @brief Executes the callable if not canceled

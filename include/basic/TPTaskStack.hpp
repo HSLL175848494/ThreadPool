@@ -1,8 +1,6 @@
 #ifndef HSLL_TPTASKSTACK
 #define HSLL_TPTASKSTACK
 
-#include"TPSmartPtr.hpp"
-
 // The current function may throw exceptions, including std::bad_alloc.
 #define HSLL_MAY_THROW
 
@@ -332,7 +330,7 @@ namespace HSLL
 		{
 		private:
 			using Package = std::tuple<typename std::decay<F>::type, typename std::decay<Args>::type...>;
-			tp_unique_ptr<Package> storage;
+			std::unique_ptr<Package> storage;
 
 		public:
 			/**
@@ -342,7 +340,7 @@ namespace HSLL
 			 */
 			template<typename Func, typename std::enable_if<!is_HeapCallable<typename std::decay<Func>::type>::value, bool>::type = true >
 			HeapCallable(Func&& func, Args &&...args) HSLL_MAY_THROW
-				: storage(std::forward<Func>(func), std::forward<Args>(args)...) {}
+				: storage(new Package(std::forward<Func>(func), std::forward<Args>(args)...)) {}
 
 			/**
 			 * @brief Invokes the stored callable with bound arguments
@@ -368,7 +366,7 @@ namespace HSLL
 			using Package = std::tuple<std::promise<ResultType>, typename std::decay<F>::type, typename std::decay<Args>::type...>;
 
 		private:
-			tp_unique_ptr<Package> storage;
+			std::unique_ptr<Package> storage;
 
 			template<typename T = ResultType, typename std::enable_if<std::is_void<T>::value, bool>::type = true>
 			void invoke()
@@ -407,7 +405,7 @@ namespace HSLL
 			 */
 			template<typename Func, typename std::enable_if<!is_HeapCallable_Async<typename std::decay<Func>::type>::value, bool>::type = true >
 			HeapCallable_Async(Func&& func, Args &&...args) HSLL_MAY_THROW
-				: storage(std::promise<ResultType>(), std::forward<Func>(func), std::forward<Args>(args)...) {}
+				: storage(new Package(std::promise<ResultType>(), std::forward<Func>(func), std::forward<Args>(args)...)) {}
 
 			/**
 			 * @brief Executes the callable and sets promise value/exception
@@ -485,7 +483,7 @@ namespace HSLL
 				typename std::decay<F>::type, typename std::decay<Args>::type...>;
 
 		private:
-			tp_shared_ptr<Package> storage;
+			std::shared_ptr<Package> storage;
 
 			template<typename T = ResultType, typename std::enable_if<std::is_void<T>::value, bool>::type = true>
 			void invoke()
@@ -523,11 +521,11 @@ namespace HSLL
 			private:
 
 				std::future<ResultType> future;
-				tp_shared_ptr<Package> storage;
+				std::shared_ptr<Package> storage;
 
 			public:
 
-				Controller(tp_shared_ptr<Package> storage)
+				Controller(std::shared_ptr<Package> storage)
 					:storage(storage), future(std::get<0>(*storage).get_future()) {};
 
 				/**
@@ -606,7 +604,7 @@ namespace HSLL
 			 */
 			template<typename Func, typename std::enable_if<!is_HeapCallable_Cancelable<typename std::decay<Func>::type>::value, bool>::type = true >
 			HeapCallable_Cancelable(Func&& func, Args &&...args) HSLL_MAY_THROW
-				: storage(std::promise<ResultType>(), false, std::forward<Func>(func), std::forward<Args>(args)...) {}
+				: storage(std::make_shared<Package>(std::promise<ResultType>(), false, std::forward<Func>(func), std::forward<Args>(args)...)) {}
 
 			/**
 			 * @brief Executes the callable if not canceled
