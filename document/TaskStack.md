@@ -133,25 +133,3 @@ if (controller.cancel()) {  // 成功取消任务
     controller.get();       // 正常获取结果
 }
 ```
-
-### 自定义内存分配器
-三种HeapCallable均通过`tp_smart_ptr`管理内存，而tp_smart_ptr的内存申请释放可通过全局分配器优化：
-```cpp
-class AllocatorBase{ // 分配器基类
-public:
-  virtual void* allocate(size_t size) const{
-    return malloc(size);
-  }
-
-  virtual void deallocate(void* p) const{
-    free(p);
-  }
-};
-
-// 设置全局分配器（nullptr恢复默认）
-void set_tp_smart_ptr_allocator(const AllocatorBase* allocator = nullptr);
-```
-**注意事项**：
-1. 替换分配器前需释放所有依赖原分配器的智能指针
-2. 智能指针存活期间分配器实例必须保持有效
-3. 典型使用模式：初始化时设置分配器，退出前恢复默认

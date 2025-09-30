@@ -186,14 +186,6 @@ void threadRegisterExample()
 	std::cout << "Thread register example" << std::endl;
 }
 
-//自定义内存申请释放器（HeapCallable依赖于tp_smart_ptr）
-void customAllocatorExample()
-{
-	//参数:传入一个实现了AllocatorBase虚函数的子类
-	//为空时用默认内存申请释放器(malloc/free)
-	set_tp_smart_ptr_allocator();
-}
-
 int main()
 {
 	// 初始化线程池：10000任务容量，最小/大线程数1,无批处理

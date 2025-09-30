@@ -190,14 +190,6 @@ void threadRegisterExample()
     std::cout << "Thread register example" << std::endl;
 }
 
-// Custom memory allocator (HeapCallable uses tp_smart_ptr)
-void customAllocatorExample()
-{
-    // Parameter: Custom allocator implementing AllocatorBase
-    // Uses malloc/free if nullptr
-    set_tp_smart_ptr_allocator();
-}
-
 int main()
 {
     // Initialize pool: 10000 task capacity, min/max threads=1, no batch processing
