@@ -1,6 +1,10 @@
 #ifndef HSLL_TPSEMAPHORE
 #define HSLL_TPSEMAPHORE
 
+#include <limits>
+#include <chrono>
+#include <system_error>
+
 #if defined(_WIN32)
 #define NOMINMAX
 #include <windows.h>

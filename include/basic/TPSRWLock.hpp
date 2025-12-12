@@ -1,6 +1,10 @@
 #ifndef HSLL_TPSRWLOCK
 #define HSLL_TPSRWLOCK
 
+#include <atomic>
+#include <thread>
+#include <cstdint>
+
 namespace HSLL
 {
 	namespace INNER
@@ -45,27 +49,6 @@ namespace HSLL
 					}
 				}
 
-				bool try_lock_read() noexcept
-				{
-					intptr_t old = count.fetch_add(1, std::memory_order_acquire);
-
-					if (old < 0)
-					{
-						count.fetch_sub(1, std::memory_order_relaxed);
-						return false;
-					}
-
-					return true;
-				}
-
-				bool try_lock_read_check_before() noexcept
-				{
-					if (count.load(std::memory_order_relaxed) < 0)
-						return false;
-
-					return try_lock_read();
-				}
-
 				void unlock_read() noexcept
 				{
 					count.fetch_sub(1, std::memory_order_relaxed);
@@ -102,39 +85,6 @@ namespace HSLL
 			public:
 
 				explicit LocalReadLock(InnerLock& localLock) noexcept :localLock(localLock) {}
-
-				bool try_lock_read() noexcept
-				{
-					return localLock.try_lock_read();
-				}
-
-				template <typename Rep, typename Period>
-				bool try_lock_read_for(const std::chrono::duration<Rep, Period>& timeout) noexcept
-				{
-					auto absTime = std::chrono::steady_clock::now() + timeout;
-					return try_lock_read_until(absTime);
-				}
-
-				template <typename Clock, typename Duration>
-				bool try_lock_read_until(const std::chrono::time_point<Clock, Duration>& absTime) noexcept
-				{
-					if (localLock.try_lock_read())
-						return true;
-
-					std::this_thread::yield();
-
-					while (!localLock.try_lock_read_check_before())
-					{
-						auto now = Clock::now();
-
-						if (now >= absTime)
-							return false;
-
-						std::this_thread::yield();
-					}
-
-					return true;
-				}
 
 				void lock_read() noexcept
 				{
@@ -225,23 +175,6 @@ namespace HSLL
 
 			SpinReadWriteLock() noexcept :flag(true) {}
 
-			bool try_lock_read() noexcept
-			{
-				return get_local_lock().try_lock_read();
-			}
-
-			template <typename Rep, typename Period>
-			bool try_lock_read_for(const std::chrono::duration<Rep, Period>& timeout) noexcept
-			{
-				return get_local_lock().try_lock_read_for(timeout);
-			}
-
-			template <typename Clock, typename Duration>
-			bool try_lock_read_until(const std::chrono::time_point<Clock, Duration>& absTime) noexcept
-			{
-				return get_local_lock().try_lock_read_until(absTime);
-			}
-
 			void lock_read() noexcept
 			{
 				get_local_lock().lock_read();
@@ -250,68 +183,6 @@ namespace HSLL
 			void unlock_read() noexcept
 			{
 				get_local_lock().unlock_read();
-			}
-
-			bool try_lock_write() noexcept
-			{
-				bool flagArray[HSLL_SPINREADWRITELOCK_MAXSLOTS];
-
-				if (!try_mark_write(flagArray))
-					return false;
-
-				if (ready_count(0, flagArray) == HSLL_SPINREADWRITELOCK_MAXSLOTS)
-					return true;
-				else
-					unmark_write(flagArray);
-
-				return false;
-			}
-
-			template <typename Rep, typename Period>
-			bool try_lock_write_for(const std::chrono::duration<Rep, Period>& timeout) noexcept
-			{
-				auto absTime = std::chrono::steady_clock::now() + timeout;
-				return try_lock_write_until(absTime);
-			}
-
-			template <typename Clock, typename Duration>
-			bool try_lock_write_until(const std::chrono::time_point<Clock, Duration>& absTime) noexcept
-			{
-				std::chrono::time_point<Clock, Duration> now;
-
-				bool flagArray[HSLL_SPINREADWRITELOCK_MAXSLOTS];
-
-				if (!try_mark_write(flagArray))
-				{
-					std::this_thread::yield();
-
-					while (!try_mark_write_check_before(flagArray))
-					{
-						now = Clock::now();
-
-						if (now >= absTime)
-							return false;
-
-						std::this_thread::yield();
-					}
-				}
-
-				intptr_t nextCheckIndex = 0;
-
-				while ((nextCheckIndex = ready_count(nextCheckIndex, flagArray)) != HSLL_SPINREADWRITELOCK_MAXSLOTS)
-				{
-					now = Clock::now();
-
-					if (now >= absTime)
-					{
-						unmark_write(flagArray);
-						return false;
-					}
-
-					std::this_thread::yield();
-				}
-
-				return true;
 			}
 
 			void lock_write() noexcept

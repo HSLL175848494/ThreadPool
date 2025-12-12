@@ -1,6 +1,9 @@
 #ifndef HSLL_TPGROUPALLOCATOR
 #define HSLL_TPGROUPALLOCATOR
 
+#include <map>
+#include <thread>
+#include <vector>
 #include "TPBlockQueue.hpp"
 
 namespace HSLL
@@ -141,7 +144,7 @@ namespace HSLL
 					for (int i = 0; i < threadSlots.size(); ++i)
 						threadSlots[i].clear();
 
-					distribute_queues_to_threads(threadSlots.size());
+					distribute_queues_to_threads((unsigned int)threadSlots.size());
 					reinitialize_groups();
 				}
 			}
@@ -280,7 +283,7 @@ namespace HSLL
 
 			TPBlockQueue<T>* available_queue(RoundRobinGroup<T>* group) noexcept
 			{
-				unsigned int size = group->assignedQueues->size();
+				unsigned int size = (unsigned int)group->assignedQueues->size();
 
 				if (size == queueCount)
 					return nullptr;

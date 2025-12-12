@@ -1,6 +1,14 @@
 #ifndef HSLL_TPBLOCKQUEUE
 #define HSLL_TPBLOCKQUEUE
 
+#include <mutex>
+#include <thread>              
+#include <chrono>             
+#include <cassert>     
+#include <cstdint>
+#include <algorithm>   
+#include <condition_variable> 
+
 //Branch Prediction
 #if defined(__GNUC__) || defined(__clang__)
 #define HSLL_LIKELY(x) __builtin_expect(!!(x), 1)
@@ -44,8 +52,7 @@ namespace HSLL
 	{
 		inline void* hsll_aligned_alloc(size_t align, size_t size)
 		{
-			static_assert(align > 0 && (align & (align - 1)) == 0,
-				"align must be > 0 and be an nth power of 2.");
+			assert(align > 0 && (align & (align - 1)) == 0 && "align must be > 0 and be an nth power of 2.");
 
 			const size_t aligned_size = (size + align - 1) & ~(align - 1);
 			return aligned_alloc(align, aligned_size);

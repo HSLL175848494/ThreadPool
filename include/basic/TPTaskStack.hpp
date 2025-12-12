@@ -7,6 +7,14 @@
 //For a valid object, the current function can only be called once.
 #define HSLL_CALL_ONCE
 
+#include <tuple>
+#include <future>
+#include <memory>
+#include <utility>
+#include <exception>
+#include <stdexcept>
+#include <type_traits>
+
 namespace HSLL
 {
 	namespace INNER

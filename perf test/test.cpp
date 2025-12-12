@@ -1,3 +1,4 @@
+#include <chrono>
 #include "ThreadPool.hpp"
 
 unsigned int k;
@@ -125,7 +126,7 @@ double test_single_submit()
 
 int main()
 {
-	pool.init(CAPACITY, 1, WORKER, PROCESS_BATCH);
+	pool.init(CAPACITY, WORKER, PROCESS_BATCH);
 
 	//std::this_thread::sleep_for(std::chrono::seconds(15));
 
@@ -170,6 +171,6 @@ int main()
 			"Time/Million", bulk_time_per_million);
 	}
 
-	pool.exit();
+	pool.shutdown();
 	return 0;
 }

@@ -104,7 +104,7 @@ TaskStack bad_task([](auto vec) {...}, data); // 数据拷贝
 ## 拓展
 
 ### HeapCallable
-当`TaskStack`因空间不足无法存储完整任务时，会先将任务封装为`HeapCallable`对象再存储（静态断言`TSIZE > 24`确保可存储性）。用户也可直接构造`HeapCallable`独立存储任务：
+当`TaskStack`因空间不足无法存储完整任务时，会先将任务封装为`HeapCallable`对象再存储（静态断言`TSIZE > 24`确保可存储性）。使用者也可直接构造`HeapCallable`独立存储任务：
 ```cpp
 auto callable = make_callable(func);
 TaskStack task(callable);
