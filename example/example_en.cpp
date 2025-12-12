@@ -17,16 +17,10 @@ int calculateSum(int a, int b)
     return a + b;
 }
 
-// Large function (multiple parameters)
-void bigTask(int a, double b, const std::string& c, char d, float e)
-{
-    std::cout << "Big task: " << a << ", " << b << ", " << c << ", " << d << ", " << e << std::endl;
-}
-
-// Heap-stored task example
+// Example of task stored on the heap
 void heapExample()
 {
-    // Create heap task, returns Callable
+    // Create a heap task, returns a Callable
     auto callable = make_callable([]() {
         std::cout << "Heap task1 completed." << std::endl;
         });
@@ -91,7 +85,7 @@ void batchExample()
 {
     BatchSubmitter<TaskType, 10> batch(globalPool);
 
-    // BatchSubmitter auto-submits when capacity is reached (10th task)
+    // BatchSubmitter automatically submits when capacity is full, i.e., on the 10th addition
     for (int i = 0; i < 10; ++i) {
         batch.add([i] {
             std::cout << "Batch task " << i << std::endl;
@@ -101,15 +95,15 @@ void batchExample()
     std::cout << "Batch tasks submitted" << std::endl;
 }
 
-// Task insertion position control
+// Task insertion position control example
 void positionControlExample()
 {
-    // Tail insertion (low priority, default)
+    // Insert at tail (low priority, default)
     globalPool.submit<INSERT_POS::TAIL>([] {
         std::cout << "Low priority task (tail)" << std::endl;
         });
 
-    // Head insertion (high priority)
+    // Insert at head (high priority)
     globalPool.submit<INSERT_POS::HEAD>([] {
         std::cout << "High priority task (head)" << std::endl;
         });
@@ -121,14 +115,14 @@ void storageStrategyExample()
     // Small task - stack storage
     auto lambda_small = [] {
         std::cout << "Small task (stack storage)" << std::endl;
-    };
+        };
 
     // Large task - heap storage
     auto lambda_big = [](const std::string& a, const std::string& b,
         const std::string& c, const std::string& d) {
             std::cout << "Big task (heap storage): "
                 << a << b << c << d << std::endl;
-    };
+        };
 
     TaskType smallTask(lambda_small);
     TaskType bigTask(lambda_big, std::string("Large"), std::string(" parameters"), std::string(" require"), std::string(" heap allocation."));
@@ -140,13 +134,13 @@ void storageStrategyExample()
     globalPool.submit(std::move(bigTask));
 }
 
-// Task property inspection
+// Task property inspection example
 void taskPropertiesExample()
 {
     auto lambda = [](int x) { return x * x; };
     TaskType task(lambda, 5);
 
-    // Inspect properties
+    // Check properties
     std::cout << "Task properties:\n"
         << "Storage size: " << sizeof(task) << " bytes\n"
         << "Actual size:" << TaskImplTraits<decltype(lambda), int>::size << "\n"
@@ -157,43 +151,44 @@ void taskPropertiesExample()
 void threadRegisterExample()
 {
     /*
-    * Register thread to pool's group allocator
-    * Each registered thread gets a dedicated queue group (RoundRobinGroup)
-    * Queue group contains one or more task queues (TPBlockQueue)
+    * Register a thread to the thread pool's group allocator
+    * Each registered thread is dynamically assigned a dedicated queue group (RoundRobinGroup)
+    * A queue group contains one or more task queues (TPBlockQueue)
     *
     * Example: 3 queues(1,2,3), 4 producer threads(A,B,C,D)
     *
     * ---------------------------------------------------------------------
-    * Unregistered queue assignment uses global round-robin via atomic index
+    * Unregistered queue allocation is based on a global round-robin using an internal index atomic variable.
     *
-    * Queue Assignment  1     2     3     1     2     3    ...
-    * Submission Log    A-sub B-sub C-sub A-sub B-sub C-sub ...
+    * Queue Allocation  1     2      3     1     2     3    ...
+    * Submission Record A-sub B-sub C-sub A-sub B-sub C-sub ...
     *
-    * Causes frequent cache invalidation and atomic contention
+    * This scheme causes frequent cache invalidation, and the single index atomic variable becomes a performance bottleneck.
     *----------------------------------------------------------------------
-    * Registered queue assignment:
+    * Queue allocation after registration:
     *
-    *   A: Dedicated group [1]
-    *   B: Dedicated group [2]
-    *   C: Dedicated group [3]
-    *   D: Dedicated group [1,2,3] (multi-queue group)
+    *   A: Dedicated queue group[1]
+    *   B: Dedicated queue group[2]
+    *   C: Dedicated queue group[3]
+    *   D: Dedicated queue group[1,2,3] (multi-queue group)
     *
-    * Groups with multiple queues switch queues after threshold submissions
+    * For queue groups containing multiple queues, they switch to another queue (round-robin) when submitted tasks reach a threshold.
+    * ---------------------------------------------------------------------
     */
 
-    globalPool.register_this_thread(); // Register current thread
+    globalPool.register_this_thread(); // Register the current thread
 
-    /* Task submission operations */
+    /* Add task operations */
 
-    // Unregister when done to rebalance queue groups
+    // Note: The current thread should unregister when it no longer uses the thread pool to readjust the pool's queue group allocation.
     globalPool.unregister_this_thread();
     std::cout << "Thread register example" << std::endl;
 }
 
 int main()
 {
-    // Initialize pool: 10000 task capacity, min/max threads=1, no batch processing
-    globalPool.init(10000, 1, 1, 1);
+    // Initialize thread pool: capacity 10000 tasks, 1 thread, no batch processing
+    globalPool.init(10000, 1, 1);
 
     std::cout << "==== Simple Task Example ====" << std::endl;
     TaskType task(simpleTask, "Hello, World.");
@@ -230,6 +225,6 @@ int main()
     std::cout << "\n==== Thread register Example ====" << std::endl;
     threadRegisterExample();
 
-    globalPool.exit(true);
+    globalPool.shutdown(true);
     return 0;
 }

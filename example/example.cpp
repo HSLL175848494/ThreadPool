@@ -188,8 +188,8 @@ void threadRegisterExample()
 
 int main()
 {
-	// 初始化线程池：10000任务容量，最小/大线程数1,无批处理
-	globalPool.init(10000, 1, 1, 1);
+	// 初始化线程池：10000任务容量，线程数1,无批处理
+	globalPool.init(10000, 1, 1 );
 
 	std::cout << "==== Simple Task Example ====" << std::endl;
 	TaskType task(simpleTask, "Hello, World.");
@@ -226,6 +226,6 @@ int main()
 	std::cout << "\n==== Thread register Example ====" << std::endl;
 	threadRegisterExample();
 
-	globalPool.exit(true);
+	globalPool.shutdown(true);
 	return 0;
 }

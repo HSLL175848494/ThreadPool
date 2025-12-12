@@ -6,7 +6,7 @@
 #include <future>
 #include <thread>
 #include <cstddef>
-#include <assert.h>
+#include <cassert>
 
 // The current function may throw exceptions, including std::bad_alloc.
 #define HSLL_MAY_THROW
@@ -57,8 +57,7 @@ namespace HSLL
 	{
 		inline void* hsll_aligned_alloc(size_t align, size_t size)
 		{
-			static_assert(align > 0 && (align & (align - 1)) == 0,
-				"align must be > 0 and be an nth power of 2.");
+			assert(align > 0 && (align & (align - 1)) == 0 && "align must be > 0 and be an nth power of 2.");
 
 			const size_t aligned_size = (size + align - 1) & ~(align - 1);
 			return aligned_alloc(align, aligned_size);
@@ -405,7 +404,8 @@ namespace HSLL
 			 */
 			template<typename Func, typename std::enable_if<!is_HeapCallable<typename std::decay<Func>::type>::value, bool>::type = true >
 			HeapCallable(Func&& func, Args &&...args) HSLL_MAY_THROW
-				: storage(new Package(std::forward<Func>(func), std::forward<Args>(args)...)) {}
+				: storage(new Package(std::forward<Func>(func), std::forward<Args>(args)...)) {
+			}
 
 			/**
 			 * @brief Invokes the stored callable with bound arguments
@@ -470,7 +470,8 @@ namespace HSLL
 			 */
 			template<typename Func, typename std::enable_if<!is_HeapCallable_Async<typename std::decay<Func>::type>::value, bool>::type = true >
 			HeapCallable_Async(Func&& func, Args &&...args) HSLL_MAY_THROW
-				: storage(new Package(std::promise<ResultType>(), std::forward<Func>(func), std::forward<Args>(args)...)) {}
+				: storage(new Package(std::promise<ResultType>(), std::forward<Func>(func), std::forward<Args>(args)...)) {
+			}
 
 			/**
 			 * @brief Executes the callable and sets promise value/exception
@@ -591,7 +592,8 @@ namespace HSLL
 			public:
 
 				Controller(std::shared_ptr<Package> storage)
-					:storage(storage), future(std::get<0>(*storage).get_future()) {};
+					:storage(storage), future(std::get<0>(*storage).get_future()) {
+				};
 
 				/**
 				 * @brief Requests cancellation of the associated task
@@ -669,7 +671,8 @@ namespace HSLL
 			 */
 			template<typename Func, typename std::enable_if<!is_HeapCallable_Cancelable<typename std::decay<Func>::type>::value, bool>::type = true >
 			HeapCallable_Cancelable(Func&& func, Args &&...args) HSLL_MAY_THROW
-				: storage(std::make_shared<Package>(std::promise<ResultType>(), false, std::forward<Func>(func), std::forward<Args>(args)...)) {}
+				: storage(std::make_shared<Package>(std::promise<ResultType>(), false, std::forward<Func>(func), std::forward<Args>(args)...)) {
+			}
 
 			/**
 			 * @brief Executes the callable if not canceled
@@ -787,7 +790,8 @@ namespace HSLL
 			template <typename Func, typename... Ts,
 				typename std::enable_if<!is_TaskImpl<typename std::decay<Func>::type>::value, bool>::type = true>
 			TaskImpl(Func&& func, Ts &&...ts)
-				: storage(std::forward<Func>(func), std::forward<Ts>(ts)...) {}
+				: storage(std::forward<Func>(func), std::forward<Ts>(ts)...) {
+			}
 
 
 			template <bool Condition>
@@ -1005,27 +1009,6 @@ namespace HSLL
 					}
 				}
 
-				bool try_lock_read() noexcept
-				{
-					intptr_t old = count.fetch_add(1, std::memory_order_acquire);
-
-					if (old < 0)
-					{
-						count.fetch_sub(1, std::memory_order_relaxed);
-						return false;
-					}
-
-					return true;
-				}
-
-				bool try_lock_read_check_before() noexcept
-				{
-					if (count.load(std::memory_order_relaxed) < 0)
-						return false;
-
-					return try_lock_read();
-				}
-
 				void unlock_read() noexcept
 				{
 					count.fetch_sub(1, std::memory_order_relaxed);
@@ -1062,39 +1045,6 @@ namespace HSLL
 			public:
 
 				explicit LocalReadLock(InnerLock& localLock) noexcept :localLock(localLock) {}
-
-				bool try_lock_read() noexcept
-				{
-					return localLock.try_lock_read();
-				}
-
-				template <typename Rep, typename Period>
-				bool try_lock_read_for(const std::chrono::duration<Rep, Period>& timeout) noexcept
-				{
-					auto absTime = std::chrono::steady_clock::now() + timeout;
-					return try_lock_read_until(absTime);
-				}
-
-				template <typename Clock, typename Duration>
-				bool try_lock_read_until(const std::chrono::time_point<Clock, Duration>& absTime) noexcept
-				{
-					if (localLock.try_lock_read())
-						return true;
-
-					std::this_thread::yield();
-
-					while (!localLock.try_lock_read_check_before())
-					{
-						auto now = Clock::now();
-
-						if (now >= absTime)
-							return false;
-
-						std::this_thread::yield();
-					}
-
-					return true;
-				}
 
 				void lock_read() noexcept
 				{
@@ -1185,23 +1135,6 @@ namespace HSLL
 
 			SpinReadWriteLock() noexcept :flag(true) {}
 
-			bool try_lock_read() noexcept
-			{
-				return get_local_lock().try_lock_read();
-			}
-
-			template <typename Rep, typename Period>
-			bool try_lock_read_for(const std::chrono::duration<Rep, Period>& timeout) noexcept
-			{
-				return get_local_lock().try_lock_read_for(timeout);
-			}
-
-			template <typename Clock, typename Duration>
-			bool try_lock_read_until(const std::chrono::time_point<Clock, Duration>& absTime) noexcept
-			{
-				return get_local_lock().try_lock_read_until(absTime);
-			}
-
 			void lock_read() noexcept
 			{
 				get_local_lock().lock_read();
@@ -1210,68 +1143,6 @@ namespace HSLL
 			void unlock_read() noexcept
 			{
 				get_local_lock().unlock_read();
-			}
-
-			bool try_lock_write() noexcept
-			{
-				bool flagArray[HSLL_SPINREADWRITELOCK_MAXSLOTS];
-
-				if (!try_mark_write(flagArray))
-					return false;
-
-				if (ready_count(0, flagArray) == HSLL_SPINREADWRITELOCK_MAXSLOTS)
-					return true;
-				else
-					unmark_write(flagArray);
-
-				return false;
-			}
-
-			template <typename Rep, typename Period>
-			bool try_lock_write_for(const std::chrono::duration<Rep, Period>& timeout) noexcept
-			{
-				auto absTime = std::chrono::steady_clock::now() + timeout;
-				return try_lock_write_until(absTime);
-			}
-
-			template <typename Clock, typename Duration>
-			bool try_lock_write_until(const std::chrono::time_point<Clock, Duration>& absTime) noexcept
-			{
-				std::chrono::time_point<Clock, Duration> now;
-
-				bool flagArray[HSLL_SPINREADWRITELOCK_MAXSLOTS];
-
-				if (!try_mark_write(flagArray))
-				{
-					std::this_thread::yield();
-
-					while (!try_mark_write_check_before(flagArray))
-					{
-						now = Clock::now();
-
-						if (now >= absTime)
-							return false;
-
-						std::this_thread::yield();
-					}
-				}
-
-				intptr_t nextCheckIndex = 0;
-
-				while ((nextCheckIndex = ready_count(nextCheckIndex, flagArray)) != HSLL_SPINREADWRITELOCK_MAXSLOTS)
-				{
-					now = Clock::now();
-
-					if (now >= absTime)
-					{
-						unmark_write(flagArray);
-						return false;
-					}
-
-					std::this_thread::yield();
-				}
-
-				return true;
 			}
 
 			void lock_write() noexcept
@@ -1558,7 +1429,8 @@ namespace HSLL
 		{
 		public:
 			explicit Semaphore(unsigned int initial_count = 0)
-				: m_count(initial_count) {}
+				: m_count(initial_count) {
+			}
 
 			void acquire()
 			{
@@ -2368,7 +2240,7 @@ namespace HSLL
 					for (int i = 0; i < threadSlots.size(); ++i)
 						threadSlots[i].clear();
 
-					distribute_queues_to_threads(threadSlots.size());
+					distribute_queues_to_threads((unsigned int)threadSlots.size());
 					reinitialize_groups();
 				}
 			}
@@ -2507,7 +2379,7 @@ namespace HSLL
 
 			TPBlockQueue<T>* available_queue(RoundRobinGroup<T>* group) noexcept
 			{
-				unsigned int size = group->assignedQueues->size();
+				unsigned int size = (unsigned int)group->assignedQueues->size();
 
 				if (size == queueCount)
 					return nullptr;
@@ -2554,22 +2426,11 @@ namespace HSLL
 {
 	namespace INNER
 	{
-		constexpr float HSLL_THREADPOOL_SHRINK_FACTOR = 0.25f;
-		constexpr float HSLL_THREADPOOL_EXPAND_FACTOR = 0.75f;
-		constexpr float HSLL_THREADPOOL_SHRINK_THRESHOLD_RATIO = 0.95f;
-		constexpr float	HSLL_THREADPOOL_EXPAND_THRESHOLD_RATIO = 0.40f;
 		constexpr unsigned int HSLL_THREADPOOL_LOCK_TIMEOUT_MILLISECONDS = 50u;
-		constexpr unsigned int HSLL_THREADPOOL_SEM_TIMEOUT_MILLISECONDS = 10u;
 		constexpr unsigned int HSLL_THREADPOOL_DEQUEUE_TIMEOUT_MILLISECONDS = 1u;
 
 		static_assert(HSLL_THREADPOOL_LOCK_TIMEOUT_MILLISECONDS > 0, "Invalid lock timeout value.");
 		static_assert(HSLL_THREADPOOL_DEQUEUE_TIMEOUT_MILLISECONDS > 0, "Invalid dequeue timeout value.");
-		static_assert(HSLL_THREADPOOL_SHRINK_THRESHOLD_RATIO > 0.0f && HSLL_THREADPOOL_SHRINK_THRESHOLD_RATIO < 1.0f,
-			"Invalid shrink threshold ratio.");
-		static_assert(HSLL_THREADPOOL_EXPAND_THRESHOLD_RATIO > 0.0f && HSLL_THREADPOOL_EXPAND_THRESHOLD_RATIO < 1.0f,
-			"Invalid expand threshold ratio.");
-		static_assert(HSLL_THREADPOOL_SHRINK_FACTOR < HSLL_THREADPOOL_EXPAND_FACTOR&& HSLL_THREADPOOL_EXPAND_FACTOR < 1.0
-			&& HSLL_THREADPOOL_SHRINK_FACTOR > 0.0, "Invalid factors.");
 
 		template <typename T>
 		class SingleStealer
@@ -2578,56 +2439,33 @@ namespace HSLL
 			friend class ThreadPool;
 		private:
 
-			bool monitor;
 			unsigned int index;
 			unsigned int capacity;
 			unsigned int threshold;
-			unsigned int* threadNum;
+			unsigned int threadNum;
 
 			TPBlockQueue<T>* queues;
 			TPBlockQueue<T>* ignore;
-			SpinReadWriteLock* rwLock;
 
-			SingleStealer(SpinReadWriteLock* rwLock, TPBlockQueue<T>* queues, TPBlockQueue<T>* ignore,
-				unsigned int capacity, unsigned int* threadNum, unsigned int maxThreadum, bool monitor)
+			SingleStealer(TPBlockQueue<T>* queues, TPBlockQueue<T>* ignore,
+				unsigned int capacity, unsigned int threadNum)
 			{
 				this->index = 0;
 				this->capacity = capacity;
 				this->threadNum = threadNum;
-				this->threshold = std::min(capacity / 2, maxThreadum / 2);
-				this->rwLock = rwLock;
+				this->threshold = std::min(capacity / 2, threadNum / 2);
 				this->queues = queues;
 				this->ignore = ignore;
-				this->monitor = monitor;
 			}
 
 			unsigned int steal(T& element)
 			{
-				bool result;
-
-				if (monitor)
-				{
-					if (rwLock->try_lock_read())
-					{
-						result = steal_inner(element);
-						rwLock->unlock_read();
-					}
-					else
-					{
-						result = false;
-					}
-				}
-				else
-				{
-					result = steal_inner(element);
-				}
-
-				return result;
+				return steal_inner(element);
 			}
 
 			bool steal_inner(T& element)
 			{
-				unsigned int num = *threadNum;
+				unsigned int num = threadNum;
 
 				for (unsigned int i = 0; i < num; ++i)
 				{
@@ -2655,59 +2493,36 @@ namespace HSLL
 
 		private:
 
-			bool monitor;
 			unsigned int index;
 			unsigned int capacity;
 			unsigned int batchSize;
 			unsigned int threshold;
-			unsigned int* threadNum;
+			unsigned int threadNum;
 
 			TPBlockQueue<T>* queues;
 			TPBlockQueue<T>* ignore;
-			SpinReadWriteLock* rwLock;
 
-			BulkStealer(SpinReadWriteLock* rwLock, TPBlockQueue<T>* queues, TPBlockQueue<T>* ignore, unsigned int capacity,
-				unsigned int* threadNum, unsigned int maxThreadum, unsigned int batchSize, bool monitor)
+			BulkStealer(TPBlockQueue<T>* queues, TPBlockQueue<T>* ignore, unsigned int capacity,
+				unsigned int threadNum, unsigned int batchSize)
 			{
 				this->index = 0;
 				this->batchSize = batchSize;
 				this->capacity = capacity;
 				this->threadNum = threadNum;
-				this->threshold = std::min(capacity / 2, batchSize * maxThreadum / 2);
-				this->rwLock = rwLock;
+				this->threshold = std::min(capacity / 2, batchSize * threadNum / 2);
 				this->queues = queues;
 				this->ignore = ignore;
-				this->monitor = monitor;
 			}
 
 			unsigned int steal(T* elements)
 			{
-				unsigned int result;
-
-				if (monitor)
-				{
-					if (rwLock->try_lock_read())
-					{
-						result = steal_inner(elements);
-						rwLock->unlock_read();
-					}
-					else
-					{
-						result = 0;
-					}
-				}
-				else
-				{
-					result = steal_inner(elements);
-				}
-
-				return result;
+				return steal_inner(elements);
 			}
 
 			unsigned int steal_inner(T* elements)
 			{
 				unsigned int count;
-				unsigned int num = *threadNum;
+				unsigned int num = threadNum;
 
 				for (unsigned int i = 0; i < num; ++i)
 				{
@@ -2747,24 +2562,16 @@ namespace HSLL
 			unsigned int capacity;
 			unsigned int batchSize;
 			unsigned int threadNum;
-			unsigned int minThreadNum;
-			unsigned int maxThreadNum;
 			unsigned int mainFullThreshold;
 			unsigned int otherFullThreshold;
-
-			bool enableMonitor;
-			Semaphore monitorSem;
-			std::atomic<bool> drainFlag;
-			std::chrono::milliseconds adjustMillis;
 
 			T* containers;
 			Semaphore* stoppedSem;
 			Semaphore* restartSem;
 			SpinReadWriteLock rwLock;
-			std::atomic<bool> exitFlag;
-			std::atomic<bool> shutdownPolicy;
+			std::atomic<bool> shutdownFlag;
+			std::atomic<bool> gracefulShutdown;
 
-			std::thread monitor;
 			TPBlockQueue<T>* queues;
 			std::atomic<unsigned int> index;
 			std::vector<std::thread> workers;
@@ -2782,7 +2589,7 @@ namespace HSLL
 			 * @return true  Initialization successful
 			 * @return false Initialization failed (invalid parameters or resource allocation failure)
 			 */
-			bool init(unsigned int capacity, unsigned int threadNum, unsigned int batchSize) noexcept
+			bool init(unsigned int capacity, unsigned int threadNum, unsigned int batchSize = 1) noexcept
 			{
 				assert(!queues);
 
@@ -2795,67 +2602,17 @@ namespace HSLL
 				this->capacity = capacity;
 				this->batchSize = std::min(batchSize, capacity / 2);
 				this->threadNum = threadNum;
-				this->minThreadNum = threadNum;
-				this->maxThreadNum = threadNum;
 				this->mainFullThreshold = std::max(2u, (unsigned int)(capacity * HSLL_QUEUE_FULL_FACTOR_MAIN));
 				this->otherFullThreshold = std::max(2u, (unsigned int)(capacity * HSLL_QUEUE_FULL_FACTOR_OTHER));
-				this->enableMonitor = false;
-				this->drainFlag = false;
-				this->exitFlag = false;
-				this->shutdownPolicy = true;
+				this->shutdownFlag = false;
+				this->gracefulShutdown = true;
 				this->index = 0;
 
-				workers.reserve(maxThreadNum);
-				groupAllocator.initialize(queues, maxThreadNum, capacity, capacity * 0.05 > 1 ? capacity * 0.05 : 1);
+				workers.reserve(threadNum);
+				groupAllocator.initialize(queues, threadNum, capacity, (unsigned int)(capacity * 0.05 > 1 ? capacity * 0.05 : 1));
 
-				for (unsigned i = 0; i < maxThreadNum; ++i)
+				for (unsigned i = 0; i < threadNum; ++i)
 					workers.emplace_back(&ThreadPool::worker, this, i);
-
-				return true;
-			}
-
-			/**
-			* @brief Initializes thread pool resources (Dynamic scaling)
-			* @param capacity Capacity of each internal queue (must be >= 2)
-			* @param minThreadNum Minimum number of worker threads (must be != 0)
-			* @param maxThreadNum Maximum number of worker threads (must be >=minThreadNum)
-			* @param batchSize Maximum tasks to process per batch (must be != 0)
-			* @param adjustMillis Time interval for checking the load and adjusting the number of active threads(must be != 0)
-			* @return true  Initialization successful
-			* @return false Initialization failed (invalid parameters or resource allocation failure)
-			*/
-			bool init(unsigned int capacity, unsigned int minThreadNum, unsigned int maxThreadNum,
-				unsigned int batchSize, unsigned int adjustMillis = 2500) noexcept
-			{
-				assert(!queues);
-
-				if (!batchSize || !minThreadNum || capacity< 2 || minThreadNum > maxThreadNum || !adjustMillis)
-					return false;
-
-				if (!initResourse(capacity, maxThreadNum, batchSize))
-					return false;
-
-				this->capacity = capacity;
-				this->batchSize = std::min(batchSize, capacity / 2);
-				this->threadNum = maxThreadNum;
-				this->minThreadNum = minThreadNum;
-				this->maxThreadNum = maxThreadNum;
-				this->mainFullThreshold = std::max(2u, (unsigned int)(capacity * HSLL_QUEUE_FULL_FACTOR_MAIN));
-				this->otherFullThreshold = std::max(2u, (unsigned int)(capacity * HSLL_QUEUE_FULL_FACTOR_OTHER));
-				this->drainFlag = false;
-				this->adjustMillis = std::chrono::milliseconds(adjustMillis);
-				this->enableMonitor = (minThreadNum != maxThreadNum) ? true : false;
-				this->exitFlag = false;
-				this->shutdownPolicy = true;
-				this->index = 0;
-				workers.reserve(maxThreadNum);
-				groupAllocator.initialize(queues, maxThreadNum, capacity, capacity * 0.05 > 1 ? capacity * 0.05 : 1);
-
-				for (unsigned i = 0; i < maxThreadNum; ++i)
-					workers.emplace_back(&ThreadPool::worker, this, i);
-
-				if (enableMonitor)
-					monitor = std::thread(&ThreadPool::load_monitor, this);
 
 				return true;
 			}
@@ -2864,13 +2621,10 @@ namespace HSLL
 																\
 		assert(queues);											\
 																\
-		if (maxThreadNum == 1)									\
+		if (threadNum == 1)										\
 			return exp1;										\
 																\
 		ReadLockGuard lock(rwLock);								\
-																\
-		if (threadNum == 1)										\
-			return exp1;										\
 																\
 		unsigned int size;										\
 		TPBlockQueue<T>* queue;									\
@@ -3072,50 +2826,32 @@ namespace HSLL
 			{
 				assert(queues);
 
-				if (enableMonitor)
-				{
-					drainFlag = true;
-					monitorSem.release();
-
-					while (drainFlag)
-						std::this_thread::yield();
-				}
-
-				for (int i = 0; i < threadNum; ++i)
+				for (unsigned int i = 0; i < threadNum; ++i)
 				{
 					restartSem[i].release();
 					queues[i].disableWait();
 				}
 
-				for (int i = 0; i < threadNum; ++i)
+				for (unsigned int i = 0; i < threadNum; ++i)
 				{
 					stoppedSem[i].acquire();
 					queues[i].enableWait();
 				}
-
-				if (enableMonitor)
-					monitorSem.release();
 			}
 
 			/**
 			 * @brief Stops all workers and releases resources.
-			 * @param shutdownPolicy If true, performs a graceful shutdown (waits for tasks to complete);
-			 *                       if false, forces an immediate shutdown.
+			 * @param graceful If true, performs a graceful shutdown (waits for tasks to complete);
+			 *                if false, forces an immediate shutdown.
 			 * @note This function is not thread-safe.
 			 * @note After calling this function, the thread pool can be reused by calling init again.
 			 */
-			void exit(bool shutdownPolicy = true) noexcept
+			void shutdown(bool graceful = true) noexcept
 			{
 				assert(queues);
 
-				if (enableMonitor)
-				{
-					monitorSem.release();
-					monitor.join();
-				}
-
-				this->exitFlag = true;
-				this->shutdownPolicy = shutdownPolicy;
+				this->shutdownFlag = true;
+				this->gracefulShutdown = graceful;
 
 				{
 					for (unsigned i = 0; i < workers.size(); ++i)
@@ -3128,7 +2864,7 @@ namespace HSLL
 						worker.join();
 				}
 
-				rleaseResourse();
+				releaseResourse();
 			}
 
 			/**
@@ -3161,7 +2897,7 @@ namespace HSLL
 			~ThreadPool() noexcept
 			{
 				if (queues)
-					exit(false);
+					shutdown(false);
 			}
 
 			ThreadPool(const ThreadPool&) = delete;
@@ -3204,164 +2940,6 @@ namespace HSLL
 				return nullptr;
 			}
 
-			static bool try_lock_write_until(const std::chrono::steady_clock::time_point& timestamp, SpinReadWriteLock& rwLock)
-			{
-				return rwLock.try_lock_write_until(timestamp);
-			}
-
-			static bool try_wait_empty_until(const std::chrono::steady_clock::time_point& timestamp, TPBlockQueue<T>* queue) noexcept
-			{
-				while (queue->get_size_weak())
-				{
-					auto now = std::chrono::steady_clock::now();
-
-					if (now >= timestamp)
-						return false;
-
-					std::this_thread::yield();
-				}
-
-				return true;
-			}
-
-			bool try_shrink()
-			{
-				auto timestamp = std::chrono::steady_clock::now() + std::chrono::milliseconds(HSLL_THREADPOOL_LOCK_TIMEOUT_MILLISECONDS);
-
-				if (try_lock_write_until(timestamp, rwLock))
-				{
-					threadNum--;
-					groupAllocator.update(threadNum);
-					rwLock.unlock_write();
-
-					if (try_wait_empty_until(timestamp, queues + threadNum))
-					{
-						queues[threadNum].disableWait();
-						stoppedSem[threadNum].acquire();
-						queues[threadNum].release();
-
-						return true;
-					}
-
-					//rollback
-					rwLock.lock_write();
-					threadNum++;
-					groupAllocator.update(threadNum);
-					rwLock.unlock_write();
-				}
-
-				return false;
-			}
-
-			bool try_expand()
-			{
-				unsigned int newThreads = std::max(1u, (maxThreadNum - threadNum) / 2);
-				unsigned int succeed = 0;
-				for (unsigned int i = threadNum; i < threadNum + newThreads; ++i)
-				{
-					if (!queues[i].init(capacity))
-						break;
-
-					restartSem[i].release();
-					succeed++;
-				}
-
-				if (succeed > 0)
-				{
-					auto timestamp = std::chrono::steady_clock::now() + std::chrono::milliseconds(HSLL_THREADPOOL_LOCK_TIMEOUT_MILLISECONDS);
-
-					if (try_lock_write_until(timestamp, rwLock))
-					{
-						threadNum += succeed;
-						groupAllocator.update(threadNum);
-						rwLock.unlock_write();
-
-						return true;
-					}
-
-					//rollback
-					for (unsigned int i = threadNum; i < threadNum + succeed; ++i)
-					{
-						queues[i].disableWait();
-						stoppedSem[i].acquire();
-						queues[i].release();
-					}
-				}
-
-				return false;
-			}
-
-			void load_monitor() noexcept
-			{
-				unsigned int shrink = 0;
-				unsigned int expand = 0;
-				unsigned int nowCount = 0;
-				auto timestamp = std::chrono::steady_clock::now() + adjustMillis;
-				auto retryMillis = std::chrono::milliseconds(50 * HSLL_THREADPOOL_SEM_TIMEOUT_MILLISECONDS);
-
-				while (true)
-				{
-					if (monitorSem.try_acquire_for(std::chrono::milliseconds(HSLL_THREADPOOL_SEM_TIMEOUT_MILLISECONDS)))
-					{
-						if (drainFlag)
-						{
-							drainFlag = false;
-							monitorSem.acquire();
-
-							shrink = 0;
-							expand = 0;
-							nowCount = 0;
-							timestamp = std::chrono::steady_clock::now() + adjustMillis;
-						}
-						else
-						{
-							return;
-						}
-					}
-
-					unsigned int allSize = capacity * threadNum;
-					unsigned int totalSize = 0;
-
-					for (unsigned int i = 0; i < threadNum; ++i)
-						totalSize += queues[i].get_size_weak();
-
-					if (totalSize < allSize * HSLL_THREADPOOL_SHRINK_FACTOR)
-						shrink++;
-					else if (totalSize > allSize * HSLL_THREADPOOL_EXPAND_FACTOR)
-						expand++;
-
-					nowCount++;
-
-					if (std::chrono::steady_clock::now() < timestamp)
-						continue;
-
-					unsigned int shrinkThreshold = nowCount * HSLL_THREADPOOL_SHRINK_THRESHOLD_RATIO;
-					unsigned int expandThreshold = nowCount * HSLL_THREADPOOL_EXPAND_THRESHOLD_RATIO;
-
-					bool result = true;
-
-					if (threadNum > minThreadNum && shrink >= shrinkThreshold)
-					{
-						if (!try_shrink())
-							result = false;
-					}
-					else if (threadNum < maxThreadNum && expand >= expandThreshold)
-					{
-						if (!try_expand())
-							result = false;
-					}
-
-					if (result)
-						timestamp = std::chrono::steady_clock::now() + adjustMillis;
-					else
-						timestamp = std::chrono::steady_clock::now() + retryMillis;
-
-					shrink = 0;
-					expand = 0;
-					nowCount = 0;
-				}
-			}
-
 			void worker(unsigned int index) noexcept
 			{
 				if (batchSize == 1)
@@ -3381,9 +2959,9 @@ namespace HSLL
 
 			void process_single(TPBlockQueue<T>* queue, unsigned int index) noexcept
 			{
-				bool enableSteal = (maxThreadNum != 1);
+				bool enableSteal = (threadNum != 1);
 				T* task = containers + index * batchSize;
-				SingleStealer<T> stealer(&rwLock, queues, queue, capacity, &threadNum, maxThreadNum, enableMonitor);
+				SingleStealer<T> stealer(queues, queue, capacity, threadNum);
 
 				while (true)
 				{
@@ -3414,7 +2992,7 @@ namespace HSLL
 							break;
 					}
 
-					if (shutdownPolicy)
+					if (gracefulShutdown)
 					{
 						while (queue->dequeue(*task))
 						{
@@ -3426,16 +3004,16 @@ namespace HSLL
 					stoppedSem[index].release();
 					restartSem[index].acquire();
 
-					if (exitFlag)
+					if (shutdownFlag)
 						break;
 				}
 			}
 
 			void process_bulk(TPBlockQueue<T>* queue, unsigned int index) noexcept
 			{
-				bool enableSteal = (maxThreadNum != 1);
+				bool enableSteal = (threadNum != 1);
 				T* tasks = containers + index * batchSize;
-				BulkStealer<T> stealer(&rwLock, queues, queue, capacity, &threadNum, maxThreadNum, batchSize, enableMonitor);
+				BulkStealer<T> stealer(queues, queue, capacity, threadNum, batchSize);
 
 				while (true)
 				{
@@ -3477,7 +3055,7 @@ namespace HSLL
 							break;
 					}
 
-					if (shutdownPolicy)
+					if (gracefulShutdown)
 					{
 						while (count = queue->dequeue_bulk(tasks, batchSize))
 							execute_tasks(tasks, count);
@@ -3486,7 +3064,7 @@ namespace HSLL
 					stoppedSem[index].release();
 					restartSem[index].acquire();
 
-					if (exitFlag)
+					if (shutdownFlag)
 						break;
 				}
 			}
@@ -3539,9 +3117,9 @@ namespace HSLL
 				return false;
 			}
 
-			void rleaseResourse() noexcept
+			void releaseResourse() noexcept
 			{
-				for (unsigned i = 0; i < maxThreadNum; ++i)
+				for (unsigned i = 0; i < threadNum; ++i)
 					queues[i].~TPBlockQueue<T>();
 
 				HSLL_ALIGNED_FREE(queues);
