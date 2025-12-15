@@ -38,7 +38,7 @@ TaskStack(F&& func, Args&&... args);
 ```
 - **Function**: Constructs and stores a task
 - **Parameters**:
-  - `func`: Callable object (function object/function pointer/lambda expression/functor/member function)
+  - `func`: Callable object (function object/function pointer/lambda expression/member function)
   - `args...`: Task parameters (perfectly forwarded)
 - **Storage Decision**:
   - Stack storage: When `sizeof(task) ≤ TSIZE` and `alignof(task) ≤ ALIGN`

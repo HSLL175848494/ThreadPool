@@ -2,7 +2,7 @@
 
 ## Overview
 
-A header-only C++11 lightweight thread pool with no third-party dependencies. It uses stack pre-allocation to avoid dynamic memory allocation, supports double-ended task insertion and multiple submission methods, and implements intelligent load balancing through mechanisms like work-stealing.
+A header-only C++11 lightweight thread pool with no third-party dependencies. Using stack pre-allocation to avoid dynamic memory allocation, supports double-ended task insertion and multiple submission methods, and implements intelligent load balancing through mechanisms like work-stealing.
 
 ## Inclusion
 ```cpp
