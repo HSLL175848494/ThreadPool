@@ -163,44 +163,6 @@ namespace HSLL
 
 		public:
 
-			ThreadPool() : queues(nullptr) {}
-
-			/**
-			 * @brief Initializes thread pool with fixed number of threads (no dynamic scaling)
-			 * @param capacity Capacity of each internal task queue (must be >= 2)
-			 * @param threadNum Fixed number of worker threads (must be != 0)
-			 * @param batchSize Maximum number of tasks processed per batch (must be != 0)
-			 * @return true  Initialization successful
-			 * @return false Initialization failed (invalid parameters or resource allocation failure)
-			 */
-			bool init(unsigned int capacity, unsigned int threadNum, unsigned int batchSize = 1) noexcept
-			{
-				assert(!queues);
-
-				if (!batchSize || !threadNum || capacity < 2)
-					return false;
-
-				if (!initResourse(capacity, threadNum, batchSize))
-					return false;
-
-				this->capacity = capacity;
-				this->batchSize = std::min(batchSize, capacity / 2);
-				this->threadNum = threadNum;
-				this->mainFullThreshold = std::max(2u, (unsigned int)(capacity * HSLL_QUEUE_FULL_FACTOR_MAIN));
-				this->otherFullThreshold = std::max(2u, (unsigned int)(capacity * HSLL_QUEUE_FULL_FACTOR_OTHER));
-				this->shutdownFlag = false;
-				this->gracefulShutdown = true;
-				this->index = 0;
-
-				workers.reserve(threadNum);
-				groupAllocator.initialize(queues, threadNum, capacity, (unsigned int)(capacity * 0.05 > 1 ? capacity * 0.05 : 1));
-
-				for (unsigned i = 0; i < threadNum; ++i)
-					workers.emplace_back(&ThreadPool::worker, this, i);
-
-				return true;
-			}
-
 #define HSLL_ENQUEUE_HELPER(exp1,exp2)							\
 																\
 		assert(queues);											\
@@ -253,7 +215,57 @@ namespace HSLL
 			}													\
 		}														\
 																\
-		return size;											
+		return size;										
+
+			ThreadPool() : queues(nullptr) {}
+
+			/**
+			 * @brief Initializes thread pool with fixed number of threads (no dynamic scaling)
+			 * @param capacity Capacity of each internal task queue (must be >= 2)
+			 * @param threadNum Fixed number of worker threads (must be != 0)
+			 * @param batchSize Maximum number of tasks processed per batch (must be != 0)
+			 * @note This function is not thread-safe.
+			 * @return true  Initialization successful
+			 * @return false Initialization failed (invalid parameters or resource allocation failure)
+			 */
+			bool init(unsigned int capacity, unsigned int threadNum, unsigned int batchSize = 1) noexcept
+			{
+				assert(!queues);
+
+				if (!batchSize || !threadNum || capacity < 2)
+					return false;
+
+				if (!initResourse(capacity, threadNum, batchSize))
+					return false;
+
+				this->capacity = capacity;
+				this->batchSize = std::min(batchSize, capacity / 2);
+				this->threadNum = threadNum;
+				this->mainFullThreshold = std::max(2u, (unsigned int)(capacity * HSLL_QUEUE_FULL_FACTOR_MAIN));
+				this->otherFullThreshold = std::max(2u, (unsigned int)(capacity * HSLL_QUEUE_FULL_FACTOR_OTHER));
+				this->shutdownFlag = false;
+				this->gracefulShutdown = true;
+				this->index = 0;
+
+				workers.reserve(threadNum);
+				groupAllocator.initialize(queues, threadNum, capacity, (unsigned int)(capacity * 0.05 > 1 ? capacity * 0.05 : 1));
+
+				for (unsigned i = 0; i < threadNum; ++i)
+					workers.emplace_back(&ThreadPool::worker, this, i);
+
+				return true;
+			}
+
+			/**
+			 * @brief Checks if the thread pool has been initialized.
+			 * @note This function is not thread-safe.
+			 * @return true  if the thread pool has been successfully initialized
+			 * @return false if the thread pool is not initialized
+			 */
+			bool isInited()
+			{
+				return queues;
+			}
 
 			/**
 			 * @brief Non-blocking task submission to the thread pool
@@ -432,7 +444,10 @@ namespace HSLL
 			 */
 			void shutdown(bool graceful = true) noexcept
 			{
-				assert(queues);
+				if (!queues)
+				{
+					return;
+				}
 
 				this->shutdownFlag = true;
 				this->gracefulShutdown = graceful;
