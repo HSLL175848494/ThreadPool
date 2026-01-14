@@ -1060,15 +1060,27 @@ namespace HSLL
 			std::atomic<bool> flag;
 			InnerLock rwLocks[HSLL_SPINREADWRITELOCK_MAXSLOTS];
 
-			thread_local static intptr_t localIndex;
-			static std::atomic<intptr_t> globalIndex;
+			inline static std::atomic<intptr_t>& global_index() noexcept
+			{
+				static std::atomic<intptr_t> instance{ 0 };
+				return instance;
+			}
+
+			inline static intptr_t& local_index() noexcept
+			{
+				thread_local static intptr_t instance = -1;
+				return instance;
+			}
 
 			inline LocalReadLock get_local_lock() noexcept
 			{
-				intptr_t index = localIndex;
+				intptr_t index = local_index();
 
 				if (index == -1)
-					index = localIndex = globalIndex.fetch_add(1, std::memory_order_relaxed) % HSLL_SPINREADWRITELOCK_MAXSLOTS;
+				{
+					index = global_index().fetch_add(1, std::memory_order_relaxed) % HSLL_SPINREADWRITELOCK_MAXSLOTS;
+					local_index() = index;
+				}
 
 				return LocalReadLock(rwLocks[index]);
 			}
@@ -1168,9 +1180,6 @@ namespace HSLL
 			SpinReadWriteLock(const SpinReadWriteLock&) = delete;
 			SpinReadWriteLock& operator=(const SpinReadWriteLock&) = delete;
 		};
-
-		std::atomic<intptr_t> SpinReadWriteLock::globalIndex{ 0 };
-		thread_local intptr_t SpinReadWriteLock::localIndex{ -1 };
 
 		class ReadLockGuard
 		{
