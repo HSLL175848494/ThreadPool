@@ -111,7 +111,7 @@ TaskStack task(callable);
 ```
 
 ### HeapCallable_Async
-为解决`TaskStack`原生不支持返回值的问题，`HeapCallable_Async`在构造后通过`get_future()`返回`std::future`对象。任务执行期间自动处理值/异常传递逻辑：
+为解决`TaskStack`不支持返回值的问题，`HeapCallable_Async`在构造后通过`get_future()`返回`std::future`对象。任务执行期间自动处理值/异常传递逻辑：
 ```cpp
 auto callable = make_callable_async(Sum, 333, 333);
 auto future = callable.get_future();  // 获取future对象

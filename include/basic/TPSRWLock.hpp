@@ -3,7 +3,6 @@
 
 #include <atomic>
 #include <thread>
-#include <cstdint>
 
 namespace HSLL
 {
@@ -17,7 +16,7 @@ namespace HSLL
 			"HSLL_SPINREADWRITELOCK_MAXREADER must be > 0 and <= (2^30 for 32-bit, 2^62 for 64-bit)");
 
 		/**
-		* @brief Efficient spin lock based on atomic variables, suitable for scenarios where reads significantly outnumber writes
+			@brief Efficient spin lock based on atomic variables, suitable for scenarios where reads significantly outnumber writes
 		*/
 		class SpinReadWriteLock
 		{
@@ -26,79 +25,85 @@ namespace HSLL
 			class alignas(64) InnerLock
 			{
 			private:
-				std::atomic<intptr_t> count;
+				std::atomic<intptr_t> m_count;
 
 			public:
 
-				InnerLock() noexcept :count(0) {}
+				InnerLock() noexcept : m_count(0) {}
 
 				void lock_read() noexcept
 				{
-					intptr_t old = count.fetch_add(1, std::memory_order_acquire);
+					intptr_t old = m_count.fetch_add(1, std::memory_order_acquire);
 
 					while (old < 0)
 					{
-						count.fetch_sub(1, std::memory_order_relaxed);
+						m_count.fetch_sub(1, std::memory_order_relaxed);
 
 						std::this_thread::yield();
 
-						while (count.load(std::memory_order_relaxed) < 0)
+						while (m_count.load(std::memory_order_relaxed) < 0)
+						{
 							std::this_thread::yield();
+						}
 
-						old = count.fetch_add(1, std::memory_order_acquire);
+						old = m_count.fetch_add(1, std::memory_order_acquire);
 					}
 				}
 
 				void unlock_read() noexcept
 				{
-					count.fetch_sub(1, std::memory_order_relaxed);
+					m_count.fetch_sub(1, std::memory_order_relaxed);
 				}
 
 				bool mark_write() noexcept
 				{
-					return !count.fetch_sub(HSLL_SPINREADWRITELOCK_MAXREADER, std::memory_order_relaxed);
+					return !m_count.fetch_sub(HSLL_SPINREADWRITELOCK_MAXREADER, std::memory_order_relaxed);
 				}
 
 				void unmark_write(bool ready) noexcept
 				{
 					if (ready)
-						count.store(0, std::memory_order_relaxed);
+					{
+						m_count.store(0, std::memory_order_relaxed);
+					}
 					else
-						count.fetch_add(HSLL_SPINREADWRITELOCK_MAXREADER, std::memory_order_relaxed);
+					{
+						m_count.fetch_add(HSLL_SPINREADWRITELOCK_MAXREADER, std::memory_order_relaxed);
+					}
 				}
 
 				void unlock_write() noexcept
 				{
-					count.store(0, std::memory_order_release);
+					m_count.store(0, std::memory_order_release);
 				}
 
 				bool is_write_ready() noexcept
 				{
-					return count.load(std::memory_order_relaxed) == -HSLL_SPINREADWRITELOCK_MAXREADER;
+					return m_count.load(std::memory_order_relaxed) == -HSLL_SPINREADWRITELOCK_MAXREADER;
 				}
 			};
 
 			class LocalReadLock
 			{
-				InnerLock& localLock;
+				InnerLock& m_lock;
 
 			public:
 
-				explicit LocalReadLock(InnerLock& localLock) noexcept :localLock(localLock) {}
+				explicit LocalReadLock(InnerLock& lock) noexcept : m_lock(lock) {}
 
 				void lock_read() noexcept
 				{
-					localLock.lock_read();
+					m_lock.lock_read();
 				}
 
 				void unlock_read() noexcept
 				{
-					localLock.unlock_read();
+					m_lock.unlock_read();
 				}
 			};
 
-			std::atomic<bool> flag;
-			InnerLock rwLocks[HSLL_SPINREADWRITELOCK_MAXSLOTS];
+			std::atomic<bool> m_flag;
+			InnerLock m_rwLocks[HSLL_SPINREADWRITELOCK_MAXSLOTS];
 
 			inline static std::atomic<intptr_t>& global_index() noexcept
 			{
@@ -112,36 +117,42 @@ namespace HSLL
 				return instance;
 			}
 
-			inline LocalReadLock get_local_lock() noexcept 
+			inline LocalReadLock get_local_lock() noexcept
 			{
 				intptr_t index = local_index();
 
-				if (index == -1) 
+				if (index == -1)
 				{
 					index = global_index().fetch_add(1, std::memory_order_relaxed) % HSLL_SPINREADWRITELOCK_MAXSLOTS;
 					local_index() = index;
 				}
 
-				return LocalReadLock(rwLocks[index]);
+				return LocalReadLock(m_rwLocks[index]);
 			}
 
 			bool try_mark_write(bool flagArray[HSLL_SPINREADWRITELOCK_MAXSLOTS]) noexcept
 			{
 				bool old = true;
 
-				if (!flag.compare_exchange_strong(old, false, std::memory_order_acquire, std::memory_order_relaxed))
+				if (!m_flag.compare_exchange_strong(old, false, std::memory_order_acquire, std::memory_order_relaxed))
+				{
 					return false;
+				}
 
 				for (intptr_t i = 0; i < HSLL_SPINREADWRITELOCK_MAXSLOTS; ++i)
-					flagArray[i] = rwLocks[i].mark_write();
+				{
+					flagArray[i] = m_rwLocks[i].mark_write();
+				}
 
 				return true;
 			}
 
 			bool try_mark_write_check_before(bool flagArray[HSLL_SPINREADWRITELOCK_MAXSLOTS]) noexcept
 			{
-				if (!flag.load(std::memory_order_relaxed))
+				if (!m_flag.load(std::memory_order_relaxed))
+				{
 					return false;
+				}
 
 				return try_mark_write(flagArray);
 			}
@@ -149,20 +160,26 @@ namespace HSLL
 			void mark_write(bool flagArray[HSLL_SPINREADWRITELOCK_MAXSLOTS]) noexcept
 			{
 				if (try_mark_write(flagArray))
+				{
 					return;
+				}
 
 				std::this_thread::yield();
 
 				while (!try_mark_write_check_before(flagArray))
+				{
 					std::this_thread::yield();
+				}
 			}
 
 			void unmark_write(bool flagArray[HSLL_SPINREADWRITELOCK_MAXSLOTS]) noexcept
 			{
 				for (intptr_t i = 0; i < HSLL_SPINREADWRITELOCK_MAXSLOTS; ++i)
-					rwLocks[i].unmark_write(flagArray[i]);
+				{
+					m_rwLocks[i].unmark_write(flagArray[i]);
+				}
 
-				flag.store(true, std::memory_order_relaxed);
+				m_flag.store(true, std::memory_order_relaxed);
 			}
 
 			intptr_t ready_count(intptr_t startIndex, bool flagArray[HSLL_SPINREADWRITELOCK_MAXSLOTS]) noexcept
@@ -172,12 +189,16 @@ namespace HSLL
 				for (intptr_t i = startIndex; i < HSLL_SPINREADWRITELOCK_MAXSLOTS; ++i)
 				{
 					if (flagArray[i])
+					{
 						continue;
+					}
 
-					flagArray[i] = rwLocks[i].is_write_ready();
+					flagArray[i] = m_rwLocks[i].is_write_ready();
 
 					if (!flagArray[i] && i < index)
+					{
 						index = i;
+					}
 				}
 
 				return index;
@@ -185,7 +206,7 @@ namespace HSLL
 
 		public:
 
-			SpinReadWriteLock() noexcept :flag(true) {}
+			SpinReadWriteLock() noexcept : m_flag(true) {}
 
 			void lock_read() noexcept
 			{
@@ -206,15 +227,19 @@ namespace HSLL
 				intptr_t nextCheckIndex = 0;
 
 				while ((nextCheckIndex = ready_count(nextCheckIndex, flagArray)) != HSLL_SPINREADWRITELOCK_MAXSLOTS)
+				{
 					std::this_thread::yield();
+				}
 			}
 
 			void unlock_write() noexcept
 			{
 				for (intptr_t i = 0; i < HSLL_SPINREADWRITELOCK_MAXSLOTS; ++i)
-					rwLocks[i].unlock_write();
+				{
+					m_rwLocks[i].unlock_write();
+				}
 
-				flag.store(true, std::memory_order_release);
+				m_flag.store(true, std::memory_order_release);
 			}
 
 			SpinReadWriteLock(const SpinReadWriteLock&) = delete;
@@ -225,18 +250,18 @@ namespace HSLL
 		{
 		private:
 
-			SpinReadWriteLock& lock;
+			SpinReadWriteLock& m_lock;
 
 		public:
 
-			explicit ReadLockGuard(SpinReadWriteLock& lock) noexcept : lock(lock)
+			explicit ReadLockGuard(SpinReadWriteLock& lock) noexcept : m_lock(lock)
 			{
-				lock.lock_read();
+				m_lock.lock_read();
 			}
 
 			~ReadLockGuard() noexcept
 			{
-				lock.unlock_read();
+				m_lock.unlock_read();
 			}
 
 			ReadLockGuard(const ReadLockGuard&) = delete;
@@ -247,18 +272,18 @@ namespace HSLL
 		{
 		private:
 
-			SpinReadWriteLock& lock;
+			SpinReadWriteLock& m_lock;
 
 		public:
 
-			explicit WriteLockGuard(SpinReadWriteLock& lock) noexcept : lock(lock)
+			explicit WriteLockGuard(SpinReadWriteLock& lock) noexcept : m_lock(lock)
 			{
-				lock.lock_write();
+				m_lock.lock_write();
 			}
 
 			~WriteLockGuard() noexcept
 			{
-				lock.unlock_write();
+				m_lock.unlock_write();
 			}
 
 			WriteLockGuard(const WriteLockGuard&) = delete;
