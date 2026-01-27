@@ -767,7 +767,14 @@ namespace HSLL
 
 			void execute() override
 			{
-				invoke<sizeof...(Args) == 1>();
+				try
+				{
+					invoke<sizeof...(Args) == 1>();
+				}
+				catch (...)
+				{
+
+				}
 			}
 
 			void moveTo(void* dst) override
