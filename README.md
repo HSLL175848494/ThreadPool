@@ -10,44 +10,6 @@
 #include "ThreadPool.hpp"
 ```
 
-## ThreadPool 类模板
-
-### 模板参数
-```cpp
-template <class TYPE = TaskStack<>>
-class ThreadPool
-```
-- `TYPE`: 基于栈的预分配任务容器（详见TaskStack.md文档）
-
-
-### 初始化方法
-```cpp
-bool init(unsigned int queueLength, unsigned int threadNum, unsigned int batchSize) noexcept
-```
-- **参数**：
-  - `queueLength`：每个工作队列的容量（必须 ≥ 2）
-  - `threadNum`：固定的工作线程数量（必须 ≠ 0）
-  - `batchSize`：单次处理任务数（必须 ≠ 0）
-- **返回值**：初始化成功返回 `true`，失败返回 `false`
-
-### 排空方法
-```cpp
-void drain() noexcept
-```
-- **功能**：等待所有任务执行完成
-- **注意事项**：
-  1. 调用期间禁止添加新任务
-  2. 非线程安全方法
-  3. 调用后不释放资源，队列可继续使用
-
-### 关闭方法
-```cpp
-void shutdown(bool graceful = true) noexcept
-```
-- `graceful`: 
-  - true: 优雅关闭（执行完队列剩余任务）
-  - false: 立即关闭
-
 ## 任务提交接口
 
 | 方法类型       | 非阻塞           | 阻塞等待（无限等待） | 超时等待（for）            | 超时等待（until）           |
@@ -88,7 +50,7 @@ int main()
     return 0;
 }
 ```
-**更多用法请参考example**：异步任务/可取消任务/批量任务/智能存储/属性静态检查
+**更多用法参考example**：异步任务/可取消任务/批量任务/智能存储/属性静态检查
 
 ## 任务生命周期
 ```mermaid

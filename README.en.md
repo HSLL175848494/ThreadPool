@@ -10,43 +10,6 @@ A header-only C++11 lightweight thread pool with no third-party dependencies. Us
 #include "ThreadPool.hpp"
 ```
 
-## ThreadPool Class Template
-
-### Template Parameters
-```cpp
-template <class TYPE = TaskStack<>>
-class ThreadPool
-```
-- `TYPE`: A stack-based pre-allocated task container (see the TaskStack.md documentation for details).
-
-### Initialization Method
-```cpp
-bool init(unsigned int queueLength, unsigned int threadNum, unsigned int batchSize) noexcept
-```
-- **Parameters**:
-  - `queueLength`: Capacity of each worker queue (must be ≥ 2).
-  - `threadNum`: Fixed number of worker threads (must be ≠ 0).
-  - `batchSize`: Number of tasks processed in a single batch (must be ≠ 0).
-- **Return Value**: Returns `true` if initialization succeeds, `false` otherwise.
-
-### Drain Method
-```cpp
-void drain() noexcept
-```
-- **Function**: Waits for all currently submitted tasks to finish execution.
-- **Important Notes**:
-  1. Do **not** add new tasks while this method is executing.
-  2. This is a non-thread-safe method.
-  3. Does not release resources after execution; the queues can continue to be used.
-
-### Shutdown Method
-```cpp
-void shutdown(bool graceful = true) noexcept
-```
-- `graceful`:
-  - `true`: Graceful shutdown (executes remaining tasks in the queues).
-  - `false`: Immediate shutdown.
-
 ## Task Submission Interfaces
 
 | Method Type      | Non-blocking     | Blocking Wait (Indefinite) | Timeout Wait (for)         | Timeout Wait (until)        |
